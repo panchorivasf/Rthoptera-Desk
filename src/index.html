@@ -1,0 +1,2724 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Rthoptera</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="assets/chart.min.js"></script>
+    <script src="assets/tensorflow.min.js"></script>
+  </head>
+
+  <body
+    style="
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    "
+  >
+    <!-- TOOLBAR -->
+    <div
+      id="toolbar"
+      style="
+        background: var(--bg2);
+        border-bottom: 1px solid var(--border);
+        padding: 5px 10px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        flex-shrink: 0;
+        flex-wrap: wrap;
+      "
+    >
+      <span style="font-size: 13px; font-weight: 700; color: var(--txt3)"
+        >⟨ Rthoptera ⟩</span
+      >
+      <div class="sep"></div>
+      <button onclick="document.getElementById('audioFile').click()">
+        📂 Audio
+      </button>
+      <input
+        type="file"
+        id="audioFile"
+        accept=".wav,.mp3,.flac,.ogg,.aiff,.aif"
+        style="display: none"
+      />
+      <button
+        onclick="document.getElementById('SelectionsFile').click()"
+        id="btnRaven"
+        disabled
+      >
+        📋 Import Selections
+      </button>
+      <input
+        type="file"
+        id="SelectionsFile"
+        accept=".txt,.csv"
+        style="display: none"
+      />
+      <button
+        onclick="document.getElementById('xlsxSelFile').click()"
+        id="btnXlsxSel"
+        disabled
+        title="Import the Train or Motif table from a Temporal Analysis Excel export as selections."
+      >
+        📊 Add Excel Selection Table
+      </button>
+      <input
+        type="file"
+        id="xlsxSelFile"
+        accept=".xlsx"
+        style="display: none"
+      />
+      <div class="sep"></div>
+      <span id="fileLabel" class="tag">no file</span>
+      <div style="flex: 1"></div>
+      <span
+        id="cursorInfo"
+        style="
+          font-size: 11px;
+          color: var(--txt2);
+          min-width: 170px;
+          text-align: right;
+          margin-right: 6px;
+          font-family: monospace;
+        "
+      ></span>
+      <span id="statusBadge" class="badge warn">No file</span>
+    </div>
+
+    <!-- MAIN LAYOUT -->
+    <div style="display: flex; flex: 1; overflow: hidden; min-height: 0">
+      <!-- SIDEBAR -->
+      <div
+        id="sidebar"
+        style="
+          width: 212px;
+          flex-shrink: 0;
+          background: var(--bg2);
+          border-right: 1px solid var(--border);
+          padding: 8px;
+          overflow-y: auto;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        "
+      >
+        <div class="panel">
+          <h2>Audio Info</h2>
+          <div
+            style="
+              font-size: 12px;
+              display: flex;
+              flex-direction: column;
+              gap: 2px;
+            "
+          >
+            <div class="row">
+              <span style="color: var(--txt2); width: 68px">Duration</span
+              ><span id="infoDur">—</span>
+            </div>
+            <div class="row">
+              <span style="color: var(--txt2); width: 68px">Sample rate</span
+              ><span id="infoSr">—</span>
+            </div>
+            <div class="row">
+              <span style="color: var(--txt2); width: 68px">Nyquist</span
+              ><span id="infoNyq" style="color: var(--txt3)">—</span>
+            </div>
+            <div class="row">
+              <span style="color: var(--txt2); width: 68px">Channels</span
+              ><span id="infoCh">—</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Edit Audio</h2>
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div style="font-size: 10px; color: var(--txt2); line-height: 1.3">
+              Edits apply to the imported audio for both Temporal and Spectral
+              analysis.
+            </div>
+
+            <!-- Trim -->
+            <div style="border-top: 1px solid var(--border); padding-top: 5px">
+              <div
+                style="
+                  font-size: 11px;
+                  font-weight: 600;
+                  color: var(--txt3);
+                  margin-bottom: 3px;
+                "
+              >
+                Trim
+              </div>
+              <div class="row" style="gap: 4px">
+                <button
+                  id="btnEnterTrim"
+                  onclick="enterTrimMode()"
+                  disabled
+                  style="font-size: 11px; flex: 1"
+                  title="Drag two handles on the waveform/spectrogram to choose the region to keep, then confirm."
+                >
+                  ✂ Trim…
+                </button>
+                <button
+                  id="btnClearTrim"
+                  onclick="clearTrim()"
+                  disabled
+                  style="font-size: 11px"
+                  title="Restore the full duration."
+                >
+                  Reset
+                </button>
+              </div>
+              <div id="trimControls" style="display: none; margin-top: 4px">
+                <div
+                  id="trimReadout"
+                  style="
+                    font-size: 10px;
+                    color: var(--accent, #ffa657);
+                    margin-bottom: 4px;
+                  "
+                ></div>
+                <div class="row" style="gap: 4px">
+                  <button
+                    id="btnConfirmTrim"
+                    onclick="confirmTrim()"
+                    style="font-size: 11px; flex: 1"
+                  >
+                    ✓ Confirm Trim
+                  </button>
+                  <button
+                    id="btnCancelTrim"
+                    onclick="cancelTrim()"
+                    style="font-size: 11px"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Bandpass -->
+            <div style="border-top: 1px solid var(--border); padding-top: 5px">
+              <div
+                style="
+                  font-size: 11px;
+                  font-weight: 600;
+                  color: var(--txt3);
+                  margin-bottom: 3px;
+                "
+              >
+                Bandpass filter
+              </div>
+              <div class="row" style="gap: 4px">
+                <span style="color: var(--txt2); font-size: 11px; width: 56px"
+                  >High-pass</span
+                >
+                <input
+                  type="number"
+                  id="editHp"
+                  value="0"
+                  min="0"
+                  step="100"
+                  disabled
+                  style="width: 64px"
+                  title="High-pass cutoff in Hz (removes content below). 0 = off."
+                />
+                <span style="color: var(--txt2); font-size: 11px">Hz</span>
+              </div>
+              <div class="row" style="gap: 4px; margin-top: 3px">
+                <span style="color: var(--txt2); font-size: 11px; width: 56px"
+                  >Low-pass</span
+                >
+                <input
+                  type="number"
+                  id="editLp"
+                  value="0"
+                  min="0"
+                  step="100"
+                  disabled
+                  style="width: 64px"
+                  title="Low-pass cutoff in Hz (removes content above). Defaults to the Nyquist frequency."
+                />
+                <span style="color: var(--txt2); font-size: 11px">Hz</span>
+              </div>
+              <div class="row" style="gap: 4px; margin-top: 4px">
+                <button
+                  id="btnApplyBandpass"
+                  onclick="applyBandpassEdit()"
+                  disabled
+                  style="font-size: 11px; flex: 1"
+                >
+                  ⌁ Filter
+                </button>
+                <button
+                  id="btnClearBandpass"
+                  onclick="clearBandpass()"
+                  disabled
+                  style="font-size: 11px"
+                  title="Remove the bandpass filter."
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+
+            <div
+              id="editStatus"
+              style="
+                font-size: 10px;
+                color: var(--txt3);
+                line-height: 1.3;
+                border-top: 1px solid var(--border);
+                padding-top: 5px;
+              "
+            >
+              Load audio to enable editing.
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Time Axis</h2>
+          <div style="display: flex; flex-direction: column; gap: 5px">
+            <div>
+              <div
+                class="row"
+                style="justify-content: space-between; margin-bottom: 2px"
+              >
+                <span style="color: var(--txt2); font-size: 11px">Zoom</span>
+                <span id="zoomVal" style="font-size: 11px; color: var(--txt3)"
+                  >—</span
+                >
+              </div>
+              <input
+                type="range"
+                id="zoomSlider"
+                min="0"
+                max="100"
+                value="50"
+                oninput="onZoom(this.value)"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Frequency Axis</h2>
+          <div style="display: flex; flex-direction: column; gap: 5px">
+            <div>
+              <div
+                class="row"
+                style="justify-content: space-between; margin-bottom: 1px"
+              >
+                <span style="color: var(--txt2); font-size: 11px">Min</span>
+                <span id="fMinLbl" style="font-size: 11px; color: var(--txt3)"
+                  >0 Hz</span
+                >
+              </div>
+              <input
+                type="range"
+                id="fMinSlider"
+                min="0"
+                max="999"
+                value="0"
+                oninput="onFreqSlider()"
+              />
+            </div>
+            <div>
+              <div
+                class="row"
+                style="justify-content: space-between; margin-bottom: 1px"
+              >
+                <span style="color: var(--txt2); font-size: 11px">Max</span>
+                <span id="fMaxLbl" style="font-size: 11px; color: var(--txt3)"
+                  >—</span
+                >
+              </div>
+              <input
+                type="range"
+                id="fMaxSlider"
+                min="1"
+                max="1000"
+                value="1000"
+                oninput="onFreqSlider()"
+              />
+            </div>
+            <button onclick="resetFreq()" style="font-size: 11px">
+              Full Range
+            </button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Spectrogram</h2>
+          <div style="display: flex; flex-direction: column; gap: 5px">
+            <div>
+              <div
+                class="row"
+                style="justify-content: space-between; margin-bottom: 1px"
+              >
+                <span style="color: var(--txt2); font-size: 11px"
+                  >Contrast (dB)</span
+                >
+                <span id="contLbl" style="font-size: 11px; color: var(--txt3)"
+                  >60</span
+                >
+              </div>
+              <input
+                type="range"
+                id="contSlider"
+                min="10"
+                max="120"
+                value="60"
+                step="1"
+                oninput="onContrast()"
+              />
+            </div>
+            <div>
+              <div
+                class="row"
+                style="justify-content: space-between; margin-bottom: 1px"
+              >
+                <span style="color: var(--txt2); font-size: 11px"
+                  >Brightness</span
+                >
+                <span id="brightLbl" style="font-size: 11px; color: var(--txt3)"
+                  >0</span
+                >
+              </div>
+              <input
+                type="range"
+                id="brightSlider"
+                min="-30"
+                max="30"
+                value="0"
+                step="1"
+                oninput="onContrast()"
+              />
+            </div>
+            <div class="row">
+              <span style="color: var(--txt2); font-size: 11px">FFT</span>
+              <select id="fftSize" onchange="reprocessSpec()">
+                <option value="128" selected>128</option>
+                <option value="256">256</option>
+                <option value="512">512</option>
+                <option value="1024">1024</option>
+                <option value="2048">2048</option>
+                <option value="4096">4096</option>
+                <option value="8192">8192</option>
+              </select>
+            </div>
+            <div class="row">
+              <span style="color: var(--txt2); font-size: 11px">Color</span>
+              <select id="cmap" onchange="render()">
+                <option value="inferno" selected>Inferno</option>
+                <option value="viridis">Viridis</option>
+                <option value="hot">Hot</option>
+                <option value="cyan">Cyan-Magenta</option>
+                <option value="gray">Gray</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Envelope &amp; Floor</h2>
+          <div style="display: flex; flex-direction: column; gap: 5px">
+            <div class="row">
+              <span style="color: var(--txt2); font-size: 11px; width: 72px"
+                >RMS win (ms)</span
+              >
+              <input
+                type="number"
+                id="envWin"
+                value="1"
+                min="0.5"
+                max="50"
+                step="0.5"
+                style="width: 54px"
+                oninput="recomputeEnv()"
+              />
+            </div>
+            <div class="row">
+              <span style="color: var(--txt2); font-size: 11px; width: 72px"
+                >Floor %</span
+              >
+              <input
+                type="number"
+                id="threshPct"
+                value="5"
+                min="0.1"
+                max="50"
+                step="0.1"
+                style="width: 54px"
+                oninput="onThresh()"
+              />
+            </div>
+            <div class="row">
+              <span style="color: var(--txt2); font-size: 11px">Abs:</span
+              ><span id="threshAbs" style="font-size: 11px; color: var(--amber)"
+                >—</span
+              >
+            </div>
+            <div
+              style="display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px"
+            >
+              <label class="chk"
+                ><input
+                  type="checkbox"
+                  id="showEnv"
+                  checked
+                  onchange="render()"
+                />
+                Envelope</label
+              >
+              <label class="chk"
+                ><input
+                  type="checkbox"
+                  id="showSpec"
+                  checked
+                  onchange="onPanelVis()"
+                />
+                Spectrogram</label
+              >
+              <label class="chk"
+                ><input
+                  type="checkbox"
+                  id="showWave"
+                  checked
+                  onchange="onPanelVis()"
+                />
+                Waveform</label
+              >
+              <label class="chk"
+                ><input
+                  type="checkbox"
+                  id="showAnnots"
+                  checked
+                  onchange="render()"
+                />
+                Annotations</label
+              >
+              <label class="chk"
+                ><input
+                  type="checkbox"
+                  id="showDets"
+                  checked
+                  onchange="render()"
+                />
+                Detections</label
+              >
+            </div>
+          </div>
+        </div>
+
+        <!-- Annotations list -->
+        <div
+          class="panel"
+          style="flex: 1; min-height: 0; display: flex; flex-direction: column"
+        >
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 4px;
+            "
+          >
+            <h2 style="margin: 0">
+              Annotations <span id="aBadge" style="color: var(--txt3)"></span>
+            </h2>
+          </div>
+          <div
+            id="annotList"
+            style="
+              overflow-y: auto;
+              flex: 1;
+              min-height: 60px;
+              display: flex;
+              flex-direction: column;
+              gap: 0;
+            "
+          >
+            <div style="color: var(--txt2); font-size: 11px; padding: 3px 0">
+              None. Use ✏ Annotate tool.
+            </div>
+          </div>
+        </div>
+
+        <!-- Detections -->
+        <div class="panel">
+          <h2>
+            Detections
+            <span id="detBadge" style="color: #f78166; font-size: 11px"></span>
+          </h2>
+          <div
+            id="detCount"
+            style="font-size: 12px; color: var(--txt2); margin-bottom: 5px"
+          >
+            None yet
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px">
+            <button onclick="runAmpDetector()" id="btnAmpDet">
+              ⚡ Amplitude Detector
+            </button>
+            <button
+              onclick="exportDetections()"
+              id="btnExport"
+              disabled
+              style="font-size: 11px"
+            >
+              ⬇ Export Detections
+            </button>
+          </div>
+        </div>
+      </div>
+      <!-- /sidebar -->
+
+      <!-- VIZ + BOTTOM PANEL -->
+      <div
+        style="
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+          min-width: 0;
+        "
+        id="mainCol"
+      >
+        <!-- ═══ TOP-LEVEL MAIN TABS ════════════════════════════════════════════════ -->
+        <div
+          style="
+            flex-shrink: 0;
+            display: flex;
+            align-items: flex-end;
+            gap: 2px;
+            padding: 4px 7px 0;
+            background: var(--bg);
+            border-bottom: 1px solid var(--border);
+          "
+        >
+          <div
+            class="tab active"
+            id="maintab-analyzer"
+            onclick="switchMainTab('analyzer', this)"
+            style="font-size: 12px; padding: 4px 14px"
+          >
+            Spectral Analysis
+          </div>
+          <div
+            class="tab"
+            id="maintab-peaks"
+            onclick="switchMainTab('peaks', this)"
+            style="font-size: 12px; padding: 4px 14px"
+          >
+            Temporal Analysis
+          </div>
+          <div
+            class="tab"
+            id="maintab-plot"
+            onclick="switchMainTab('plot', this)"
+            style="font-size: 12px; padding: 4px 14px"
+          >
+            Multiplot
+          </div>
+        </div>
+
+        <!-- ═══ ANALYZER VIEW ══════════════════════════════════════════════════════ -->
+        <div
+          id="mainview-analyzer"
+          style="
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            min-height: 0;
+          "
+        >
+          <!-- ═══ WAVEFORM PANEL ═══════════════════════════════════════════════════ -->
+          <div
+            id="wavePanel"
+            style="flex-shrink: 0; display: flex; flex-direction: column"
+          >
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding: 3px 7px 2px;
+                background: var(--bg2);
+                border-bottom: 1px solid var(--border);
+              "
+            >
+              <span
+                style="
+                  font-size: 10px;
+                  color: var(--txt2);
+                  text-transform: uppercase;
+                  letter-spacing: 0.06em;
+                "
+                >Waveform</span
+              >
+              <div style="flex: 1"></div>
+              <span style="font-size: 10px; color: var(--txt2)">Height:</span>
+              <input
+                type="range"
+                id="waveHeightSlider"
+                min="40"
+                max="300"
+                value="80"
+                style="width: 80px"
+                oninput="setWaveHeight(this.value)"
+              />
+              <span
+                id="waveHeightLbl"
+                style="font-size: 10px; color: var(--txt3); min-width: 26px"
+                >80px</span
+              >
+            </div>
+            <div class="vizwrap" id="wWrap" style="height: 80px; margin: 0 7px">
+              <canvas id="waveC"></canvas>
+              <canvas
+                id="waveI"
+                style="
+                  position: absolute;
+                  top: 0;
+                  left: 0;
+                  width: 100%;
+                  height: 100%;
+                "
+              ></canvas>
+            </div>
+          </div>
+
+          <!-- DRAG HANDLE between wave and spec -->
+          <div id="dragWS" class="drag-handle" title="Drag to resize"></div>
+
+          <!-- ═══ SPECTROGRAM PANEL ════════════════════════════════════════════════ -->
+          <div
+            id="specPanel"
+            style="flex-shrink: 0; display: flex; flex-direction: column"
+          >
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding: 3px 7px 2px;
+                background: var(--bg2);
+                border-bottom: 1px solid var(--border);
+              "
+            >
+              <span
+                style="
+                  font-size: 10px;
+                  color: var(--txt2);
+                  text-transform: uppercase;
+                  letter-spacing: 0.06em;
+                "
+                >Spectrogram</span
+              >
+              <div style="flex: 1"></div>
+              <span style="font-size: 10px; color: var(--txt2)">Height:</span>
+              <input
+                type="range"
+                id="specHeightSlider"
+                min="60"
+                max="500"
+                value="160"
+                style="width: 80px"
+                oninput="setSpecHeight(this.value)"
+              />
+              <span
+                id="specHeightLbl"
+                style="font-size: 10px; color: var(--txt3); min-width: 26px"
+                >160px</span
+              >
+            </div>
+            <!-- spec + freq axis as siblings inside a flex row, SAME height -->
+            <div style="display: flex; margin: 0 7px" id="specRow">
+              <div
+                class="vizwrap"
+                id="sWrap"
+                style="height: 160px; flex: 1; min-width: 0; position: relative"
+              >
+                <canvas id="specC"></canvas>
+                <canvas
+                  id="specI"
+                  style="
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                  "
+                ></canvas>
+              </div>
+              <!-- Freq axis — same height, positioned right of sWrap -->
+              <div
+                id="freqAxisWrap"
+                style="
+                  width: 46px;
+                  flex-shrink: 0;
+                  height: 160px;
+                  background: #0a0e14;
+                  border: 1px solid var(--border);
+                  border-left: none;
+                  border-radius: 0 var(--rad) var(--rad) 0;
+                  position: relative;
+                  overflow: hidden;
+                "
+              >
+                <canvas
+                  id="freqAxisC"
+                  style="position: absolute; top: 0; left: 0"
+                ></canvas>
+              </div>
+            </div>
+          </div>
+
+          <!-- DRAG HANDLE between spec and bottom -->
+          <div
+            id="dragSB"
+            class="drag-handle"
+            title="Drag to resize bottom panel"
+          ></div>
+
+          <!-- ═══ MINIMAP / OVERVIEW SCROLLBAR ═══════════════════════════════════ -->
+          <div
+            style="
+              flex-shrink: 0;
+              padding: 3px 7px;
+              background: var(--bg2);
+              border-bottom: 1px solid var(--border);
+            "
+          >
+            <div
+              style="
+                position: relative;
+                height: 22px;
+                background: var(--bg3);
+                border: 1px solid var(--border);
+                border-radius: 3px;
+                overflow: hidden;
+                cursor: pointer;
+              "
+              id="minimapWrap"
+            >
+              <canvas
+                id="minimapC"
+                style="
+                  position: absolute;
+                  top: 0;
+                  left: 0;
+                  width: 100%;
+                  height: 100%;
+                "
+              ></canvas>
+              <!-- view window indicator -->
+              <div
+                id="minimapWindow"
+                style="
+                  position: absolute;
+                  top: 0;
+                  height: 100%;
+                  background: rgba(88, 166, 255, 0.15);
+                  border: 1px solid rgba(88, 166, 255, 0.5);
+                  border-radius: 2px;
+                  cursor: grab;
+                  pointer-events: auto;
+                "
+              ></div>
+            </div>
+          </div>
+
+          <!-- ═══ TRANSPORT BAR ════════════════════════════════════════════════════ -->
+          <div
+            style="
+              flex-shrink: 0;
+              padding: 4px 8px;
+              border-bottom: 1px solid var(--border);
+              background: var(--bg2);
+              display: flex;
+              align-items: center;
+              gap: 7px;
+              flex-wrap: wrap;
+            "
+          >
+            <button
+              onclick="togglePlay()"
+              id="btnPlay"
+              disabled
+              style="width: 75px"
+            >
+              ▶ Play
+            </button>
+            <button onclick="stopPb()" id="btnStop" disabled>■ Stop</button>
+            <span style="color: var(--txt2); font-size: 11px">t =</span>
+            <span
+              id="timeDisp"
+              style="
+                font-size: 13px;
+                color: var(--txt3);
+                min-width: 72px;
+                font-family: monospace;
+              "
+              >0.000 s</span
+            >
+            <div class="sep"></div>
+            <span style="color: var(--txt2); font-size: 11px">Floor %:</span>
+            <input
+              type="number"
+              id="threshPct2"
+              value="5"
+              min="0.1"
+              max="50"
+              step="0.1"
+              style="width: 50px"
+              oninput="syncThresh(this.value)"
+            />
+            <span style="color: var(--txt2); font-size: 11px"
+              >Min dur (ms):</span
+            >
+            <input
+              type="number"
+              id="minDurMs"
+              value="5"
+              min="0.5"
+              max="2000"
+              step="0.5"
+              style="width: 52px"
+            />
+            <span style="color: var(--txt2); font-size: 11px"
+              >Min gap (ms):</span
+            >
+            <input
+              type="number"
+              id="minGapMs"
+              value="5"
+              min="0"
+              max="2000"
+              step="0.5"
+              style="width: 52px"
+            />
+            <span style="color: var(--txt2); font-size: 11px">ML thresh:</span>
+            <input
+              type="number"
+              id="detThresh"
+              value="0.5"
+              min="0.05"
+              max="0.99"
+              step="0.01"
+              style="width: 50px"
+            />
+            <div class="sep"></div>
+            <span style="color: var(--txt2); font-size: 11px">Tool:</span>
+            <button
+              id="toolSelect"
+              onclick="setTool('select')"
+              class="atool"
+              title="Select/Seek (S)"
+            >
+              ↖ Select
+            </button>
+            <button
+              id="toolAnnot"
+              onclick="setTool('annotate')"
+              title="Draw annotation (A)"
+            >
+              ✏ Annotate
+            </button>
+            <button
+              id="toolPan"
+              onclick="setTool('pan')"
+              title="Pan/scroll (H)"
+            >
+              ✋ Pan
+            </button>
+            <button
+              onclick="exportAnnotations()"
+              title="Export Selection table"
+            >
+              ⬇ Annotations
+            </button>
+            <button
+              onclick="clearAllAnnotations()"
+              style="font-size: 11px"
+              title="Clear all selections, detections, and measurements from the spectrogram"
+            >
+              🗑 Clear Spectrogram
+            </button>
+          </div>
+
+          <!-- ═══ BOTTOM TABS ══════════════════════════════════════════════════════ -->
+          <div
+            style="
+              flex: 1;
+              overflow: hidden;
+              padding: 7px;
+              display: flex;
+              flex-direction: column;
+              min-height: 0;
+            "
+          >
+            <div class="tabs">
+              <div class="tab active" onclick="switchTab('detect', this)">
+                Detections &amp; Measurements
+              </div>
+            </div>
+
+            <div
+              id="tab-detect"
+              class="tc active"
+              style="flex: 1; overflow: auto; min-height: 0"
+            >
+              <div
+                style="
+                  display: flex;
+                  gap: 7px;
+                  align-items: center;
+                  flex-wrap: wrap;
+                "
+              >
+                <span style="font-size: 11px; color: var(--txt2)"
+                  >Amplitude detector results</span
+                >
+                <span
+                  style="font-size: 11px; color: var(--txt2); margin-left: 12px"
+                  title="Frequency resolution used to MEASURE spectral features in the table below. Independent of the display FFT, so you can use a small display FFT for temporal detail while still measuring frequency precisely. The FFT is auto-sized (next power of 2) to reach at least this resolution."
+                  >Measure res. (Hz)</span
+                >
+                <input
+                  type="number"
+                  id="measFreqRes"
+                  value="10"
+                  min="1"
+                  max="500"
+                  step="1"
+                  style="width: 60px; font-size: 11px"
+                  onchange="onMeasResChange()"
+                />
+                <span
+                  id="measResInfo"
+                  style="font-size: 10px; color: var(--txt3)"
+                ></span>
+
+                <button
+                  onclick="clearMeasurements()"
+                  id="btnClearMeas"
+                  disabled
+                  style="font-size: 11px"
+                  title="Clear the measurements table"
+                >
+                  🗑 Clear Measurements
+                </button>
+                <button
+                  onclick="computeUnifiedSpectralMetrics()"
+                  id="btnComputeSpectral"
+                  disabled
+                  class="suc"
+                  style="font-size: 11px"
+                  title="Compute spectral metrics for selections or detections and prepare Excel output."
+                >
+                  🔬 Spectral Metrics
+                </button>
+                <button
+                  onclick="saveSpectralMetricsExcel()"
+                  id="btnSaveSpectralExcel"
+                  disabled
+                  class="suc"
+                  style="font-size: 11px"
+                  title="Save the most recently computed spectral metrics as an Excel workbook."
+                >
+                  💾 Save Excel
+                </button>
+              </div>
+              <div id="summaryCards" style="display: none">
+                <div
+                  style="
+                    font-size: 11px;
+                    color: var(--txt2);
+                    margin-bottom: 4px;
+                  "
+                >
+                  Summary statistics
+                </div>
+                <div class="sum-grid" id="sumGrid"></div>
+              </div>
+              <div
+                style="
+                  overflow: auto;
+                  border: 1px solid var(--border);
+                  border-radius: var(--rad);
+                "
+              >
+                <table class="dtable" id="measTable">
+                  <thead>
+                    <tr id="measHead"></tr>
+                  </thead>
+                  <tbody id="measBody"></tbody>
+                </table>
+              </div>
+              <div
+                style="font-size: 11px; color: var(--txt2); margin: 8px 0 3px"
+              >
+                Log
+              </div>
+              <div id="log"></div>
+            </div>
+          </div>
+        </div>
+        <!-- /mainview-analyzer -->
+
+        <!-- ═══ TEMPORAL ANALYSIS VIEW ═══════════════════════════════════════════ -->
+        <div
+          id="mainview-peaks"
+          style="
+            flex: 1;
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+            min-height: 0;
+          "
+        >
+          <div
+            style="
+              flex: 1;
+              overflow-y: auto;
+              min-height: 0;
+              padding: 8px;
+              display: flex;
+              flex-direction: column;
+            "
+          >
+            <!-- ── Parameter panels ── -->
+            <div
+              style="
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+                padding: 4px 0 6px 0;
+                border-bottom: 1px solid var(--border);
+                margin-bottom: 6px;
+              "
+            >
+              <!-- Peak Detection -->
+              <div class="panel" style="min-width: 210px">
+                <h2>Peak Detection</h2>
+                <div style="display: flex; flex-direction: column; gap: 4px">
+                  <div class="row">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 110px"
+                      >Smooth (ms)</span
+                    >
+                    <input
+                      type="number"
+                      id="pkSmooth"
+                      value="1"
+                      min="0.5"
+                      max="50"
+                      step="0.5"
+                      style="width: 78px"
+                    />
+                  </div>
+                  <div class="row">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 110px"
+                      >Peak window (ms)</span
+                    >
+                    <input
+                      type="number"
+                      id="pkWin"
+                      value="5"
+                      min="0.1"
+                      max="200"
+                      step="0.1"
+                      style="width: 78px"
+                    />
+                  </div>
+                  <div class="row">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 110px"
+                      >Peak threshold (%)</span
+                    >
+                    <input
+                      type="number"
+                      id="pkThresh"
+                      value="0.5"
+                      min="0.001"
+                      max="20"
+                      step="0.1"
+                      style="width: 78px"
+                    />
+                  </div>
+                  <div class="row">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 110px"
+                      >Detection thr. (%)</span
+                    >
+                    <input
+                      type="number"
+                      id="pkDetThr"
+                      value="5"
+                      min="0.001"
+                      max="90"
+                      step="0.1"
+                      style="width: 78px"
+                    />
+                  </div>
+                  <div
+                    class="row"
+                    title="Optional lower floor: weak peaks above this value are kept ONLY when they sit within one Max-peak-gap of an accepted (strong) peak. Catches the quiet onset/offset peaks of a train without picking up isolated inter-train noise. Leave blank to disable."
+                  >
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 110px"
+                      >Onset thr. (%)</span
+                    >
+                    <input
+                      type="number"
+                      id="pkLinkThr"
+                      value=""
+                      min="0.001"
+                      max="90"
+                      step="0.1"
+                      placeholder="off"
+                      style="width: 78px"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <!-- Train Grouping -->
+              <div class="panel" style="min-width: 180px">
+                <h2>Train Grouping</h2>
+                <div style="display: flex; flex-direction: column; gap: 4px">
+                  <div class="row">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 110px"
+                      >Max peak gap (ms)</span
+                    >
+                    <input
+                      type="number"
+                      id="pkMaxGap"
+                      value="40"
+                      min="1"
+                      max="500"
+                      step="1"
+                      style="width: 54px"
+                    />
+                  </div>
+                  <div class="row">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 110px"
+                      >Max amp diff (%)</span
+                    >
+                    <input
+                      type="number"
+                      id="pkMaxDiff"
+                      value=""
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      placeholder="off"
+                      style="width: 54px"
+                    />
+                  </div>
+                  <div class="row">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 110px"
+                      >Min peaks/train</span
+                    >
+                    <input
+                      type="number"
+                      id="pkMinPeaks"
+                      value="3"
+                      min="1"
+                      max="20"
+                      step="1"
+                      style="width: 54px"
+                    />
+                  </div>
+                  <div class="row">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 110px"
+                      title="Expand every train (and therefore every motif/sequence) by this many milliseconds on EACH side, to capture the true acoustic onset/offset that precedes/follows each peak's amplitude maximum. Pulse rate and other peak-timing metrics are unaffected."
+                      >Edge pad (ms/side)</span
+                    >
+                    <input
+                      type="number"
+                      id="pkTrainPad"
+                      value="0.5"
+                      min="0"
+                      max="50"
+                      step="0.1"
+                      style="width: 54px"
+                      onchange="
+                        if (typeof pkDrawEnvelope === 'function')
+                          pkDrawEnvelope();
+                      "
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <!-- Arch Detection -->
+              <div class="panel" style="min-width: 180px">
+                <h2>Arch Detection</h2>
+                <div style="display: flex; flex-direction: column; gap: 4px">
+                  <label class="chk" style="font-size: 11px">
+                    <input type="checkbox" id="pkArchEnable" /> Enable arch
+                    criterion
+                  </label>
+                  <div class="row">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 110px"
+                      >Arch hard split</span
+                    >
+                    <input type="checkbox" id="pkArchHard" />
+                  </div>
+                  <div class="row">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 110px"
+                      >Slope window (k)</span
+                    >
+                    <input
+                      type="number"
+                      id="pkArchK"
+                      value="3"
+                      min="2"
+                      max="8"
+                      step="1"
+                      style="width: 54px"
+                    />
+                  </div>
+                  <div class="row">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 110px"
+                      >Drop fraction (%)</span
+                    >
+                    <input
+                      type="number"
+                      id="pkArchDrop"
+                      value="30"
+                      min="5"
+                      max="80"
+                      step="0.1"
+                      style="width: 54px"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <!-- Motif Grouping -->
+              <div class="panel" style="min-width: 180px">
+                <h2>Motif Grouping</h2>
+                <div style="display: flex; flex-direction: column; gap: 4px">
+                  <div class="row">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 110px"
+                      >Max train gap (ms)</span
+                    >
+                    <input
+                      type="number"
+                      id="pkMaxTrainGap"
+                      value="300"
+                      min="10"
+                      max="5000"
+                      step="10"
+                      style="width: 54px"
+                    />
+                  </div>
+                  <label class="chk" style="font-size: 11px">
+                    <input type="checkbox" id="pkMotifSeq" /> Motif sequences
+                  </label>
+                  <div class="row" id="pkMotifSeqRow" style="display: none">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 110px"
+                      >Max motif gap (ms)</span
+                    >
+                    <input
+                      type="number"
+                      id="pkMaxMotifGap"
+                      value="800"
+                      min="50"
+                      max="10000"
+                      step="50"
+                      style="width: 54px"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ── Parameter presets ── -->
+            <div
+              class="row"
+              style="
+                flex-wrap: wrap;
+                gap: 6px;
+                margin-bottom: 4px;
+                align-items: center;
+              "
+            >
+              <span style="font-size: 10px; color: var(--txt2)">Presets:</span>
+              <select
+                id="pkPresetSelect"
+                onchange="pkPresetLoad()"
+                style="font-size: 11px; width: 150px"
+                title="Saved Temporal Analysis parameter sets (stored in this browser)."
+              >
+                <option value="">— select preset —</option>
+                <option value="1">Preset 1</option>
+                <option value="2">Preset 2</option>
+                <option value="3">Preset 3</option>
+                <option value="4">Preset 4</option>
+                <option value="5">Preset 5</option>
+                <option value="6">Preset 6</option>
+                <option value="7">Preset 7</option>
+                <option value="8">Preset 8</option>
+                <option value="9">Preset 9</option>
+                <option value="10">Preset 10</option>
+              </select>
+              <button
+                onclick="pkPresetSave()"
+                style="font-size: 10px; padding: 2px 8px"
+                title="Save the current Temporal Analysis parameters into the selected slot."
+              >
+                💾 Save
+              </button>
+              <button
+                onclick="pkPresetLoad()"
+                style="font-size: 10px; padding: 2px 8px"
+                title="Load the selected preset's parameters."
+              >
+                📂 Load
+              </button>
+              <button
+                onclick="pkPresetDelete()"
+                style="font-size: 10px; padding: 2px 8px"
+                title="Delete the selected preset slot."
+              >
+                🗑 Delete
+              </button>
+              <span
+                id="pkPresetStatus"
+                style="font-size: 10px; color: var(--txt3); margin-left: 4px"
+              ></span>
+            </div>
+
+            <!-- ── Controls ── -->
+            <div
+              class="row"
+              style="
+                flex-wrap: wrap;
+                gap: 6px;
+                margin-bottom: 4px;
+                align-items: center;
+              "
+            >
+              <button
+                onclick="pkConfirm()"
+                id="btnPkConfirm"
+                disabled
+                class="suc"
+              >
+                ✓ Confirm &amp; Compute Metrics
+              </button>
+              <button onclick="pkClear()" style="font-size: 11px">
+                🗑 Clear
+              </button>
+              <span id="pkStatus" style="font-size: 12px; color: var(--txt2)"
+                >Load audio first</span
+              >
+              <span style="flex: 1"></span>
+              <label
+                style="
+                  display: inline-flex;
+                  align-items: center;
+                  gap: 4px;
+                  font-size: 10px;
+                  color: var(--txt2);
+                "
+                title="Choose whether detected units become train or motif selections."
+              >
+                Apply as:
+                <select
+                  id="pkApplySelectionType"
+                  style="font-size: 11px; width: 112px"
+                >
+                  <option value="train" selected>Train selections</option>
+                  <option value="motif">Motif selections</option>
+                </select>
+              </label>
+              <button
+                onclick="pkApplyDetectionsToSpectral()"
+                id="btnPkApplySpectral"
+                disabled
+                style="font-size: 11px; padding: 6px 10px"
+                title="Convert detected units into Spectral Analysis selections."
+              >
+                ▶ Apply to Spectral Analysis
+              </button>
+              <button
+                onclick="pkDetect()"
+                id="btnPkDetect"
+                disabled
+                class="pri"
+              >
+                🔍 Detect Peaks
+              </button>
+            </div>
+
+            <!-- ── Edit-mode controls ── -->
+            <div
+              class="row"
+              style="
+                flex-wrap: wrap;
+                gap: 6px;
+                margin-bottom: 6px;
+                align-items: center;
+              "
+            >
+              <span style="font-size: 10px; color: var(--txt2)">Edit:</span>
+              <button
+                id="btnPkModeSelect"
+                onclick="pkSetMode('select')"
+                class="pri"
+                style="font-size: 10px; padding: 2px 8px"
+                title="Left-click a marker to select it."
+              >
+                ↖ Select
+              </button>
+              <button
+                id="btnPkModeAdd"
+                onclick="pkSetMode('add')"
+                style="font-size: 10px; padding: 2px 8px"
+                title="Click anywhere on the plot to add a peak, snapped to the envelope at that time."
+              >
+                ➕ Add Peak
+              </button>
+              <button
+                onclick="pkClearOverrides()"
+                style="font-size: 10px; padding: 2px 8px"
+                title="Re-run the detected segmentation, discarding manual boundary edits (added/removed peaks are kept)."
+              >
+                ↩ Reset boundaries
+              </button>
+              <span
+                id="pkEditHint"
+                style="font-size: 10px; color: var(--txt3); margin-left: 4px"
+                >Select mode · click selects a peak · shift-drag to box-select
+                (or shift-click) · use the panel for actions · Del to delete
+                selection</span
+              >
+            </div>
+            <div
+              class="row"
+              style="
+                flex-wrap: wrap;
+                gap: 6px;
+                margin-bottom: 6px;
+                align-items: center;
+              "
+            >
+              <span style="font-size: 10px; color: var(--txt2)"
+                >Peak actions:</span
+              >
+              <button
+                id="btnPkAssignLeft"
+                onclick="pkAssignSelection('left')"
+                disabled
+                style="font-size: 10px; padding: 2px 8px"
+                title="Assign the selected peak(s) to the left train."
+              >
+                ◀ Assign left
+              </button>
+              <button
+                id="btnPkAssignRight"
+                onclick="pkAssignSelection('right')"
+                disabled
+                style="font-size: 10px; padding: 2px 8px"
+                title="Assign the selected peak(s) to the right train."
+              >
+                ▶ Assign right
+              </button>
+              <button
+                id="btnPkMergeLeft"
+                onclick="pkMergeSelection('left')"
+                disabled
+                style="font-size: 10px; padding: 2px 8px"
+                title="Merge the left gap for the selected peak."
+              >
+                ⇤ Merge left
+              </button>
+              <button
+                id="btnPkMergeRight"
+                onclick="pkMergeSelection('right')"
+                disabled
+                style="font-size: 10px; padding: 2px 8px"
+                title="Merge the right gap for the selected peak."
+              >
+                ⇥ Merge right
+              </button>
+              <button
+                id="btnPkSplitLeft"
+                onclick="pkSplitSelection('left')"
+                disabled
+                style="font-size: 10px; padding: 2px 8px"
+                title="Split the left gap for the selected peak."
+              >
+                ✂ Split left
+              </button>
+              <button
+                id="btnPkSplitRight"
+                onclick="pkSplitSelection('right')"
+                disabled
+                style="font-size: 10px; padding: 2px 8px"
+                title="Split the right gap for the selected peak."
+              >
+                ✂ Split right
+              </button>
+              <button
+                id="btnPkBulkIsolate"
+                onclick="pkBulkIsolate()"
+                disabled
+                style="font-size: 10px; padding: 2px 8px"
+                title="Make the selected peaks into a single train."
+              >
+                ▭ Isolate
+              </button>
+              <button
+                id="btnPkBulkJoin"
+                onclick="pkBulkJoin()"
+                disabled
+                style="font-size: 10px; padding: 2px 8px"
+                title="Join internal gaps within the selected peaks."
+              >
+                ⇎ Join
+              </button>
+              <button
+                id="btnPkRemoveSel"
+                onclick="pkRemoveSelected()"
+                disabled
+                class="warn"
+                style="font-size: 10px; padding: 2px 8px"
+                title="Remove the selected peak(s)."
+              >
+                ✕ Remove
+              </button>
+              <button
+                id="btnPkClearSelection"
+                onclick="pkClearSelectionAction()"
+                disabled
+                style="font-size: 10px; padding: 2px 8px"
+                title="Clear the current peak selection."
+              >
+                ○ Clear selection
+              </button>
+            </div>
+
+            <!-- ── Zoom controls ── -->
+            <div
+              class="row"
+              style="gap: 6px; margin-bottom: 3px; flex-wrap: wrap"
+            >
+              <span style="font-size: 10px; color: var(--txt2)">Zoom X:</span>
+              <button
+                onclick="pkZoom(2)"
+                style="font-size: 10px; padding: 1px 7px"
+              >
+                +
+              </button>
+              <button
+                onclick="pkZoom(0.5)"
+                style="font-size: 10px; padding: 1px 7px"
+              >
+                −
+              </button>
+              <button
+                onclick="pkZoomReset()"
+                style="font-size: 10px; padding: 1px 7px"
+              >
+                Fit
+              </button>
+              <span
+                style="font-size: 10px; color: var(--txt2); margin-left: 8px"
+                >Amp Y:</span
+              >
+              <button
+                onclick="pkAmpZoom(1.5)"
+                style="font-size: 10px; padding: 1px 7px"
+                title="Magnify amplitude — reveals faint peaks (clips tall ones at the top)."
+              >
+                +
+              </button>
+              <button
+                onclick="pkAmpZoom(1 / 1.5)"
+                style="font-size: 10px; padding: 1px 7px"
+              >
+                −
+              </button>
+              <button
+                onclick="pkAmpReset()"
+                style="font-size: 10px; padding: 1px 7px"
+              >
+                1×
+              </button>
+              <span id="pkAmpInfo" style="font-size: 10px; color: var(--txt3)"
+                >1.0×</span
+              >
+              <label
+                style="
+                  font-size: 10px;
+                  color: var(--txt2);
+                  margin-left: 8px;
+                  display: inline-flex;
+                  align-items: center;
+                  gap: 3px;
+                "
+                title="Show a small synced spectrogram below the envelope to tell real tooth impacts from noise."
+              >
+                <input
+                  type="checkbox"
+                  id="pkShowSpec"
+                  checked
+                  onchange="pkDrawEnvelope()"
+                />Spectrogram
+              </label>
+              <span
+                style="font-size: 10px; color: var(--txt3); margin-left: 8px"
+                >Scroll = zoom X · Shift+scroll = zoom Y · Drag to pan</span
+              >
+              <span
+                id="pkViewInfo"
+                style="font-size: 10px; color: var(--txt2); margin-left: auto"
+              ></span>
+            </div>
+
+            <!-- ── Plot area: envelope (4) + spectrogram (1), fills available height ── -->
+            <div
+              id="pkPlotArea"
+              style="
+                flex: 1 1 auto;
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+                min-height: 220px;
+              "
+            >
+              <div
+                style="
+                  position: relative;
+                  border: 1px solid var(--border);
+                  border-radius: var(--rad);
+                  background: #0d1117;
+                  flex: 4 1 0;
+                  min-height: 0;
+                "
+              >
+                <canvas
+                  id="pkCanvas"
+                  style="display: block; width: 100%; height: 100%"
+                ></canvas>
+              </div>
+              <div
+                id="pkSpecWrap"
+                style="
+                  position: relative;
+                  border: 1px solid var(--border);
+                  border-radius: var(--rad);
+                  background: #0d1117;
+                  flex: 1 1 0;
+                  min-height: 0;
+                "
+              >
+                <canvas
+                  id="pkSpecCanvas"
+                  style="display: block; width: 100%; height: 100%"
+                ></canvas>
+              </div>
+              <!-- Navigation bar (overview + draggable view window) -->
+              <div
+                id="pkNavWrap"
+                style="
+                  position: relative;
+                  border: 1px solid var(--border);
+                  border-radius: var(--rad);
+                  background: #0a0e14;
+                  height: 34px;
+                  flex: 0 0 auto;
+                  cursor: pointer;
+                "
+                title="Overview — click or drag to navigate; drag the highlighted window to pan."
+              >
+                <canvas
+                  id="pkNavCanvas"
+                  style="display: block; width: 100%; height: 100%"
+                ></canvas>
+                <div
+                  id="pkNavWindow"
+                  style="
+                    position: absolute;
+                    top: 0;
+                    height: 100%;
+                    background: rgba(56, 139, 253, 0.22);
+                    border: 1px solid rgba(56, 139, 253, 0.7);
+                    box-sizing: border-box;
+                    pointer-events: none;
+                  "
+                ></div>
+              </div>
+            </div>
+
+            <!-- ── Results tabs ── -->
+            <div
+              id="pkResults"
+              style="display: none; flex: 0 0 auto; margin-top: 6px"
+            >
+              <div
+                style="
+                  display: flex;
+                  gap: 0;
+                  margin-bottom: 6px;
+                  flex-wrap: wrap;
+                "
+              >
+                <button
+                  id="pkTabBtnPeak"
+                  onclick="pkShowTable('peak')"
+                  class="pri"
+                  style="
+                    font-size: 11px;
+                    padding: 3px 10px;
+                    border-radius: var(--rad) 0 0 var(--rad);
+                  "
+                >
+                  Peaks
+                </button>
+                <button
+                  id="pkTabBtnTrain"
+                  onclick="pkShowTable('train')"
+                  style="font-size: 11px; padding: 3px 10px; border-radius: 0"
+                >
+                  Trains
+                </button>
+                <button
+                  id="pkTabBtnMotif"
+                  onclick="pkShowTable('motif')"
+                  style="font-size: 11px; padding: 3px 10px; border-radius: 0"
+                >
+                  Motifs
+                </button>
+                <button
+                  id="pkTabBtnMotSeq"
+                  onclick="pkShowTable('motseq')"
+                  style="
+                    font-size: 11px;
+                    padding: 3px 10px;
+                    border-radius: 0;
+                    display: none;
+                  "
+                >
+                  Motif Sequences
+                </button>
+                <button
+                  id="pkTabBtnSumm"
+                  onclick="pkShowTable('summ')"
+                  style="
+                    font-size: 11px;
+                    padding: 3px 10px;
+                    border-radius: 0 var(--rad) var(--rad) 0;
+                  "
+                >
+                  Summary
+                </button>
+                <button
+                  onclick="pkExportCurrent()"
+                  style="font-size: 11px; padding: 3px 10px; margin-left: 8px"
+                >
+                  ⬇ Export CSV
+                </button>
+                <button
+                  onclick="pkExportAll()"
+                  class="suc"
+                  style="font-size: 11px; padding: 3px 10px; margin-left: 4px"
+                  title="Export all tables (Peaks, Trains, Motifs, MotifSeqs, Summary) into one Excel workbook — one sheet each."
+                >
+                  ⬇ Export All (Excel)
+                </button>
+              </div>
+              <div id="pkSummCards" style="margin-bottom: 6px"></div>
+              <div
+                style="
+                  overflow: auto;
+                  border: 1px solid var(--border);
+                  border-radius: var(--rad);
+                  max-height: 220px;
+                "
+              >
+                <table class="dtable" id="pkTable">
+                  <thead>
+                    <tr id="pkTableHead"></tr>
+                  </thead>
+                  <tbody id="pkTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <!-- /tab-peaks -->
+        </div>
+        <!-- /mainview-peaks -->
+
+        <div
+          id="mainview-plot"
+          style="
+            flex: 1;
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+            min-height: 0;
+          "
+        >
+          <!-- ── TOP TOOLBAR: two-row layout ── -->
+          <div
+            style="
+              flex-shrink: 0;
+              background: var(--bg2);
+              border-bottom: 1px solid var(--border);
+            "
+          >
+            <!-- ROW 1: Presets | Colormap/Contrast/Brightness | Size/DPI | Title/Font | Render -->
+            <div
+              style="
+                padding: 5px 9px;
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+                align-items: center;
+                border-bottom: 1px solid var(--border);
+              "
+            >
+              <!-- Preset group -->
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 4px;
+                  flex-shrink: 0;
+                "
+              >
+                <span
+                  style="
+                    font-size: 10px;
+                    color: var(--txt2);
+                    text-transform: uppercase;
+                    letter-spacing: 0.05em;
+                  "
+                  >Preset</span
+                >
+                <select id="presetSelect" style="font-size: 11px; width: 100px">
+                  <option value="">— slot —</option>
+                  <option value="1">Preset 1</option>
+                  <option value="2">Preset 2</option>
+                  <option value="3">Preset 3</option>
+                  <option value="4">Preset 4</option>
+                  <option value="5">Preset 5</option>
+                  <option value="6">Preset 6</option>
+                  <option value="7">Preset 7</option>
+                  <option value="8">Preset 8</option>
+                  <option value="9">Preset 9</option>
+                  <option value="10">Preset 10</option>
+                </select>
+                <button
+                  onclick="loadPreset()"
+                  class="pri"
+                  style="font-size: 11px; padding: 3px 8px"
+                >
+                  📂 Load
+                </button>
+                <button
+                  onclick="savePreset()"
+                  class="suc"
+                  style="font-size: 11px; padding: 3px 8px"
+                >
+                  💾 Save
+                </button>
+                <button
+                  onclick="clearPreset()"
+                  style="font-size: 11px; padding: 3px 6px"
+                  title="Clear preset"
+                >
+                  🗑
+                </button>
+                <span
+                  id="presetStatus"
+                  style="font-size: 10px; color: var(--txt3); min-width: 90px"
+                ></span>
+              </div>
+
+              <div class="sep" style="height: 22px"></div>
+
+              <!-- Spectrogram Colormap + Contrast + Brightness -->
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 4px;
+                  flex-shrink: 0;
+                "
+              >
+                <span style="font-size: 10px; color: var(--txt2)"
+                  >Spectrogram Colormap</span
+                >
+                <select id="plotCmap" style="font-size: 11px; width: 96px">
+                  <option value="gray" selected>Gray</option>
+                  <option value="inferno">Inferno</option>
+                  <option value="viridis">Viridis</option>
+                  <option value="hot">Hot</option>
+                  <option value="cyan">Cyan-Magenta</option>
+                </select>
+                <span style="font-size: 10px; color: var(--txt2)"
+                  >Contrast</span
+                >
+                <input
+                  type="number"
+                  id="plotContrast"
+                  value="60"
+                  min="10"
+                  max="120"
+                  style="width: 54px; font-size: 11px"
+                />
+                <span style="font-size: 10px; color: var(--txt2)"
+                  >Brightness</span
+                >
+                <input
+                  type="number"
+                  id="plotBright"
+                  value="0"
+                  min="-30"
+                  max="30"
+                  style="width: 50px; font-size: 11px"
+                />
+              </div>
+
+              <div class="sep" style="height: 22px"></div>
+
+              <!-- Fig size -->
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 4px;
+                  flex-shrink: 0;
+                "
+              >
+                <span style="font-size: 10px; color: var(--txt2)">W</span>
+                <input
+                  type="number"
+                  id="plotW"
+                  value="1800"
+                  min="400"
+                  max="8000"
+                  step="100"
+                  style="width: 54px; font-size: 11px"
+                />
+                <span style="font-size: 10px; color: var(--txt2)">H</span>
+                <input
+                  type="number"
+                  id="plotH"
+                  value="900"
+                  min="200"
+                  max="4000"
+                  step="50"
+                  style="width: 50px; font-size: 11px"
+                />
+                <span style="font-size: 10px; color: var(--txt2)">DPI</span>
+                <select id="plotDpi" style="font-size: 11px; width: 52px">
+                  <option value="1">72</option>
+                  <option value="2" selected>144</option>
+                  <option value="3">216</option>
+                  <option value="4">288</option>
+                </select>
+              </div>
+
+              <div class="sep" style="height: 22px"></div>
+
+              <!-- Title + font -->
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 4px;
+                  flex-shrink: 0;
+                "
+              >
+                <span style="font-size: 10px; color: var(--txt2)">Title</span>
+                <input
+                  type="text"
+                  id="plotTitle"
+                  value=""
+                  placeholder="optional"
+                  style="
+                    width: 100px;
+                    background: var(--bg3);
+                    border: 1px solid var(--border2);
+                    color: var(--txt);
+                    padding: 2px 5px;
+                    border-radius: var(--rad);
+                    font-size: 11px;
+                  "
+                />
+                <span style="font-size: 10px; color: var(--txt2)">Font</span>
+                <select id="plotFont" style="font-size: 11px; width: 90px">
+                  <option value="Arial,sans-serif" selected>Arial</option>
+                  <option value="'Times New Roman',serif">Times NR</option>
+                  <option value="Helvetica,sans-serif">Helvetica</option>
+                  <option value="Consolas,monospace">Consolas</option>
+                </select>
+              </div>
+
+              <div style="flex: 1"></div>
+
+              <!-- Render/Download always visible -->
+              <button
+                onclick="renderPlot()"
+                class="pri"
+                style="font-size: 12px; padding: 4px 12px; flex-shrink: 0"
+              >
+                🖼 Render
+              </button>
+              <button
+                onclick="downloadPlot()"
+                id="btnDownloadPlot"
+                disabled
+                class="suc"
+                style="font-size: 12px; padding: 4px 12px; flex-shrink: 0"
+              >
+                ⬇ PNG
+              </button>
+            </div>
+
+            <!-- ROW 2: Time & Frequency parameters -->
+            <div
+              style="
+                padding: 4px 9px;
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+                align-items: center;
+              "
+            >
+              <!-- Time range -->
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 4px;
+                  flex-shrink: 0;
+                "
+              >
+                <span style="font-size: 10px; color: var(--txt2)">Tmin</span>
+                <input
+                  type="number"
+                  id="plotT0"
+                  value="0"
+                  min="0"
+                  step="0.001"
+                  style="width: 64px; font-size: 11px"
+                />
+                <span style="font-size: 10px; color: var(--txt2)">Tmax</span>
+                <input
+                  type="number"
+                  id="plotT1"
+                  value="1"
+                  min="0"
+                  step="0.001"
+                  style="width: 64px; font-size: 11px"
+                />
+                <button
+                  onclick="plotUseView()"
+                  style="font-size: 10px; padding: 3px 6px"
+                  title="Use current analyzer view"
+                >
+                  ↔ view
+                </button>
+              </div>
+
+              <div class="sep" style="height: 18px"></div>
+
+              <!-- Freq range -->
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 4px;
+                  flex-shrink: 0;
+                "
+              >
+                <span style="font-size: 10px; color: var(--txt2)">Fmin</span>
+                <input
+                  type="number"
+                  id="plotF0"
+                  value="0"
+                  min="0"
+                  style="width: 58px; font-size: 11px"
+                />
+                <span style="font-size: 10px; color: var(--txt2)">Fmax</span>
+                <input
+                  type="number"
+                  id="plotF1"
+                  value="20000"
+                  min="0"
+                  style="width: 64px; font-size: 11px"
+                />
+                <button
+                  onclick="plotUseFreqView()"
+                  style="font-size: 10px; padding: 3px 6px"
+                  title="Use current freq view"
+                >
+                  ↕ view
+                </button>
+              </div>
+
+              <div class="sep" style="height: 18px"></div>
+
+              <!-- Time unit + T-step + F-step -->
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 4px;
+                  flex-shrink: 0;
+                "
+              >
+                <span style="font-size: 10px; color: var(--txt2)"
+                  >Time unit</span
+                >
+                <select id="plotTimeUnit" style="font-size: 11px; width: 60px">
+                  <option value="auto" selected>Auto</option>
+                  <option value="s">s</option>
+                  <option value="ms">ms</option>
+                </select>
+                <span style="font-size: 10px; color: var(--txt2)">T-step</span>
+                <select id="plotTimeStep" style="font-size: 11px; width: 68px">
+                  <option value="auto" selected>Auto</option>
+                  <option value="0.001">1 ms</option>
+                  <option value="0.002">2 ms</option>
+                  <option value="0.005">5 ms</option>
+                  <option value="0.01">10 ms</option>
+                  <option value="0.02">20 ms</option>
+                  <option value="0.05">50 ms</option>
+                  <option value="0.1">100 ms</option>
+                  <option value="0.2">200 ms</option>
+                  <option value="0.5">500 ms</option>
+                  <option value="1">1 s</option>
+                  <option value="2">2 s</option>
+                  <option value="5">5 s</option>
+                </select>
+                <span style="font-size: 10px; color: var(--txt2)">F-step</span>
+                <select id="plotFreqStep" style="font-size: 11px; width: 62px">
+                  <option value="auto" selected>Auto</option>
+                  <option value="10000">10 kHz</option>
+                  <option value="5000">5 kHz</option>
+                  <option value="2000">2 kHz</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── MAIN AREA: preview left, detail panels right ── -->
+          <div style="flex: 1; display: flex; overflow: hidden; min-height: 0">
+            <!-- Preview -->
+            <div
+              style="
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+                padding: 7px;
+                gap: 5px;
+                min-width: 0;
+              "
+            >
+              <div
+                id="plotStatus"
+                style="flex-shrink: 0; font-size: 11px; color: var(--txt2)"
+              >
+                Set time/freq range then click Render.
+              </div>
+              <div
+                id="plotPreviewWrap"
+                style="
+                  flex: 1;
+                  border: 1px solid var(--border);
+                  border-radius: var(--rad);
+                  overflow: auto;
+                  background: #111;
+                  display: flex;
+                  align-items: flex-start;
+                  justify-content: center;
+                  min-height: 100px;
+                "
+              >
+                <canvas
+                  id="plotPreviewC"
+                  style="max-width: 100%; display: block"
+                ></canvas>
+              </div>
+            </div>
+
+            <!-- Right-side detail panels (scrollable) -->
+            <div
+              style="
+                width: 230px;
+                flex-shrink: 0;
+                overflow-y: auto;
+                border-left: 1px solid var(--border);
+                padding: 7px;
+                display: flex;
+                flex-direction: column;
+                gap: 7px;
+                background: var(--bg2);
+              "
+            >
+              <div class="panel">
+                <h2>Figure Layout</h2>
+                <div style="display: flex; flex-direction: column; gap: 4px">
+                  <div class="row">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 62px"
+                      >Spec/Wave</span
+                    >
+                    <input
+                      type="number"
+                      id="plotSpecRatio"
+                      value="3"
+                      min="1"
+                      max="8"
+                      step="0.5"
+                      style="width: 45px"
+                    />
+                    <span style="font-size: 10px; color: var(--txt2)"
+                      >ratio</span
+                    >
+                  </div>
+                  <div class="row">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 62px"
+                      >PS width</span
+                    >
+                    <input
+                      type="number"
+                      id="plotPsWidth"
+                      value="160"
+                      min="60"
+                      max="400"
+                      step="10"
+                      style="width: 50px"
+                    />
+                    <span style="font-size: 10px; color: var(--txt2)">px</span>
+                  </div>
+                  <div class="row">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 62px"
+                      >Noise floor</span
+                    >
+                    <input
+                      type="number"
+                      id="plotNoiseFloor"
+                      value="-50"
+                      min="-200"
+                      max="0"
+                      step="5"
+                      style="width: 50px"
+                    />
+                    <span style="font-size: 10px; color: var(--txt2)"
+                      >dBFS</span
+                    >
+                  </div>
+                  <div class="row" style="gap: 10px">
+                    <label class="chk"
+                      ><input type="checkbox" id="plotShowWave" checked />
+                      Waveform</label
+                    >
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <h2>FFT</h2>
+                <div style="display: flex; flex-direction: column; gap: 4px">
+                  <div style="font-size: 10px; color: var(--txt2)">
+                    Auto WL:
+                    <span id="plotWlAuto" style="color: var(--txt3)">—</span>
+                  </div>
+                  <div class="row">
+                    <label class="chk" style="font-size: 11px"
+                      ><input type="checkbox" id="plotManualFft" />
+                      Override</label
+                    >
+                    <select id="plotFft" disabled style="width: 70px">
+                      <option value="256">256</option>
+                      <option value="512">512</option>
+                      <option value="1024">1024</option>
+                      <option value="2048">2048</option>
+                      <option value="4096" selected>4096</option>
+                      <option value="8192">8192</option>
+                      <option value="16384">16384</option>
+                    </select>
+                  </div>
+                  <div class="row">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 52px"
+                      >Overlap</span
+                    >
+                    <select id="plotOverlap" style="width: 80px">
+                      <option value="0.75">75%</option>
+                      <option value="0.875">87.5%</option>
+                      <option value="0.9375" selected>93.75%</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <h2>Colors</h2>
+                <div style="display: flex; flex-direction: column; gap: 4px">
+                  <div class="row" style="justify-content: space-between">
+                    <span style="color: var(--txt2); font-size: 11px"
+                      >Fig BG</span
+                    >
+                    <div style="display: flex; gap: 3px; align-items: center">
+                      <input
+                        type="color"
+                        id="plotFigBg"
+                        value="#ffffff"
+                        style="
+                          width: 24px;
+                          height: 20px;
+                          border: 1px solid var(--border2);
+                          border-radius: 3px;
+                          padding: 1px;
+                          background: var(--bg3);
+                          cursor: pointer;
+                        "
+                      />
+                      <select
+                        id="plotFigBgPreset"
+                        style="font-size: 10px; width: 76px"
+                        onchange="
+                          if (this.value) $('plotFigBg').value = this.value;
+                        "
+                      >
+                        <option value="">Custom…</option>
+                        <option value="#ffffff">White</option>
+                        <option value="#000000">Black</option>
+                        <option value="#101418">Dark</option>
+                        <option value="#f5f5f0">Cream</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="row" style="justify-content: space-between">
+                    <span style="color: var(--txt2); font-size: 11px"
+                      >Text/axes</span
+                    >
+                    <div style="display: flex; gap: 3px; align-items: center">
+                      <input
+                        type="color"
+                        id="plotFgColor"
+                        value="#111111"
+                        style="
+                          width: 24px;
+                          height: 20px;
+                          border: 1px solid var(--border2);
+                          border-radius: 3px;
+                          padding: 1px;
+                          background: var(--bg3);
+                          cursor: pointer;
+                        "
+                      />
+                      <select
+                        id="plotFgPreset"
+                        style="font-size: 10px; width: 76px"
+                        onchange="
+                          if (this.value) $('plotFgColor').value = this.value;
+                        "
+                      >
+                        <option value="">Custom…</option>
+                        <option value="#111111">Black</option>
+                        <option value="#d0d8e0">Light grey</option>
+                        <option value="#ffffff">White</option>
+                        <option value="#444444">Dark grey</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="row" style="justify-content: space-between">
+                    <span style="color: var(--txt2); font-size: 11px"
+                      >Spec BG</span
+                    >
+                    <div style="display: flex; gap: 3px; align-items: center">
+                      <input
+                        type="color"
+                        id="plotSpecBg"
+                        value="#ffffff"
+                        style="
+                          width: 24px;
+                          height: 20px;
+                          border: 1px solid var(--border2);
+                          border-radius: 3px;
+                          padding: 1px;
+                          background: var(--bg3);
+                          cursor: pointer;
+                        "
+                      />
+                      <select
+                        id="plotSpecBgPreset"
+                        style="font-size: 10px; width: 76px"
+                        onchange="
+                          if (this.value) $('plotSpecBg').value = this.value;
+                        "
+                      >
+                        <option value="">Custom…</option>
+                        <option value="#ffffff">White</option>
+                        <option value="#000000">Black</option>
+                        <option value="#0d1117">Dark navy</option>
+                      </select>
+                    </div>
+                  </div>
+                  <label class="chk" style="font-size: 11px"
+                    ><input type="checkbox" id="plotInvertSpec" /> Invert
+                    colormap</label
+                  >
+                  <div class="row" style="justify-content: space-between">
+                    <span style="color: var(--txt2); font-size: 11px"
+                      >Wave line</span
+                    >
+                    <div style="display: flex; gap: 3px; align-items: center">
+                      <input
+                        type="color"
+                        id="plotWaveColor"
+                        value="#000000"
+                        style="
+                          width: 24px;
+                          height: 20px;
+                          border: 1px solid var(--border2);
+                          border-radius: 3px;
+                          padding: 1px;
+                          background: var(--bg3);
+                          cursor: pointer;
+                        "
+                      />
+                      <select
+                        id="plotWaveColorPreset"
+                        style="font-size: 10px; width: 76px"
+                        onchange="
+                          if (this.value) $('plotWaveColor').value = this.value;
+                        "
+                      >
+                        <option value="">Custom…</option>
+                        <option value="#2060c0">Blue</option>
+                        <option value="#000000">Black</option>
+                        <option value="#3fb950">Green</option>
+                        <option value="#f78166">Orange-red</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="row" style="justify-content: space-between">
+                    <span style="color: var(--txt2); font-size: 11px"
+                      >Wave BG</span
+                    >
+                    <div style="display: flex; gap: 3px; align-items: center">
+                      <input
+                        type="color"
+                        id="plotWaveBg"
+                        value="#ffffff"
+                        style="
+                          width: 24px;
+                          height: 20px;
+                          border: 1px solid var(--border2);
+                          border-radius: 3px;
+                          padding: 1px;
+                          background: var(--bg3);
+                          cursor: pointer;
+                        "
+                      />
+                      <select
+                        id="plotWaveBgPreset"
+                        style="font-size: 10px; width: 76px"
+                        onchange="
+                          if (this.value) $('plotWaveBg').value = this.value;
+                        "
+                      >
+                        <option value="">Custom…</option>
+                        <option value="#ffffff">White</option>
+                        <option value="#f8f9fa">Off-white</option>
+                        <option value="#000000">Black</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <h2>Power Spectrum</h2>
+                <div style="display: flex; flex-direction: column; gap: 4px">
+                  <div class="row" style="justify-content: space-between">
+                    <span style="color: var(--txt2); font-size: 11px"
+                      >Fill</span
+                    >
+                    <div style="display: flex; gap: 3px; align-items: center">
+                      <input
+                        type="color"
+                        id="plotPsFillColor"
+                        value="#000000"
+                        style="
+                          width: 24px;
+                          height: 20px;
+                          border: 1px solid var(--border2);
+                          border-radius: 3px;
+                          padding: 1px;
+                          background: var(--bg3);
+                          cursor: pointer;
+                        "
+                      />
+                      <select
+                        id="plotPsFillPreset"
+                        style="font-size: 10px; width: 76px"
+                        onchange="
+                          if (this.value)
+                            $('plotPsFillColor').value = this.value;
+                        "
+                      >
+                        <option value="">Custom…</option>
+                        <option value="#000000">Black</option>
+                        <option value="#c00000">Dark red</option>
+                        <option value="#2060c0">Blue</option>
+                        <option value="#3fb950">Green</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="row" style="justify-content: space-between">
+                    <span style="color: var(--txt2); font-size: 11px"
+                      >Opacity</span
+                    >
+                    <div style="display: flex; gap: 4px; align-items: center">
+                      <input
+                        type="range"
+                        id="plotPsFillOpacity"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value="1"
+                        style="width: 65px"
+                      />
+                      <span
+                        id="plotPsFillOpacityLbl"
+                        style="
+                          font-size: 10px;
+                          color: var(--txt3);
+                          min-width: 28px;
+                        "
+                        >1.00</span
+                      >
+                    </div>
+                  </div>
+                  <div class="row" style="justify-content: space-between">
+                    <span style="color: var(--txt2); font-size: 11px"
+                      >PS BG</span
+                    >
+                    <div style="display: flex; gap: 3px; align-items: center">
+                      <input
+                        type="color"
+                        id="plotPsBg"
+                        value="#ffffff"
+                        style="
+                          width: 24px;
+                          height: 20px;
+                          border: 1px solid var(--border2);
+                          border-radius: 3px;
+                          padding: 1px;
+                          background: var(--bg3);
+                          cursor: pointer;
+                        "
+                      />
+                      <select
+                        id="plotPsBgPreset"
+                        style="font-size: 10px; width: 76px"
+                        onchange="
+                          if (this.value) $('plotPsBg').value = this.value;
+                        "
+                      >
+                        <option value="">Custom…</option>
+                        <option value="#ffffff">White</option>
+                        <option value="#f8f9fa">Off-white</option>
+                        <option value="#000000">Black</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <h2>Typography</h2>
+                <div style="display: flex; flex-direction: column; gap: 4px">
+                  <div class="row" style="justify-content: space-between">
+                    <span style="color: var(--txt2); font-size: 11px"
+                      >Legend</span
+                    >
+                    <div style="display: flex; gap: 4px; align-items: center">
+                      <input
+                        type="number"
+                        id="plotLegendSize"
+                        value="11"
+                        min="6"
+                        max="30"
+                        step="0.5"
+                        style="width: 46px"
+                      />
+                      <span style="font-size: 10px; color: var(--txt2)"
+                        >pt</span
+                      >
+                    </div>
+                  </div>
+                  <div class="row" style="justify-content: space-between">
+                    <span style="color: var(--txt2); font-size: 11px"
+                      >Tick labels</span
+                    >
+                    <div style="display: flex; gap: 4px; align-items: center">
+                      <input
+                        type="number"
+                        id="plotTickSize"
+                        value="9"
+                        min="5"
+                        max="28"
+                        step="0.5"
+                        style="width: 46px"
+                      />
+                      <span style="font-size: 10px; color: var(--txt2)"
+                        >pt</span
+                      >
+                    </div>
+                  </div>
+                  <label class="chk" style="font-size: 11px; margin-top: 2px"
+                    ><input type="checkbox" id="plotShowParamStamp" />
+                    Parameters stamp</label
+                  >
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- /main area -->
+        </div>
+        <!-- /mainview-plot -->
+      </div>
+      <!-- /mainCol -->
+    </div>
+    <!-- /layout -->
+
+    <script src="main.js"></script>
+  </body>
+</html>
