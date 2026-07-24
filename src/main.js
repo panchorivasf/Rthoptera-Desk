@@ -233,6 +233,15 @@
         // Build rawSamples/duration/audioBuffer from the (currently empty) edit
         // chain and run the full downstream recompute + view reset.
         rebuildAudioFromEdits({ resetView: true });
+
+        // Register the freshly imported (unedited) audio in the Loaded Audio
+        // panel so the user can switch back to it later.
+        addAudioToLibrary(
+          currentAudioFileName,
+          currentAudioFileFolder,
+          rawSamples,
+          sampleRate,
+        );
       };
 
       // Re-derive rawSamples, duration, audioBuffer, peakAmp from origSamples +
@@ -600,6 +609,8 @@
         if (typeof refreshAnnotList === "function") refreshAnnotList();
         const sx = $("btnSaveSpectralExcel");
         if (sx) sx.disabled = true;
+        const trA = $("btnExportTextReport");
+        if (trA) trA.disabled = true;
         const cb = $("btnComputeSpectral");
         if (cb) cb.disabled = true;
       }
@@ -646,6 +657,8 @@
           if (!detections.length) {
             const sx = $("btnSaveSpectralExcel");
             if (sx) sx.disabled = true;
+            const trB = $("btnExportTextReport");
+            if (trB) trB.disabled = true;
           }
         }
         // ── Temporal-analysis peaks ──────────────────────────────────────
@@ -714,6 +727,7 @@
           "editLp",
           "btnApplyBandpass",
           "btnClearBandpass",
+          "btnSaveEditedAudio",
         ].forEach((id) => {
           const el = $(id);
           if (el) el.disabled = !has;
@@ -747,6 +761,300 @@
               : "No edits applied.";
           }
         }
+        const undoBtn = $("btnUndoEdit");
+        if (undoBtn) {
+          const last = audioEdits[audioEdits.length - 1];
+          undoBtn.disabled = !has || !last;
+          undoBtn.title = last
+            ? "Undo " + (last.type === "trim" ? "trim" : "bandpass filter")
+            : "Nothing to undo.";
+        }
+      }
+
+      // Reverts the most recently applied/changed edit (trim or bandpass —
+      // whichever is last in the chain), by delegating to that edit's own
+      // "remove" function so behaviour (incl. clearing time-dependent work
+      // on a trim) matches clicking its Reset button exactly. Calling this
+      // repeatedly walks the chain back to the untouched original.
+      function undoLastAudioEdit() {
+        if (!audioEdits.length) {
+          log("Nothing to undo.", "warn");
+          return;
+        }
+        const last = audioEdits[audioEdits.length - 1];
+        if (last.type === "trim") clearTrim();
+        else if (last.type === "bandpass") clearBandpass();
+      }
+
+      // ═══════════════════════════════════════════════════════════════════
+      // AUDIO LIBRARY — in-memory tray of loaded/edited audio buffers, shown
+      // in the bottom panel. Importing a file always adds an entry; "Save
+      // Edited Audio As…" snapshots the CURRENT (post-edit) audio under a
+      // new name without touching the original. Clicking an entry makes it
+      // the active working audio, following the same reset path as a fresh
+      // file import (origSamples/audioEdits reset, then rebuild).
+      // ═══════════════════════════════════════════════════════════════════
+      let audioLibrary = []; // { id, name, folder, samples, rate, dur, addedAt }
+      let audioLibNextId = 1;
+      let audioLibActiveId = null;
+      let audioLibCols = parseInt(localStorage.getItem("rt_audiolib_cols"), 10) || 5;
+      let audioLibRows = parseInt(localStorage.getItem("rt_audiolib_rows"), 10) || 2;
+
+      function addAudioToLibrary(name, folder, samples, rate) {
+        const entry = {
+          id: audioLibNextId++,
+          name,
+          folder: folder || "",
+          // Defensive copy: later edits build new arrays via origSamples, but
+          // this guarantees the stored snapshot can never be aliased/mutated.
+          samples: Float32Array.from(samples),
+          rate,
+          dur: samples.length / rate,
+          addedAt: Date.now(),
+        };
+        audioLibrary.push(entry);
+        audioLibActiveId = entry.id;
+        renderAudioLibraryPanel();
+        return entry;
+      }
+
+      function removeAudioFromLibrary(id) {
+        audioLibrary = audioLibrary.filter((e) => e.id !== id);
+        if (audioLibActiveId === id) audioLibActiveId = null;
+        renderAudioLibraryPanel();
+      }
+
+      // Makes a stored entry the active working audio — mirrors the tail of
+      // the file-import handler (origSamples/audioEdits reset, then the
+      // shared rebuild + UI-reset chain) so behaviour matches a fresh import.
+      function selectLibraryAudio(id) {
+        const entry = audioLibrary.find((e) => e.id === id);
+        if (!entry) return;
+        audioLibActiveId = id;
+
+        currentAudioFileName = entry.name;
+        currentAudioFileFolder = entry.folder || "";
+        $("fileLabel").textContent =
+          entry.name.length > 24 ? entry.name.slice(0, 22) + "…" : entry.name;
+
+        origSamples = entry.samples;
+        origSampleRate = entry.rate;
+        audioEdits = [];
+        $("infoCh").textContent = 1; // library entries are already mono-mixed
+        $("pkStatus").textContent =
+          "Audio loaded — set parameters and click Detect Peaks";
+
+        resetEditUiForNewFile();
+        rebuildAudioFromEdits({ resetView: true });
+        renderAudioLibraryPanel();
+        log('Switched to "' + entry.name + '"', "ok");
+      }
+
+      function toggleAudioLibSettings() {
+        const row = $("audioLibSettingsRow");
+        row.style.display = row.style.display === "none" ? "flex" : "none";
+      }
+
+      function setAudioLibGrid() {
+        const c = Math.max(
+          1,
+          Math.min(10, parseInt($("audioLibColsInput").value, 10) || 5),
+        );
+        const r = Math.max(
+          1,
+          Math.min(6, parseInt($("audioLibRowsInput").value, 10) || 2),
+        );
+        audioLibCols = c;
+        audioLibRows = r;
+        localStorage.setItem("rt_audiolib_cols", c);
+        localStorage.setItem("rt_audiolib_rows", r);
+        renderAudioLibraryPanel();
+      }
+
+      function renderAudioLibraryPanel() {
+        $("audioLibColsInput").value = audioLibCols;
+        $("audioLibRowsInput").value = audioLibRows;
+        $("audioLibCount").textContent = audioLibrary.length
+          ? "(" + audioLibrary.length + ")"
+          : "";
+
+        const grid = $("audioLibGrid");
+        const cellH = 42;
+        grid.style.gridTemplateColumns =
+          "repeat(" + audioLibCols + ", minmax(90px, 1fr))";
+        grid.style.gridAutoRows = cellH + "px";
+        grid.style.maxHeight = audioLibRows * (cellH + 4) + "px";
+        grid.innerHTML = "";
+
+        if (!audioLibrary.length) {
+          const d = document.createElement("div");
+          d.style.cssText =
+            "grid-column:1/-1;color:var(--txt2);font-size:11px;padding:4px 0";
+          d.textContent = "Import an audio file to see it here.";
+          grid.appendChild(d);
+          return;
+        }
+
+        audioLibrary.forEach((entry) => {
+          const cell = document.createElement("div");
+          cell.className =
+            "alib-cell" + (entry.id === audioLibActiveId ? " active" : "");
+          cell.title =
+            entry.name +
+            " — " +
+            entry.dur.toFixed(2) +
+            "s @ " +
+            entry.rate +
+            " Hz";
+
+          const xBtn = document.createElement("button");
+          xBtn.className = "alib-x";
+          xBtn.textContent = "×";
+          xBtn.title = "Remove from Loaded Audio";
+          xBtn.onclick = (ev) => {
+            ev.stopPropagation();
+            removeAudioFromLibrary(entry.id);
+          };
+
+          const dlBtn = document.createElement("button");
+          dlBtn.className = "alib-dl";
+          dlBtn.textContent = "⬇";
+          dlBtn.title = "Export as WAV to disk";
+          dlBtn.onclick = (ev) => {
+            ev.stopPropagation();
+            exportLibraryEntry(entry.id);
+          };
+
+          const nameEl = document.createElement("div");
+          nameEl.className = "alib-name";
+          nameEl.textContent = entry.name;
+
+          const metaEl = document.createElement("div");
+          metaEl.className = "alib-meta";
+          metaEl.textContent =
+            entry.dur.toFixed(2) + "s · " + (entry.rate / 1000).toFixed(1) + "kHz";
+
+          cell.appendChild(xBtn);
+          cell.appendChild(dlBtn);
+          cell.appendChild(nameEl);
+          cell.appendChild(metaEl);
+          cell.onclick = () => selectLibraryAudio(entry.id);
+          grid.appendChild(cell);
+        });
+      }
+
+      // ── Save Edited Audio As… modal ─────────────────────────────────────
+      // "1500" -> "1.5khz", "1000" -> "1khz", "500" -> "500hz"
+      function freqSuffixLabel(hz) {
+        if (hz >= 1000) {
+          const khz = hz / 1000;
+          return (Number.isInteger(khz) ? khz : Math.round(khz * 10) / 10) + "khz";
+        }
+        return Math.round(hz) + "hz";
+      }
+
+      // Builds a descriptive suffix from the active edit chain — e.g. a 1kHz
+      // high-pass plus a trim becomes "_1khzhpf_trimmed". Edits are not
+      // mutually exclusive: each applicable one appends its own tag.
+      function defaultEditSuffix() {
+        const parts = [];
+        const bp = audioEdits.find((e) => e.type === "bandpass");
+        if (bp) {
+          const nyq = origSampleRate / 2;
+          if (bp.hp > 0) parts.push(freqSuffixLabel(bp.hp) + "hpf");
+          if (bp.lp < nyq) parts.push(freqSuffixLabel(bp.lp) + "lpf");
+        }
+        if (audioEdits.some((e) => e.type === "trim")) parts.push("trimmed");
+        return parts.length ? "_" + parts.join("_") : "_copy";
+      }
+
+      function openSaveEditedAudioModal() {
+        if (!rawSamples) {
+          log("Load audio first", "warn");
+          return;
+        }
+        const base = (currentAudioFileName || "audio").replace(/\.[^/.]+$/, "");
+        $("saveAudioNameInput").value = base + defaultEditSuffix();
+        $("saveAudioModalOverlay").classList.add("show");
+        setTimeout(() => {
+          const inp = $("saveAudioNameInput");
+          inp.focus();
+          inp.select();
+        }, 0);
+      }
+
+      function closeSaveEditedAudioModal() {
+        $("saveAudioModalOverlay").classList.remove("show");
+      }
+
+      function confirmSaveEditedAudio(alsoExport) {
+        const name = ($("saveAudioNameInput").value || "").trim();
+        if (!name) {
+          alert("Enter a name for the saved audio.");
+          return;
+        }
+        addAudioToLibrary(name, currentAudioFileFolder, rawSamples, sampleRate);
+        if (alsoExport) exportAudioToDisk(name, rawSamples, sampleRate);
+        closeSaveEditedAudioModal();
+        log('Saved edited audio as "' + name + '" in the Loaded Audio panel', "ok");
+      }
+
+      // ── WAV export (16-bit PCM, mono) ───────────────────────────────────
+      function _buildWav(samples, rate) {
+        const numSamples = samples.length;
+        const dataSize = numSamples * 2;
+        const buf = new ArrayBuffer(44 + dataSize);
+        const view = new DataView(buf);
+        let o = 0;
+        const writeStr = (s) => {
+          for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i));
+          o += s.length;
+        };
+        writeStr("RIFF");
+        view.setUint32(o, 36 + dataSize, true);
+        o += 4;
+        writeStr("WAVE");
+        writeStr("fmt ");
+        view.setUint32(o, 16, true);
+        o += 4; // PCM fmt chunk size
+        view.setUint16(o, 1, true);
+        o += 2; // audio format = PCM
+        view.setUint16(o, 1, true);
+        o += 2; // channels = 1 (mono)
+        view.setUint32(o, rate, true);
+        o += 4;
+        view.setUint32(o, rate * 2, true);
+        o += 4; // byte rate
+        view.setUint16(o, 2, true);
+        o += 2; // block align
+        view.setUint16(o, 16, true);
+        o += 2; // bits per sample
+        writeStr("data");
+        view.setUint32(o, dataSize, true);
+        o += 4;
+        for (let i = 0; i < numSamples; i++) {
+          const s = Math.max(-1, Math.min(1, samples[i]));
+          view.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+          o += 2;
+        }
+        return new Uint8Array(buf);
+      }
+
+      function exportAudioToDisk(name, samples, rate) {
+        try {
+          const bytes = _buildWav(samples, rate);
+          const fname = /\.wav$/i.test(name) ? name : name + ".wav";
+          dlFile(fname, bytes, "audio/wav");
+          log('Exporting "' + fname + '" to disk…', "ok");
+        } catch (e) {
+          log("Audio export failed: " + e.message, "err");
+        }
+      }
+
+      function exportLibraryEntry(id) {
+        const entry = audioLibrary.find((e) => e.id === id);
+        if (!entry) return;
+        exportAudioToDisk(entry.name, entry.samples, entry.rate);
       }
 
       function readWavSampleRate(ab) {
@@ -1882,6 +2190,7 @@
         detMeasurements = [];
         spectralMetricsRows = null;
         selAid = null;
+        nextAid = 1; // restart selection numbering, incl. for later "Apply to Spectral Analysis"
         $("btnExport").disabled = true;
         $("detCount").textContent = "";
         $("detBadge").textContent = "";
@@ -1889,6 +2198,7 @@
         $("measBody").innerHTML = "";
         $("summaryCards").style.display = "none";
         $("btnSaveSpectralExcel").disabled = true;
+        $("btnExportTextReport").disabled = true;
         const _exMeasA = $("btnExportMeas");
         if (_exMeasA) _exMeasA.disabled = true;
         $("btnClearMeas").disabled = true;
@@ -1907,9 +2217,11 @@
           : "";
         const _compute = $("btnComputeSpectral");
         const _save = $("btnSaveSpectralExcel");
+        const _report = $("btnExportTextReport");
         const enabled = rawSamples && annotations.length;
         if (_compute) _compute.disabled = !enabled;
         if (_save) _save.disabled = true;
+        if (_report) _report.disabled = true;
         spectralMetricsRows = null;
         if (!annotations.length) {
           const d = document.createElement("div");
@@ -2471,6 +2783,8 @@
           // No metrics yet -> keep Save Excel disabled until Spectral Metrics runs.
           const saveExcel = $("btnSaveSpectralExcel");
           if (saveExcel) saveExcel.disabled = true;
+          const reportBtn = $("btnExportTextReport");
+          if (reportBtn) reportBtn.disabled = true;
         }
         render();
         renderMinimap();
@@ -2522,6 +2836,8 @@
           computeMeasurements();
           const saveBtn = $("btnSaveSpectralExcel");
           if (saveBtn) saveBtn.disabled = false;
+          const reportBtn = $("btnExportTextReport");
+          if (reportBtn) reportBtn.disabled = false;
           log(
             "Computed measurements from detections; see Measurements pane.",
             "ok",
@@ -2572,6 +2888,9 @@
             iq_bw_khz: m.iq_bw_khz,
             spec_entropy: m.spec_entropy,
             spec_flatness: m.spec_flatness,
+            q_3db: m.q_3db,
+            q_10db: m.q_10db,
+            q_20db: m.q_20db,
           };
         });
 
@@ -2592,12 +2911,17 @@
           iq_bw_khz: r.iq_bw_khz,
           spec_entropy: r.spec_entropy,
           spec_flatness: r.spec_flatness,
+          q_3db: r.q_3db,
+          q_10db: r.q_10db,
+          q_20db: r.q_20db,
         }));
 
         renderMeasTable();
 
         const saveBtn = $("btnSaveSpectralExcel");
         if (saveBtn) saveBtn.disabled = false;
+        const reportBtn = $("btnExportTextReport");
+        if (reportBtn) reportBtn.disabled = false;
         log(
           "Computed spectral metrics for " +
             spectralMetricsRows.length +
@@ -2818,6 +3142,33 @@
         }
         const bw10 = (bHi10 - bLo10) * binHz;
 
+        // -3dB (half-power) bandwidth, for Q-factor. Power ratio for -3dB is
+        // 10^(-3/10) ≈ 0.5012, distinct from the amplitude-domain "half" of 0.5.
+        const pow3 = peakPow * Math.pow(10, -3 / 10);
+        let bLo3 = peakBin,
+          bHi3 = peakBin;
+        for (let b = peakBin; b >= 0; b--) {
+          if (spec[b] < pow3) {
+            bLo3 = b;
+            break;
+          }
+        }
+        for (let b = peakBin; b < bins; b++) {
+          if (spec[b] < pow3) {
+            bHi3 = b;
+            break;
+          }
+        }
+        const bw3 = (bHi3 - bLo3) * binHz;
+
+        // Q-factor = peak frequency / bandwidth, at each of three standard
+        // bandwidth definitions. Null when the bandwidth collapsed to 0 bins
+        // (e.g. a single-bin peak at a coarse FFT size).
+        const qAt = (bwHz) => (bwHz > 0 ? peakFreq / bwHz : null);
+        const q3db = qAt(bw3);
+        const q10db = qAt(bw10);
+        const q20db = qAt(freqMax20 - freqMin20);
+
         let cumPow = 0,
           q25b = 0,
           q75b = bins - 1,
@@ -2846,6 +3197,9 @@
           iq_bw_khz: khz3(iqBw),
           spec_entropy: Math.round(entNorm * 1e4) / 1e4,
           spec_flatness: Math.round(flatness * 1e4) / 1e4,
+          q_3db: q3db !== null ? Math.round(q3db * 100) / 100 : null,
+          q_10db: q10db !== null ? Math.round(q10db * 100) / 100 : null,
+          q_20db: q20db !== null ? Math.round(q20db * 100) / 100 : null,
         };
       }
 
@@ -2902,6 +3256,21 @@
           { k: "bw_20db_khz", lbl: "BW -20dB (kHz)", fmt: (v) => v.toFixed(3) },
           { k: "bw_10db_khz", lbl: "BW -10dB (kHz)", fmt: (v) => v.toFixed(3) },
           {
+            k: "q_3db",
+            lbl: "Q -3dB",
+            fmt: (v) => (v != null ? v.toFixed(2) : "—"),
+          },
+          {
+            k: "q_10db",
+            lbl: "Q -10dB",
+            fmt: (v) => (v != null ? v.toFixed(2) : "—"),
+          },
+          {
+            k: "q_20db",
+            lbl: "Q -20dB",
+            fmt: (v) => (v != null ? v.toFixed(2) : "—"),
+          },
+          {
             k: "spec_centroid_khz",
             lbl: "Centroid (kHz)",
             fmt: (v) => v.toFixed(3),
@@ -2936,6 +3305,9 @@
         const fmins = detMeasurements.map((m) => m.freq_min_khz);
         const fmaxs = detMeasurements.map((m) => m.freq_max_khz);
         const ents = detMeasurements.map((m) => m.spec_entropy);
+        const q3s = detMeasurements
+          .map((m) => m.q_3db)
+          .filter((v) => v !== null && v !== undefined);
         function mean(a) {
           return a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0;
         }
@@ -2968,6 +3340,16 @@
             fmt: (v) => v.toFixed(3),
           },
           { lbl: "SD peak freq (kHz)", v: sd(peaks), fmt: (v) => v.toFixed(3) },
+          {
+            lbl: "Mean Q -3dB",
+            v: mean(q3s),
+            fmt: (v) => (q3s.length ? v.toFixed(2) : "—"),
+          },
+          {
+            lbl: "SD Q -3dB",
+            v: sd(q3s),
+            fmt: (v) => (q3s.length ? v.toFixed(2) : "—"),
+          },
           {
             lbl: "Min freq -20dB (kHz)",
             v: mn(fmins),
@@ -3010,6 +3392,7 @@
         if (_exMeasC) _exMeasC.disabled = true;
         $("btnClearMeas").disabled = true;
         $("btnSaveSpectralExcel").disabled = true;
+        $("btnExportTextReport").disabled = true;
         const computeBtn = $("btnComputeSpectral");
         if (computeBtn) computeBtn.disabled = !annotations.length;
         $("detCount").textContent = detections.length
@@ -3980,17 +4363,21 @@
       // MAIN VIEW TABS (Analyzer / Export Plot)
       // ═══════════════════════════════════════════════════════════════════
       function switchMainTab(name, el) {
-        ["analyzer", "plot", "peaks"].forEach((n) => {
+        ["analyzer", "plot", "peaks", "oscstack", "osczoom"].forEach((n) => {
           const t = $("maintab-" + n);
           if (t) t.classList.toggle("active", n === name);
         });
         const a = $("mainview-analyzer");
         const p = $("mainview-plot");
         const k = $("mainview-peaks");
+        const o = $("mainview-oscstack");
+        const z = $("mainview-osczoom");
         const sb = $("sidebar");
         if (a) a.style.display = name === "analyzer" ? "flex" : "none";
         if (p) p.style.display = name === "plot" ? "flex" : "none";
         if (k) k.style.display = name === "peaks" ? "flex" : "none";
+        if (o) o.style.display = name === "oscstack" ? "flex" : "none";
+        if (z) z.style.display = name === "osczoom" ? "flex" : "none";
         // Sidebar is only relevant for the Analyzer
         if (sb) sb.style.display = name === "analyzer" ? "flex" : "none";
         if (name === "peaks")
@@ -6603,6 +6990,259 @@
         return out;
       }
 
+      // ── Minimal DOCX writer (OOXML + stored-ZIP, reuses _zipStore) ────────
+      function _buildDocxDocumentXml(title, paragraphs) {
+        let body =
+          '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr>' +
+          '<w:t xml:space="preserve">' +
+          _xmlEsc(title) +
+          "</w:t></w:r></w:p>" +
+          "<w:p/>";
+        paragraphs.forEach((p) => {
+          body +=
+            '<w:p><w:pPr><w:spacing w:after="200"/></w:pPr><w:r><w:t xml:space="preserve">' +
+            _xmlEsc(p) +
+            "</w:t></w:r></w:p>";
+        });
+        return (
+          '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+          '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+          "<w:body>" +
+          body +
+          "<w:sectPr/></w:body></w:document>"
+        );
+      }
+      function _buildDocx(title, paragraphs) {
+        const files = {};
+        files["[Content_Types].xml"] =
+          '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+          '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+          '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+          '<Default Extension="xml" ContentType="application/xml"/>' +
+          '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
+          "</Types>";
+        files["_rels/.rels"] =
+          '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
+          "</Relationships>";
+        files["word/document.xml"] = _buildDocxDocumentXml(title, paragraphs);
+        return _zipStore(files);
+      }
+
+      // Turns the current measurements table into a short plain-language
+      // narrative ("The X file had a peak frequency of A ± B kHz…"), one
+      // paragraph per topic, skipping any metric with no valid values.
+      function buildTextReportParagraphs() {
+        if (!detMeasurements || !detMeasurements.length) return null;
+        const n = detMeasurements.length;
+        const nums = (k) =>
+          detMeasurements
+            .map((m) => m[k])
+            .filter((v) => typeof v === "number" && isFinite(v));
+        const mean = (a) =>
+          a.length ? a.reduce((s, v) => s + v, 0) / a.length : null;
+        const sd = (a) => {
+          if (!a.length) return null;
+          const m = mean(a);
+          return Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / a.length);
+        };
+        const pm = (a, d) => {
+          const m = mean(a),
+            s = sd(a);
+          return m == null ? null : m.toFixed(d) + " ± " + s.toFixed(d);
+        };
+
+        const fname = currentAudioFileName || "recording";
+        const unitWord = n === 1 ? "unit" : "units";
+        const totalDurS = duration ? duration.toFixed(2) + " s" : "an unknown duration";
+
+        const durs = nums("dur_ms");
+        const peaks = nums("peak_freq_khz");
+        const bw20 = nums("bw_20db_khz");
+        const bw10 = nums("bw_10db_khz");
+        const q3 = nums("q_3db");
+        const ent = nums("spec_entropy");
+        const cent = nums("spec_centroid_khz");
+
+        const paras = [];
+        paras.push(
+          `The ${fname} file contained ${n} measured sound ${unitWord} over a total recording duration of ${totalDurS}.`,
+        );
+
+        const bits = [];
+        if (peaks.length)
+          bits.push(`a peak frequency of ${pm(peaks, 3)} kHz (mean ± SD)`);
+        if (durs.length) bits.push(`a duration of ${pm(durs, 2)} ms`);
+        if (bits.length)
+          paras.push(
+            `The average sound unit had ${bits.join("; ")}.`,
+          );
+
+        const bwBits = [];
+        if (bw20.length) bwBits.push(`-20 dB bandwidth of ${pm(bw20, 3)} kHz`);
+        if (bw10.length) bwBits.push(`-10 dB bandwidth of ${pm(bw10, 3)} kHz`);
+        if (bwBits.length)
+          paras.push(`Bandwidth measured a mean ${bwBits.join(" and a mean ")}.`);
+
+        if (q3.length)
+          paras.push(`The average Q-factor at -3 dB was ${pm(q3, 2)}.`);
+
+        const shapeBits = [];
+        if (cent.length)
+          shapeBits.push(`a spectral centroid of ${pm(cent, 3)} kHz`);
+        if (ent.length) shapeBits.push(`a spectral entropy of ${pm(ent, 4)}`);
+        if (shapeBits.length)
+          paras.push(
+            `On average, sound units had ${shapeBits.join(" and ")}.`,
+          );
+
+        return paras;
+      }
+
+      function exportTextReport() {
+        if (!rawSamples) {
+          log("Load audio first", "warn");
+          return;
+        }
+        const paragraphs = buildTextReportParagraphs();
+        if (!paragraphs || !paragraphs.length) {
+          log("Compute spectral metrics before exporting a report.", "warn");
+          return;
+        }
+        try {
+          const fname = currentAudioFileName || "recording";
+          const bytes = _buildDocx(
+            "Spectral Analysis Report — " + fname,
+            paragraphs,
+          );
+          dlFile(
+            "spectral_analysis_report.docx",
+            bytes,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          );
+          log("Saved text report", "ok");
+        } catch (e) {
+          log("Text report export failed: " + e.message, "err");
+        }
+      }
+
+      // ── Measurement-column glossary (Explain Metrics modal) ────────────────
+      const METRIC_GLOSSARY = [
+        {
+          lbl: "#",
+          desc: "Sequential index of the measured unit (selection or detection), in chronological order.",
+        },
+        {
+          lbl: "Start (s)",
+          desc: "Start time of the unit, in seconds from the beginning of the recording.",
+        },
+        {
+          lbl: "End (s)",
+          desc: "End time of the unit, in seconds from the beginning of the recording.",
+        },
+        {
+          lbl: "Dur (ms)",
+          desc: "Duration of the unit, in milliseconds (End − Start).",
+        },
+        {
+          lbl: "Gap (ms)",
+          desc: "Silence gap since the end of the previous unit, in milliseconds. Blank for the first unit.",
+        },
+        {
+          lbl: "Peak Freq (kHz)",
+          desc: "Frequency with the highest power in the unit's averaged power spectrum, refined by parabolic interpolation between adjacent FFT bins.",
+        },
+        {
+          lbl: "Freq Min -20dB (kHz)",
+          desc: "Lowest frequency at which spectral power is still within 20 dB of the peak.",
+        },
+        {
+          lbl: "Freq Max -20dB (kHz)",
+          desc: "Highest frequency at which spectral power is still within 20 dB of the peak.",
+        },
+        {
+          lbl: "BW -20dB (kHz)",
+          desc: "Bandwidth spanning the -20 dB power threshold around the peak (Freq Max − Freq Min at -20 dB) — brackets most of the signal's energy.",
+        },
+        {
+          lbl: "BW -10dB (kHz)",
+          desc: "Narrower bandwidth spanning the -10 dB power threshold around the peak, closer to the energy core of the signal than the -20 dB bandwidth.",
+        },
+        {
+          lbl: "Q -3dB",
+          desc: "Quality factor at the half-power (-3 dB) bandwidth: peak frequency divided by the -3 dB bandwidth. Higher Q means a narrower, more tonal spectral peak; lower Q means a broader, noisier one.",
+        },
+        {
+          lbl: "Q -10dB",
+          desc: "Quality factor using the -10 dB bandwidth instead of -3 dB — a wider bandwidth definition, so typically lower than Q -3dB for the same signal.",
+        },
+        {
+          lbl: "Q -20dB",
+          desc: "Quality factor using the -20 dB bandwidth — the widest of the three, and typically the lowest Q value.",
+        },
+        {
+          lbl: "Centroid (kHz)",
+          desc: "Power-weighted mean frequency of the spectrum, the spectral \"center of mass\". Can differ from the peak frequency when the spectrum is asymmetric.",
+        },
+        {
+          lbl: "IQ BW (kHz)",
+          desc: "Inter-quartile bandwidth: the frequency span between the 25th and 75th percentile of cumulative spectral power — a robust measure of spectral spread.",
+        },
+        {
+          lbl: "Entropy",
+          desc: "Normalized Shannon entropy of the power spectrum (0–1). Low values indicate a tonal, concentrated spectrum; high values indicate a noisy, flat spectrum.",
+        },
+        {
+          lbl: "Flatness",
+          desc: "Ratio of the geometric to arithmetic mean of the spectrum (0–1). Near 0 for tonal signals with a sharp peak, near 1 for white-noise-like signals.",
+        },
+      ];
+
+      function openMetricsExplainer() {
+        const body = $("metricsModalBody");
+        body.innerHTML = "";
+        const dl = document.createElement("dl");
+        METRIC_GLOSSARY.forEach((m) => {
+          const dt = document.createElement("dt");
+          dt.textContent = m.lbl;
+          const dd = document.createElement("dd");
+          dd.textContent = m.desc;
+          dl.appendChild(dt);
+          dl.appendChild(dd);
+        });
+        body.appendChild(dl);
+        $("metricsModalOverlay").classList.add("show");
+      }
+
+      function closeMetricsExplainer() {
+        $("metricsModalOverlay").classList.remove("show");
+      }
+
+      document.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Escape") return;
+        if ($("metricsModalOverlay").classList.contains("show")) closeMetricsExplainer();
+        if ($("saveAudioModalOverlay").classList.contains("show")) closeSaveEditedAudioModal();
+      });
+
+      function downloadMetricsExplainerDocx() {
+        try {
+          const paragraphs = METRIC_GLOSSARY.map((m) => m.lbl + " — " + m.desc);
+          const bytes = _buildDocx(
+            "Rthoptera — Measurement Columns Explained",
+            paragraphs,
+          );
+          dlFile(
+            "measurement_columns_explained.docx",
+            bytes,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          );
+          log("Saved metrics explainer", "ok");
+        } catch (e) {
+          log("Explainer export failed: " + e.message, "err");
+        }
+      }
+
       function pkClear() {
         pkEnv = null;
         pkPeaks = [];
@@ -6750,3 +7390,7 @@
 
       // Enable Detect Peaks button when audio loads
       // (hooked into existing load pipeline via a small addition)
+
+      // Sync the Loaded Audio panel's settings inputs with any persisted
+      // grid size on first load.
+      renderAudioLibraryPanel();
