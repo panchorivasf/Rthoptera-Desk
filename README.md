@@ -1,10 +1,10 @@
-# Rthoptera 2.0
+# Rthoptera Desk
 
 Desktop app for insect bioacoustics analysis, based on the Rthoptera package.
 
 ## Download
 
-Go to the [Releases](https://github.com/panchorivasf/Rthoptera_2.0/releases) page and download the installer for your operating system:
+Go to the [Releases](https://github.com/panchorivasf/Rthoptera-Desk/releases) page and download the installer for your operating system:
 
 | OS | File to download |
 |---|---|
@@ -21,4 +21,4 @@ If you're unsure, click the Apple menu → **About This Mac**. If it says "Apple
 
 ## About
 
-Rthoptera 2.0 is a cross-platform desktop application for analyzing insect sounds. It is built with [Tauri](https://tauri.app).
+Rthoptera Desk is a cross-platform desktop application for analyzing insect sounds. It is built with [Tauri](https://tauri.app).
