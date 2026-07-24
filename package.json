@@ -1,7 +1,7 @@
 {
   "name": "rthoptera",
   "private": true,
-  "version": "0.1.01",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "tauri": "tauri"

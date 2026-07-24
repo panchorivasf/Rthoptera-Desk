@@ -359,3 +359,146 @@
         top: 0;
         left: 0;
       }
+
+      .osc-annot {
+        user-select: none;
+      }
+      .osc-annot.osc-sel {
+        outline: 1px dashed #2060c0;
+        outline-offset: 2px;
+      }
+
+      .modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+      }
+      .modal-overlay.show {
+        display: flex;
+      }
+      .modal-box {
+        background: var(--bg2);
+        border: 1px solid var(--border2);
+        border-radius: var(--rad);
+        width: min(700px, 90vw);
+        max-height: 80vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+      }
+      .modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+      .modal-header h2 {
+        margin: 0;
+        font-size: 13px;
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--txt);
+      }
+      .modal-body {
+        overflow-y: auto;
+        padding: 12px 14px;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .modal-body dt {
+        font-weight: 700;
+        color: var(--txt3);
+        margin-top: 10px;
+      }
+      .modal-body dt:first-child {
+        margin-top: 0;
+      }
+      .modal-body dd {
+        margin: 2px 0 0 0;
+        color: var(--txt2);
+      }
+      .modal-footer {
+        padding: 10px 14px;
+        border-top: 1px solid var(--border);
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        flex-shrink: 0;
+      }
+
+      .alib-cell {
+        position: relative;
+        background: var(--bg3);
+        border: 1px solid var(--border2);
+        border-radius: var(--rad);
+        padding: 4px 36px 4px 6px;
+        cursor: pointer;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        transition: background 0.1s, border-color 0.1s;
+      }
+      .alib-cell:hover {
+        background: var(--bg4);
+      }
+      .alib-cell.active {
+        border-color: var(--accent2);
+        box-shadow: inset 0 0 0 1px var(--accent2);
+      }
+      .alib-name {
+        font-size: 11px;
+        color: var(--txt);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .alib-meta {
+        font-size: 10px;
+        color: var(--txt2);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .alib-x {
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        width: 16px;
+        height: 16px;
+        line-height: 14px;
+        text-align: center;
+        padding: 0;
+        font-size: 11px;
+        background: transparent;
+        border: none;
+        color: var(--txt2);
+      }
+      .alib-x:hover {
+        color: var(--red);
+        background: transparent;
+      }
+      .alib-dl {
+        position: absolute;
+        top: 2px;
+        right: 18px;
+        width: 16px;
+        height: 16px;
+        line-height: 14px;
+        text-align: center;
+        padding: 0;
+        font-size: 11px;
+        background: transparent;
+        border: none;
+        color: var(--txt2);
+      }
+      .alib-dl:hover {
+        color: var(--txt3);
+        background: transparent;
+      }
