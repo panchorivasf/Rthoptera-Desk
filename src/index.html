@@ -660,6 +660,14 @@
           >
             Osc. Zoom
           </div>
+          <div
+            class="tab"
+            id="maintab-habitus"
+            onclick="switchMainTab('habitus', this)"
+            style="font-size: 12px; padding: 4px 14px"
+          >
+            Habitus
+          </div>
         </div>
 
         <!-- ═══ ANALYZER VIEW ══════════════════════════════════════════════════════ -->
@@ -3071,6 +3079,165 @@
           </div>
         </div>
         <!-- /mainview-osczoom -->
+
+        <!-- ═══ HABITUS PLOT VIEW ═════════════════════════════════════════════════ -->
+        <div
+          id="mainview-habitus"
+          style="
+            flex: 1;
+            display: none;
+            overflow: hidden;
+            min-height: 0;
+          "
+        >
+          <div style="flex: 1; display: flex; overflow: hidden; min-height: 0; width: 100%">
+            <!-- Side controls -->
+            <div
+              style="
+                width: 260px;
+                flex-shrink: 0;
+                overflow-y: auto;
+                border-right: 1px solid var(--border);
+                padding: 8px;
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                background: var(--bg2);
+              "
+            >
+              <div class="panel">
+                <h2>Recordings</h2>
+                <div style="display: flex; flex-direction: column; gap: 6px">
+                  <button onclick="document.getElementById('habFiles').click()" class="pri" style="font-size: 11px">
+                    📂 Add audio files…
+                  </button>
+                  <input type="file" id="habFiles" accept=".wav,.mp3,.flac,.ogg,.aiff,.aif" multiple style="display: none" onchange="habAddFiles(this.files)" />
+                  <button onclick="habUseLoadedAudio()" style="font-size: 11px">➕ Add currently loaded audio</button>
+                  <div id="habWaveList" style="display: flex; flex-direction: column; gap: 2px; font-size: 11px;">
+                    <div style="color: var(--txt2); font-size: 11px">No waves loaded.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <h2>Spectrum</h2>
+                <div style="display: flex; flex-direction: column; gap: 5px">
+                  <div class="row">
+                    <span style="color: var(--txt2); font-size: 11px; width: 90px">Window (wl)</span>
+                    <select id="habWl" style="font-size: 11px; flex: 1">
+                      <option value="128">128</option>
+                      <option value="256">256</option>
+                      <option value="512">512</option>
+                      <option value="1024" selected>1024</option>
+                      <option value="2048">2048</option>
+                      <option value="4096">4096</option>
+                      <option value="8192">8192</option>
+                    </select>
+                  </div>
+                  <div class="row">
+                    <span style="color: var(--txt2); font-size: 11px; width: 90px">Overlap (%)</span>
+                    <input type="number" id="habOvlp" value="75" min="0" max="99" style="width: 64px" />
+                  </div>
+                  <div class="row">
+                    <span style="color: var(--txt2); font-size: 11px; width: 90px">Window fn.</span>
+                    <select id="habWn" style="font-size: 11px; flex: 1">
+                      <option value="hanning" selected>hanning</option>
+                      <option value="hamming">hamming</option>
+                      <option value="blackman">blackman</option>
+                      <option value="bartlett">bartlett</option>
+                      <option value="flattop">flattop</option>
+                      <option value="rectangle">rectangle</option>
+                    </select>
+                  </div>
+                  <div class="row">
+                    <span style="color: var(--txt2); font-size: 11px; width: 90px">Scale</span>
+                    <select id="habScale" onchange="habToggleScaleFields()" style="font-size: 11px; flex: 1">
+                      <option value="linear" selected>linear</option>
+                      <option value="dB">dB</option>
+                      <option value="dBFS">dBFS</option>
+                    </select>
+                  </div>
+                  <div class="row">
+                    <span style="color: var(--txt2); font-size: 11px; width: 90px">Min. Freq (kHz)</span>
+                    <input type="number" id="habFmin" value="0" min="0" step="1" style="width: 64px" />
+                  </div>
+                  <div class="row">
+                    <span style="color: var(--txt2); font-size: 11px; width: 90px">Max. Freq (kHz)</span>
+                    <input type="number" id="habFmax" value="48" min="1" step="1" style="width: 64px" />
+                  </div>
+                  <div class="row" id="habYMinRow" style="display: none">
+                    <span style="color: var(--txt2); font-size: 11px; width: 90px">Min. Amp (dB)</span>
+                    <input type="number" id="habYMin" value="-50" style="width: 64px" />
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <h2>Contour + Band</h2>
+                <div style="display: flex; flex-direction: column; gap: 5px">
+                  <div class="row">
+                    <span style="color: var(--txt2); font-size: 11px; width: 90px">Central stat</span>
+                    <select id="habCentral" style="font-size: 11px; flex: 1">
+                      <option value="mean" selected>mean</option>
+                      <option value="median">median</option>
+                    </select>
+                  </div>
+                  <div class="row">
+                    <span style="color: var(--txt2); font-size: 11px; width: 90px">Band width (×SD)</span>
+                    <input type="number" id="habBandMult" value="1" min="0" step="0.5" style="width: 64px" />
+                  </div>
+                  <div class="row" style="justify-content: space-between">
+                    <span style="color: var(--txt2); font-size: 11px">Line color</span>
+                    <input type="color" id="habLineColor" value="#000000" style="width: 24px; height: 20px; border: 1px solid var(--border2); border-radius: 3px; padding: 1px; background: var(--bg3); cursor: pointer" />
+                  </div>
+                  <div class="row" style="justify-content: space-between">
+                    <span style="color: var(--txt2); font-size: 11px">Band color</span>
+                    <input type="color" id="habBandColor" value="#000000" style="width: 24px; height: 20px; border: 1px solid var(--border2); border-radius: 3px; padding: 1px; background: var(--bg3); cursor: pointer" />
+                  </div>
+                  <div class="row">
+                    <span style="color: var(--txt2); font-size: 11px; width: 90px">Band opacity</span>
+                    <input type="range" id="habBandAlpha" value="0.3" min="0" max="1" step="0.05" style="flex: 1" />
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <h2>Habitus photo</h2>
+                <div style="display: flex; flex-direction: column; gap: 6px">
+                  <button onclick="document.getElementById('habImgFile').click()" style="font-size: 11px">🖼 Select image…</button>
+                  <input type="file" id="habImgFile" accept="image/png,image/jpeg,image/tiff" style="display: none" onchange="habOnImageFile(this.files)" />
+                  <div id="habImgStatus" style="color: var(--txt2); font-size: 10px">No image selected.</div>
+                  <button onclick="habResetImagePosition()" style="font-size: 11px">↺ Reset photo position</button>
+                  <div class="row" style="justify-content: space-between">
+                    <span style="color: var(--txt2); font-size: 11px">Label A color</span>
+                    <input type="color" id="habLabelColorA" value="#000000" oninput="habUpdateLetterColor('A', this.value)" style="width: 24px; height: 20px; border: 1px solid var(--border2); border-radius: 3px; padding: 1px; background: var(--bg3); cursor: pointer" />
+                  </div>
+                  <div class="row" style="justify-content: space-between">
+                    <span style="color: var(--txt2); font-size: 11px">Label B color</span>
+                    <input type="color" id="habLabelColorB" value="#000000" oninput="habUpdateLetterColor('B', this.value)" style="width: 24px; height: 20px; border: 1px solid var(--border2); border-radius: 3px; padding: 1px; background: var(--bg3); cursor: pointer" />
+                  </div>
+                </div>
+              </div>
+
+              <button onclick="habDraw()" id="btnHabDraw" class="pri" disabled style="font-size: 12px">🖼 Draw</button>
+              <button onclick="habExportSvg()" id="btnHabSvg" disabled style="font-size: 11px">⬇ SVG</button>
+              <button onclick="habExportPng()" id="btnHabPng" disabled style="font-size: 11px">⬇ PNG</button>
+              <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
+                All recordings must share the same sample rate — they're
+                averaged bin-for-bin into the mean/median contour and SD
+                band. The photo is optional; without one, only the
+                spectrum panel is drawn. Drag the photo to pan it within
+                the frame; drag the A/B letters to reposition them.
+              </div>
+            </div>
+
+            <!-- Preview -->
+            <div style="flex: 1; overflow: auto; padding: 10px; background: #111; display: flex; justify-content: center; align-items: flex-start">
+              <div id="habPreviewWrap" style="background: #fff; width: 100%"></div>
+            </div>
+          </div>
+        </div>
+        <!-- /mainview-habitus -->
       </div>
       <!-- /mainCol -->
     </div>
@@ -3244,5 +3411,6 @@
     <script src="main.js"></script>
     <script src="oscillogram_stack.js"></script>
     <script src="oscillogram_zoom.js"></script>
+    <script src="habitus_plot.js"></script>
   </body>
 </html>
