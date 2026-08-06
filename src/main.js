@@ -4363,7 +4363,7 @@
       // MAIN VIEW TABS (Analyzer / Export Plot)
       // ═══════════════════════════════════════════════════════════════════
       function switchMainTab(name, el) {
-        ["analyzer", "plot", "peaks", "oscstack", "osczoom"].forEach((n) => {
+        ["analyzer", "plot", "peaks", "oscstack", "osczoom", "habitus"].forEach((n) => {
           const t = $("maintab-" + n);
           if (t) t.classList.toggle("active", n === name);
         });
@@ -4372,12 +4372,14 @@
         const k = $("mainview-peaks");
         const o = $("mainview-oscstack");
         const z = $("mainview-osczoom");
+        const h = $("mainview-habitus");
         const sb = $("sidebar");
         if (a) a.style.display = name === "analyzer" ? "flex" : "none";
         if (p) p.style.display = name === "plot" ? "flex" : "none";
         if (k) k.style.display = name === "peaks" ? "flex" : "none";
         if (o) o.style.display = name === "oscstack" ? "flex" : "none";
         if (z) z.style.display = name === "osczoom" ? "flex" : "none";
+        if (h) h.style.display = name === "habitus" ? "flex" : "none";
         // Sidebar is only relevant for the Analyzer
         if (sb) sb.style.display = name === "analyzer" ? "flex" : "none";
         if (name === "peaks")
