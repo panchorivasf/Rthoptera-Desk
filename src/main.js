@@ -45,8 +45,27 @@
       // is cut until the user confirms.
       let trimMode = false;
       let trimSel = { t0: 0, t1: 0 };
-      let trimDrag = null; // "t0" | "t1" while dragging a handle
+      // "t0" | "t1" (resizing a handle) | "move" (dragging the whole kept
+      // region) | "new" (dragging out a brand-new selection from empty
+      // space) | null.
+      let trimDrag = null;
       let trimHadPrior = false; // a trim already existed when entering trim mode
+      // "move" drag: selection + duration at mousedown, so the region
+      // translates by exactly the mouse delta instead of drifting.
+      let trimMoveStartT = 0;
+      let trimMoveStartT0 = 0;
+      let trimMoveStartT1 = 0;
+      // "new" drag: the anchor point the selection is being dragged out
+      // from, the pre-drag selection (restored if it turns out to be just a
+      // click, not a real drag), and enough to tell the two apart.
+      let trimNewAnchor = 0;
+      let trimPreDragSel = { t0: 0, t1: 0 };
+      let trimDidDragNew = false;
+      let trimDragStartX = 0;
+      // Per base-filename counter for "Save active selection" (_1, _2, …) —
+      // resets only on a full page reload, so repeated saves in one session
+      // never repeat a suffix even across multiple trim-mode visits.
+      let trimSaveCounters = {};
       // Pan state
       let panState = null; // {startX, startViewStart} for hand tool
 
@@ -71,6 +90,63 @@
         p.textContent = line;
         el.appendChild(p);
         el.scrollTop = el.scrollHeight;
+      }
+
+      // ═══════════════════════════════════════════════════════════════════
+      // BUSY OVERLAY
+      // ═══════════════════════════════════════════════════════════════════
+      // Everything here runs on the UI thread, so a long job freezes the
+      // window and the app looks hung. The overlay says otherwise and, just as
+      // importantly, swallows the clicks that get aimed at a frozen window.
+      //
+      // Call `frac` with a number to show real progress, or omit it to leave
+      // the bar sweeping when there is no measurable fraction to report.
+      function busySet(label, frac) {
+        const l = $("busyLabel");
+        if (l && label != null) l.textContent = label;
+        const track = $("busyTrack"),
+          bar = $("busyBar");
+        if (!track || !bar) return;
+        if (frac == null) {
+          track.classList.add("indet");
+          bar.style.width = "";
+        } else {
+          track.classList.remove("indet");
+          bar.style.width = Math.max(0, Math.min(1, frac)) * 100 + "%";
+        }
+      }
+
+      // One requestAnimationFrame only schedules the next frame; the work
+      // would start before it is painted. The second resolves after the paint
+      // has actually happened, so the overlay is on screen before we block.
+      function busyPaint() {
+        return new Promise((r) =>
+          requestAnimationFrame(() => requestAnimationFrame(r)),
+        );
+      }
+
+      // Yield inside a loop so an in-progress bar can repaint. A single frame
+      // is enough here — the overlay is already up.
+      function busyTick() {
+        return new Promise((r) => requestAnimationFrame(r));
+      }
+
+      let _busyDepth = 0;
+      async function withBusy(label, fn) {
+        _busyDepth++;
+        const ov = $("busyOverlay");
+        if (ov) ov.classList.add("show");
+        busySet(label, null);
+        await busyPaint();
+        try {
+          return await fn(busySet);
+        } finally {
+          // Nested calls must not tear the overlay down early.
+          if (--_busyDepth <= 0) {
+            _busyDepth = 0;
+            if (ov) ov.classList.remove("show");
+          }
+        }
       }
 
       // ═══════════════════════════════════════════════════════════════════
@@ -141,7 +217,138 @@
       // AUDIO LOADING
       // ═══════════════════════════════════════════════════════════════════
       let currentAudioFileName = "";
+      // Manually-entered specimen tag for the active recording — carried
+      // into every exported table (Peaks/Trains/Motifs/Spectral) as their
+      // first column, and used by Summarize to count individuals correctly
+      // instead of guessing from file names.
+      let currentSpecimenId = "";
+      function setCurrentSpecimenId(v) {
+        currentSpecimenId = v;
+        const entry = audioLibrary.find((e) => e.id === audioLibActiveId);
+        if (entry) entry.specimenId = v;
+      }
+      // Same idea as Specimen ID: manually tagged per recording, carried
+      // into every exported table right after Specimen ID.
+      let currentSpecies = "";
+      function setCurrentSpecies(v) {
+        currentSpecies = v;
+        const entry = audioLibrary.find((e) => e.id === audioLibActiveId);
+        if (entry) entry.species = v;
+      }
+      // Country sits above locality in the geographic hierarchy, so it is
+      // ordered before it everywhere: the toolbar, the metadata file and the
+      // export columns.
+      let currentCountry = "";
+      // Fallback only. In the packaged app the version is read from Tauri,
+      // which takes it from tauri.conf.json — so the number on screen is the
+      // one the installer was actually built with and cannot drift from it.
+      // This literal is what a plain browser (no Tauri) shows instead, and is
+      // the one place in src/ that has to be bumped alongside the three build
+      // files.
+      const APP_VERSION_FALLBACK = "0.2.0";
+
+      async function showAppVersion() {
+        const el = $("appVersion");
+        if (!el) return;
+        let v = APP_VERSION_FALLBACK;
+        try {
+          if (window.__TAURI__?.app?.getVersion)
+            v = await window.__TAURI__.app.getVersion();
+        } catch (e) {
+          // Permission or API missing — the fallback is still correct enough
+          // to identify the build, so this is not worth surfacing.
+        }
+        el.textContent = "v" + v;
+        el.title = "Rthoptera Desk version " + v;
+      }
+
+      function setCurrentCountry(v) {
+        currentCountry = v;
+        const entry = audioLibrary.find((e) => e.id === audioLibActiveId);
+        if (entry) entry.country = v;
+      }
+      let currentLocality = "";
+      function setCurrentLocality(v) {
+        currentLocality = v;
+        const entry = audioLibrary.find((e) => e.id === audioLibActiveId);
+        if (entry) entry.locality = v;
+      }
+      // Air temperature at the time of recording. Free text rather than a
+      // number input: stridulation rate is strongly temperature-dependent, so
+      // this has to survive being written as "22.5", "~23" or left blank, and
+      // it is exported verbatim for the analyst to interpret.
+      let currentTempC = "";
+      function setCurrentTempC(v) {
+        currentTempC = v;
+        const entry = audioLibrary.find((e) => e.id === audioLibActiveId);
+        if (entry) entry.tempC = v;
+      }
+
+      // Save/load Specimen ID + Species + Locality as a standalone .json —
+      // meant to live alongside a folder of recordings from the same
+      // specimen, so it's typed once and reloaded for every other file
+      // instead of retyped per recording.
+      function saveRecordingMetadata() {
+        if (!audioLibActiveId) {
+          log("Load audio first.", "warn");
+          return;
+        }
+        // Deliberately no source_file: this file is written once and loaded
+        // onto every other recording of the same specimen, so naming one
+        // recording inside it would be a lie for all the others.
+        const meta = {
+          specimen_id: currentSpecimenId,
+          species: currentSpecies,
+          country: currentCountry,
+          locality: currentLocality,
+        };
+        try {
+          dlFile(
+            "specimen_metadata.json",
+            JSON.stringify(meta, null, 2),
+            "application/json",
+          );
+          log("Saved specimen metadata.", "ok");
+        } catch (e) {
+          log("Metadata export failed: " + e.message, "err");
+        }
+      }
+
+      async function loadRecordingMetadata(file) {
+        if (!file) return;
+        if (!audioLibActiveId) {
+          log("Load audio first.", "warn");
+          return;
+        }
+        try {
+          const text = await file.text();
+          const meta = JSON.parse(text);
+          const spec = String(meta.specimen_id ?? meta.specimenId ?? "");
+          const sp = String(meta.species ?? "");
+          const cty = String(meta.country ?? "");
+          const loc = String(meta.locality ?? "");
+          setCurrentSpecimenId(spec);
+          setCurrentSpecies(sp);
+          setCurrentCountry(cty);
+          setCurrentLocality(loc);
+          const specInput = $("specimenIdInput");
+          if (specInput) specInput.value = spec;
+          const speciesInput = $("speciesInput");
+          if (speciesInput) speciesInput.value = sp;
+          const localityInput = $("localityInput");
+          if (localityInput) localityInput.value = loc;
+          const countryInput = $("countryInput");
+          if (countryInput) countryInput.value = cty;
+          log('Loaded specimen metadata from "' + file.name + '".', "ok");
+        } catch (e) {
+          log("Could not read metadata file: " + e.message, "err");
+        }
+      }
       let currentAudioFileFolder = "";
+      // Folder the most recent import came from — the default destination
+      // batch-saving offers, so re-exporting after an edit round-trip
+      // doesn't make you hunt for the folder again.
+      let lastImportFolder = "";
 
       function getFolderFromPath(path) {
         if (!path) return "";
@@ -149,22 +356,26 @@
         const idx = path.lastIndexOf(sep);
         return idx >= 0 ? path.slice(0, idx) : "";
       }
+      function getFilenameFromPath(path) {
+        if (!path) return "";
+        const sep = path.lastIndexOf("\\") >= 0 ? "\\" : "/";
+        const idx = path.lastIndexOf(sep);
+        return idx >= 0 ? path.slice(idx + 1) : path;
+      }
 
-      $("audioFile").onchange = async (e) => {
-        const f = e.target.files[0];
-        if (!f) return;
-
-        // Save the name and folder globally, then update UI
-        currentAudioFileName = f.name;
-        currentAudioFileFolder = getFolderFromPath(
-          f.path || f.webkitRelativePath || "",
-        );
-        log("Loading: " + f.name, "info");
-        $("fileLabel").textContent =
-          f.name.length > 24 ? f.name.slice(0, 22) + "…" : f.name;
-
-        // Read and decode
-        const ab = await f.arrayBuffer();
+      // decodeAudioData silently resamples to the AudioContext's own sample
+      // rate (usually the OS output device default) unless the context is
+      // created at the file's native rate — otherwise a 96kHz recording
+      // quietly becomes 48kHz and its real Nyquist gets cut in half. Every
+      // import (single or multi-file) goes through this one function so the
+      // fix, and the mono-mixdown, only ever happen in one place.
+      async function decodeAudioFileNative(file) {
+        return decodeAudioBytes(await file.arrayBuffer());
+      }
+      // Same decode, taking raw bytes directly — used by the native Tauri
+      // file-open path (see openAudioFilesNative), which reads bytes via
+      // fs.readFile instead of a browser File object.
+      async function decodeAudioBytes(ab) {
         let nativeSr = 0;
         try {
           nativeSr = readWavSampleRate(ab);
@@ -173,75 +384,211 @@
         let decoded;
         try {
           decoded = await tmpCtx.decodeAudioData(ab.slice(0));
-        } catch (err) {
-          log("Decode error: " + err.message, "err");
+        } finally {
           tmpCtx.close();
-          return;
         }
-        tmpCtx.close();
         const detectedSr = nativeSr || decoded.sampleRate;
-        let finalBuf = decoded;
-        if (detectedSr !== decoded.sampleRate && detectedSr > 0) {
+        if (detectedSr === decoded.sampleRate || detectedSr <= 0) return decoded;
+        try {
+          const tmpCtx2 = new (
+            window.AudioContext || window.webkitAudioContext
+          )({ sampleRate: detectedSr });
           try {
-            const tmpCtx2 = new (
-              window.AudioContext || window.webkitAudioContext
-            )({ sampleRate: detectedSr });
-            try {
-              finalBuf = await tmpCtx2.decodeAudioData(ab.slice(0));
-              tmpCtx2.close();
-            } catch (ex) {
-              tmpCtx2.close();
-              finalBuf = decoded;
-            }
+            const finalBuf = await tmpCtx2.decodeAudioData(ab.slice(0));
+            tmpCtx2.close();
+            return finalBuf;
           } catch (ex) {
-            finalBuf = decoded;
+            tmpCtx2.close();
+            return decoded;
           }
+        } catch (ex) {
+          return decoded;
         }
-        audioBuffer = finalBuf;
-        sampleRate = audioBuffer.sampleRate;
-        duration = audioBuffer.duration;
-        const len = audioBuffer.length,
-          nch = audioBuffer.numberOfChannels;
-        rawSamples = new Float32Array(len);
+      }
+
+      // Shared tail of every import path (native Tauri dialog OR the HTML
+      // file-input fallback): decode → mono-mix → add to the library. Every
+      // pane (Analyzer, Peaks, Multiplot, Osc. Stack/Zoom, Habitus) reads
+      // from the shared `audioLibrary`, so this is the single place new
+      // recordings enter it.
+      async function _ingestDecodedAudio(displayName, folder, decoded) {
+        const len = decoded.length,
+          nch = decoded.numberOfChannels;
+        const mono = new Float32Array(len);
         for (let c = 0; c < nch; c++) {
-          const ch = audioBuffer.getChannelData(c);
-          for (let i = 0; i < len; i++) rawSamples[i] += ch[i];
+          const ch = decoded.getChannelData(c);
+          for (let i = 0; i < len; i++) mono[i] += ch[i];
         }
-        if (nch > 1) for (let i = 0; i < len; i++) rawSamples[i] /= nch;
+        if (nch > 1) for (let i = 0; i < len; i++) mono[i] /= nch;
 
-        // Snapshot the pristine mono signal and reset the edit chain so a fresh
-        // import always starts unedited.
-        origSamples = rawSamples;
-        origSampleRate = sampleRate;
-        audioEdits = [];
-        $("infoCh").textContent = nch;
-        $("pkStatus").textContent =
-          "Audio loaded — set parameters and click Detect Peaks";
-
+        if (folder) lastImportFolder = folder;
+        const entry = addAudioToLibrary(displayName, folder, mono, decoded.sampleRate);
         log(
-          "Decoded " +
-            len.toLocaleString() +
-            " samples @ " +
-            sampleRate +
-            " Hz, Nyquist=" +
-            fmtHz(sampleRate / 2),
+          'Decoded "' + displayName + '": ' +
+            len.toLocaleString() + " samples @ " + decoded.sampleRate +
+            " Hz, Nyquist=" + fmtHz(decoded.sampleRate / 2),
           "ok",
         );
+        return entry;
+      }
 
-        // Reset edit-panel UI to defaults for the new file, then build.
-        resetEditUiForNewFile();
-        // Build rawSamples/duration/audioBuffer from the (currently empty) edit
-        // chain and run the full downstream recompute + view reset.
-        rebuildAudioFromEdits({ resetView: true });
+      // Preferred import path on desktop: Tauri's native Rust-side file
+      // dialog + fs read. This is the fix for Windows occasionally handing
+      // back an 8.3 short alias (e.g. "POLYCL~2.WAV") for the real file
+      // name — that corruption comes from the WEBVIEW's own HTML file-input
+      // machinery (a Chromium/WebView2 quirk with certain long/complex
+      // names), which the native dialog never goes through at all: its
+      // path comes straight from the OS, so the name is always correct.
+      async function openAudioFilesNative() {
+        // Falling back to the HTML file input is precisely what reintroduces
+        // the 8.3 short-name corruption this function exists to avoid, so it
+        // must never happen quietly — name the API that's missing, because
+        // "the file is called POLYCL~2.WAV" looks like an app bug rather
+        // than a skipped code path unless the log says otherwise.
+        let missingApi = "";
+        if (!window.__TAURI__) missingApi = "window.__TAURI__";
+        else if (
+          !window.__TAURI__.dialog ||
+          typeof window.__TAURI__.dialog.open !== "function"
+        )
+          missingApi = "dialog.open";
+        else if (
+          !window.__TAURI__.fs ||
+          typeof window.__TAURI__.fs.readFile !== "function"
+        )
+          missingApi = "fs.readFile";
+        if (missingApi) {
+          log(
+            "Native file dialog unavailable (" +
+              missingApi +
+              " missing) — using the browser file picker instead, which can " +
+              "report long names as 8.3 short aliases (e.g. POLYCL~2.WAV).",
+            "warn",
+          );
+          return false; // caller falls back to the HTML file input
+        }
+        let selected;
+        try {
+          selected = await window.__TAURI__.dialog.open({
+            multiple: true,
+            filters: [
+              {
+                name: "Audio",
+                extensions: ["wav", "mp3", "flac", "ogg", "aiff", "aif"],
+              },
+            ],
+          });
+        } catch (e) {
+          log(
+            "Native file dialog failed (" +
+              e.message +
+              ") — using the browser file picker instead, which can report " +
+              "long names as 8.3 short aliases (e.g. POLYCL~2.WAV).",
+            "warn",
+          );
+          return false;
+        }
+        if (!selected) return true; // user cancelled — handled, don't fall back
+        const paths = Array.isArray(selected) ? selected : [selected];
 
-        // Register the freshly imported (unedited) audio in the Loaded Audio
-        // panel so the user can switch back to it later.
-        addAudioToLibrary(
-          currentAudioFileName,
-          currentAudioFileFolder,
-          rawSamples,
-          sampleRate,
-        );
+        await withBusy("Loading audio…", async (progress) => {
+          let firstEntry = null;
+          for (let i = 0; i < paths.length; i++) {
+            const path = paths[i];
+            const displayName = getFilenameFromPath(path) || path;
+            progress(
+              paths.length > 1
+                ? "Loading " + (i + 1) + "/" + paths.length + " — " + displayName
+                : "Loading " + displayName + "…",
+              i / paths.length,
+            );
+            await busyTick();
+            log("Loading: " + displayName, "info");
+            try {
+              const bytes = await window.__TAURI__.fs.readFile(path);
+              const ab = bytes.buffer.slice(
+                bytes.byteOffset,
+                bytes.byteOffset + bytes.byteLength,
+              );
+              const decoded = await decodeAudioBytes(ab);
+              const entry = await _ingestDecodedAudio(
+                displayName,
+                getFolderFromPath(path),
+                decoded,
+              );
+              if (!firstEntry) firstEntry = entry;
+            } catch (err) {
+              log(
+                'Decode error ("' + displayName + '"): ' + err.message,
+                "err",
+              );
+            }
+          }
+          if (firstEntry) {
+            progress("Preparing views…", 1);
+            await busyTick();
+            selectLibraryAudio(firstEntry.id);
+          }
+        });
+        return true;
+      }
+
+      // Wired to the toolbar's 📂 Audio button: try the native dialog first
+      // (correct file names, see openAudioFilesNative), and only fall back
+      // to the plain HTML file input outside Tauri (e.g. a browser build).
+      async function pickAudioFiles() {
+        const handled = await openAudioFilesNative();
+        if (!handled) $("audioFile").click();
+      }
+
+      // Fallback import path (non-Tauri / browser). File.name here IS
+      // trustworthy — the short-name quirk above is specific to Tauri's
+      // desktop webview, not plain browser file inputs.
+      $("audioFile").onchange = async (e) => {
+        const files = Array.from(e.target.files || []);
+        e.target.value = "";
+        if (!files.length) return;
+
+        await withBusy("Loading audio…", async (progress) => {
+          let firstEntry = null;
+          for (let i = 0; i < files.length; i++) {
+            const f = files[i];
+            const srcPath = f.path || f.webkitRelativePath || "";
+            const displayName = getFilenameFromPath(srcPath) || f.name;
+            progress(
+              files.length > 1
+                ? "Loading " + (i + 1) + "/" + files.length + " — " + displayName
+                : "Loading " + displayName + "…",
+              i / files.length,
+            );
+            await busyTick();
+            log("Loading: " + displayName, "info");
+            let decoded;
+            try {
+              decoded = await decodeAudioFileNative(f);
+            } catch (err) {
+              log(
+                'Decode error ("' + displayName + '"): ' + err.message,
+                "err",
+              );
+              continue;
+            }
+            const entry = await _ingestDecodedAudio(
+              displayName,
+              getFolderFromPath(srcPath),
+              decoded,
+            );
+            if (!firstEntry) firstEntry = entry;
+          }
+
+          // Activate the first newly-imported file as the Analyzer's working
+          // audio, exactly like selecting it from the Loaded Audio panel.
+          if (firstEntry) {
+            progress("Preparing views…", 1);
+            await busyTick();
+            selectLibraryAudio(firstEntry.id);
+          }
+        });
       };
 
       // Re-derive rawSamples, duration, audioBuffer, peakAmp from origSamples +
@@ -333,6 +680,27 @@
         onThresh();
         render();
         renderMinimap();
+
+        // Temporal Analysis works on its own envelope, built at the smoothing
+        // set in that pane. Build it here rather than inside Detect Peaks, so
+        // the trace is on screen as soon as audio is loaded — you can see what
+        // you are about to detect on, and peaks can be imported from a saved
+        // table without running detection first.
+        pkRefreshEnvelope();
+      }
+
+      // Rebuild the Temporal Analysis envelope from the current audio and the
+      // current smoothing, then redraw. Existing peaks are left alone: this is
+      // also the hook for the Smoothing box, where the peaks on screen should
+      // survive a change of trace.
+      function pkRefreshEnvelope() {
+        if (!rawSamples) {
+          pkEnv = null;
+          return;
+        }
+        const smoothMs = Math.max(0.5, parseFloat($("pkSmooth")?.value) || 1);
+        pkEnv = pkComputeEnv(smoothMs);
+        if (typeof pkDrawEnvelope === "function") pkDrawEnvelope();
       }
 
       // ═══════════════════════════════════════════════════════════════════
@@ -411,6 +779,24 @@
         return out;
       }
 
+      function peakAbs(samples) {
+        let p = 0;
+        for (let i = 0; i < samples.length; i++) {
+          const v = Math.abs(samples[i]);
+          if (v > p) p = v;
+        }
+        return p || 1;
+      }
+
+      // Peak-normalizes sig so its max absolute sample sits at `target`
+      // (linear, 0–1). Pass target = 10**(dB/20) to normalize to a dBFS level.
+      function applyNormalize(sig, target) {
+        const gain = target / peakAbs(sig);
+        const out = new Float32Array(sig.length);
+        for (let i = 0; i < sig.length; i++) out[i] = sig[i] * gain;
+        return out;
+      }
+
       // ── Edit chain helpers ──────────────────────────────────────────────
       function audioHasEdit(type) {
         return audioEdits.some((e) => e.type === type);
@@ -454,6 +840,71 @@
             " s  (" +
             (trimSel.t1 - trimSel.t0).toFixed(3) +
             " s)";
+        // Mirror the duration into the typed-duration box, unless the user
+        // is actively typing in it (would fight their keystrokes otherwise).
+        const di = $("trimDurationInput");
+        if (di && document.activeElement !== di)
+          di.value = (trimSel.t1 - trimSel.t0).toFixed(3);
+      }
+
+      // Typing a duration resizes the selection from its current start,
+      // shifting the start back only if the requested length doesn't fit
+      // after it.
+      function setTrimDuration(v) {
+        if (!trimMode) return;
+        const d = parseFloat(v);
+        if (!isFinite(d) || d <= 0) return;
+        const origDur = origSamples.length / origSampleRate;
+        const dur = Math.min(d, origDur);
+        let t0 = trimSel.t0;
+        if (t0 + dur > origDur) t0 = Math.max(0, origDur - dur);
+        trimSel.t0 = t0;
+        trimSel.t1 = t0 + dur;
+        updateTrimReadout();
+        render();
+      }
+
+      // Exports the CURRENT active selection (trimSel, on the original
+      // timeline minus any non-trim edits already applied) as a standalone
+      // .wav — independent of Confirm Trim, so you can pull out several
+      // clips from one recording without repeatedly re-trimming the
+      // working audio. Auto-numbered (_1, _2, …) so repeated saves from the
+      // same file never collide; the save dialog still lets you rename.
+      async function saveActiveTrimSelection() {
+        if (!trimMode || !rawSamples) {
+          log("Enter trim mode and drag out a selection first.", "warn");
+          return;
+        }
+        const t0 = Math.max(0, Math.min(trimSel.t0, duration));
+        const t1 = Math.max(0, Math.min(trimSel.t1, duration));
+        if (t1 - t0 < 1e-4) {
+          log(
+            "Selection is empty — drag out a region on the waveform/spectrogram first.",
+            "warn",
+          );
+          return;
+        }
+        const i0 = Math.max(0, Math.floor(t0 * sampleRate));
+        const i1 = Math.min(rawSamples.length, Math.ceil(t1 * sampleRate));
+        if (i1 <= i0) return;
+        const slice = Float32Array.from(rawSamples.subarray(i0, i1));
+        const base = (currentAudioFileName || "recording").replace(
+          /\.[^/.]+$/,
+          "",
+        );
+        const n = (trimSaveCounters[base] || 0) + 1;
+        trimSaveCounters[base] = n;
+        const fname = base + "_" + n + ".wav";
+        try {
+          const bytes = _buildWav(slice, sampleRate);
+          await dlFile(fname, bytes, "audio/wav", { exactName: true });
+          log(
+            'Saved selection "' + fname + '" (' + (t1 - t0).toFixed(3) + " s)",
+            "ok",
+          );
+        } catch (e) {
+          log("Selection export failed: " + e.message, "err");
+        }
       }
 
       // Enter visual trim mode. We first strip any existing trim so the handles
@@ -487,7 +938,10 @@
         $("btnEnterTrim").style.display = "none";
         updateTrimReadout();
         updateEditPanelState();
-        log("Trim mode — drag the two handles, then Confirm Trim.", "info");
+        log(
+          "Trim mode — drag out a selection (or an edge/the middle of one), then Confirm Trim.",
+          "info",
+        );
         render();
       }
 
@@ -606,6 +1060,7 @@
         detMeasurements = [];
         annotations = [];
         selAid = null;
+        if (typeof pkAppliedAnnotationIds !== "undefined") pkAppliedAnnotationIds = [];
         if (typeof refreshAnnotList === "function") refreshAnnotList();
         const sx = $("btnSaveSpectralExcel");
         if (sx) sx.disabled = true;
@@ -740,7 +1195,8 @@
           if (!has) {
             st.textContent = "Load audio to enable editing.";
           } else if (trimMode) {
-            st.textContent = "Trim mode active — drag handles, then confirm.";
+            st.textContent =
+              "Trim mode active — drag out a selection, then confirm.";
           } else {
             const parts = [];
             const tr = audioEdits.find((e) => e.type === "trim");
@@ -799,6 +1255,7 @@
       let audioLibActiveId = null;
       let audioLibCols = parseInt(localStorage.getItem("rt_audiolib_cols"), 10) || 5;
       let audioLibRows = parseInt(localStorage.getItem("rt_audiolib_rows"), 10) || 2;
+      let audioLibBatchSelected = new Set(); // entry ids checked for batch edit
 
       function addAudioToLibrary(name, folder, samples, rate) {
         const entry = {
@@ -811,6 +1268,12 @@
           rate,
           dur: samples.length / rate,
           addedAt: Date.now(),
+          editTags: [], // e.g. ["1hpf", "n0"] — filled in by batch edits, used to build the default save-as filename
+          specimenId: "", // manually tagged; see setCurrentSpecimenId
+          species: "", // manually tagged; see setCurrentSpecies
+          country: "", // manually tagged; see setCurrentCountry
+          locality: "", // manually tagged; see setCurrentLocality
+          tempC: "", // manually tagged; see setCurrentTempC
         };
         audioLibrary.push(entry);
         audioLibActiveId = entry.id;
@@ -819,9 +1282,163 @@
       }
 
       function removeAudioFromLibrary(id) {
+        const wasActive = audioLibActiveId === id;
         audioLibrary = audioLibrary.filter((e) => e.id !== id);
-        if (audioLibActiveId === id) audioLibActiveId = null;
+        audioLibBatchSelected.delete(id);
+        // Also reset when the last recording goes, regardless of which entry
+        // was active. Closing a non-active file can empty the library if the
+        // active id is already stale, and then nothing would clear the panels
+        // even though there is no audio left.
+        if (wasActive || !audioLibrary.length) {
+          audioLibActiveId = null;
+          // The recording every view was showing is gone — nothing is
+          // active anymore, so blank everything instead of leaving stale
+          // waveform/spectrogram/temporal data on screen for a file that no
+          // longer exists. (Deleting a NON-active entry doesn't touch any
+          // of this — whatever's currently open is still valid.)
+          resetToNoAudio();
+        }
         renderAudioLibraryPanel();
+      }
+
+      // Drops all per-recording state and blanks every view that shows it —
+      // Preprocessing's info panel + waveform/spectrogram viewer, Spectral
+      // Analysis (annotations/detections/measurements), and Temporal
+      // Analysis (envelope/peaks/tables) — back to their empty "no audio"
+      // state. Used when the active Loaded Audio entry is deleted.
+      // Everything that describes ONE recording: selections, detections,
+      // measurements, peaks, trains, motifs, and the fitted parameters derived
+      // from them. None of it is meaningful against different audio, so it is
+      // cleared both when the last file closes AND when the active file
+      // changes — switching used to leave the previous recording's peaks and
+      // selections on screen, where they would be drawn over the new envelope
+      // and exported under the new file's name.
+      //
+      // Deliberately NOT cleared here: sampleRate/duration and the recording
+      // tags, which the caller sets for the incoming file; and the detection
+      // and spectral PARAMETERS, which are settings the user chose and expects
+      // to carry from one recording to the next.
+      function clearRecordingAnalysis() {
+        annotations = [];
+        nextAid = 1;
+        selAid = null;
+        detections = [];
+        clearMeasurements();
+        spectrogramData = null;
+
+        pkEnv = null;
+        pkPeaks = [];
+        // Undo snapshots describe peaks from the recording just left —
+        // pressing Ctrl+Z afterwards would restore them onto other audio.
+        pkResetUndo();
+        // Fitted parameters belong to that recording too, and Apply would
+        // otherwise still be armed with them.
+        pkFitBest = null;
+        spectralMetricsRows = null;
+        pkViewStart = 0;
+        pkViewEnd = null;
+        pkPeakData = [];
+        pkTrainData = [];
+        pkMotifData = [];
+        pkMotifSeqData = [];
+        pkSummaryData = null;
+        pkSelection.clear();
+        pkConfirmed = false;
+        if ($("pkTableHead")) $("pkTableHead").innerHTML = "";
+        if ($("pkTableBody")) $("pkTableBody").innerHTML = "";
+        if ($("pkStatus")) $("pkStatus").textContent = "";
+        if ($("pkResults")) $("pkResults").style.display = "none";
+        ["pkFitStatus", "pkPresetStatus"].forEach((id) => {
+          const el = $(id);
+          if (el) el.textContent = "";
+        });
+        // Unlocked by detection / confirm / fitting, so they stay live against
+        // the next recording unless turned off here.
+        [
+          "btnPkConfirm",
+          "btnPkApplySpectral",
+          "btnPkFilterFalse",
+          "btnPkUndo",
+          "btnPkFitApply",
+          "btnSaveSpectralExcel",
+          "btnExportTextReport",
+        ].forEach((id) => {
+          const el = $(id);
+          if (el) el.disabled = true;
+        });
+        refreshAnnotList();
+      }
+
+      function resetToNoAudio() {
+        if (isPlaying) stopPb();
+        if (trimMode) exitTrimUi();
+
+        rawSamples = null;
+        origSamples = null;
+        sampleRate = 1;
+        origSampleRate = 1;
+        duration = 0;
+        peakAmp = 1;
+        audioBuffer = null;
+        audioEdits = [];
+        envelope = null;
+        zcrArr = null;
+        specCentroid = null;
+        spectrogramData = null;
+        currentAudioFileName = "";
+        currentAudioFileFolder = "";
+        currentSpecimenId = "";
+        currentSpecies = "";
+        currentCountry = "";
+        currentLocality = "";
+        currentTempC = "";
+
+        clearRecordingAnalysis();
+
+        $("fileLabel").textContent = "no file";
+        $("statusBadge").textContent = "No file";
+        $("statusBadge").className = "badge warn";
+        ["infoDur", "infoSr", "infoNyq", "infoCh"].forEach((id) => {
+          const el = $(id);
+          if (el) el.textContent = "—";
+        });
+        const specInput = $("specimenIdInput");
+        if (specInput) specInput.value = "";
+        const speciesInput = $("speciesInput");
+        if (speciesInput) speciesInput.value = "";
+        const localityInput = $("localityInput");
+        if (localityInput) localityInput.value = "";
+        const countryInput = $("countryInput");
+        if (countryInput) countryInput.value = "";
+        const metaGroup = $("recordingMetaGroup");
+        if (metaGroup) metaGroup.style.display = "none";
+
+        [
+          "btnPlay",
+          "btnStop",
+          "btnRaven",
+          "btnXlsxSel",
+          "btnPkDetect",
+          "btnEnterTrim",
+          "btnClearTrim",
+          "editHp",
+          "editLp",
+          "btnApplyBandpass",
+          "btnClearBandpass",
+          "btnSaveEditedAudio",
+          "btnUndoEdit",
+          "btnComputeSpectral",
+        ].forEach((id) => {
+          const el = $(id);
+          if (el) el.disabled = true;
+        });
+        if ($("editStatus"))
+          $("editStatus").textContent = "Load audio to enable editing.";
+
+        updateEditPanelState();
+        render();
+        renderMinimap();
+        if (typeof pkDrawEnvelope === "function") pkDrawEnvelope();
       }
 
       // Makes a stored entry the active working audio — mirrors the tail of
@@ -830,12 +1447,31 @@
       function selectLibraryAudio(id) {
         const entry = audioLibrary.find((e) => e.id === id);
         if (!entry) return;
+        // Nothing from the outgoing recording survives the switch.
+        clearRecordingAnalysis();
         audioLibActiveId = id;
 
         currentAudioFileName = entry.name;
         currentAudioFileFolder = entry.folder || "";
         $("fileLabel").textContent =
           entry.name.length > 24 ? entry.name.slice(0, 22) + "…" : entry.name;
+        currentSpecimenId = entry.specimenId || "";
+        const specInput = $("specimenIdInput");
+        if (specInput) specInput.value = currentSpecimenId;
+        currentSpecies = entry.species || "";
+        const speciesInput = $("speciesInput");
+        if (speciesInput) speciesInput.value = currentSpecies;
+        currentCountry = entry.country || "";
+        const countryInput = $("countryInput");
+        if (countryInput) countryInput.value = currentCountry;
+        currentLocality = entry.locality || "";
+        const localityInput = $("localityInput");
+        if (localityInput) localityInput.value = currentLocality;
+        currentTempC = entry.tempC || "";
+        const tempInput = $("tempCInput");
+        if (tempInput) tempInput.value = currentTempC;
+        const metaGroup = $("recordingMetaGroup");
+        if (metaGroup) metaGroup.style.display = "flex";
 
         origSamples = entry.samples;
         origSampleRate = entry.rate;
@@ -847,6 +1483,14 @@
         resetEditUiForNewFile();
         rebuildAudioFromEdits({ resetView: true });
         renderAudioLibraryPanel();
+        // First audio ever loaded this session — leave the landing screen
+        // for the working app. Later switches (picking a different Loaded
+        // Audio entry) don't yank the user off whatever tab they're on,
+        // since landing is already gone by then.
+        const landing = $("mainview-landing");
+        if (landing && landing.style.display !== "none") {
+          switchMainTab("preprocess", $("maintab-preprocess"));
+        }
         log('Switched to "' + entry.name + '"', "ok");
       }
 
@@ -892,6 +1536,8 @@
             "grid-column:1/-1;color:var(--txt2);font-size:11px;padding:4px 0";
           d.textContent = "Import an audio file to see it here.";
           grid.appendChild(d);
+          audioLibBatchSelected.clear();
+          updateBatchEditStatus();
           return;
         }
 
@@ -906,6 +1552,18 @@
             "s @ " +
             entry.rate +
             " Hz";
+
+          const chk = document.createElement("input");
+          chk.type = "checkbox";
+          chk.className = "alib-chk";
+          chk.checked = audioLibBatchSelected.has(entry.id);
+          chk.title = "Select for batch edit";
+          chk.onclick = (ev) => ev.stopPropagation();
+          chk.onchange = () => {
+            if (chk.checked) audioLibBatchSelected.add(entry.id);
+            else audioLibBatchSelected.delete(entry.id);
+            updateBatchEditStatus();
+          };
 
           const xBtn = document.createElement("button");
           xBtn.className = "alib-x";
@@ -934,6 +1592,7 @@
           metaEl.textContent =
             entry.dur.toFixed(2) + "s · " + (entry.rate / 1000).toFixed(1) + "kHz";
 
+          cell.appendChild(chk);
           cell.appendChild(xBtn);
           cell.appendChild(dlBtn);
           cell.appendChild(nameEl);
@@ -941,20 +1600,138 @@
           cell.onclick = () => selectLibraryAudio(entry.id);
           grid.appendChild(cell);
         });
+        // Drop batch selections for entries that no longer exist (removed).
+        const liveIds = new Set(audioLibrary.map((e) => e.id));
+        for (const id of audioLibBatchSelected) if (!liveIds.has(id)) audioLibBatchSelected.delete(id);
+        updateBatchEditStatus();
+
+        // Other panes (Osc. Stack/Zoom, Habitus) each keep their own
+        // "pick from Loaded Audio" checklist in sync with this one library
+        // — refresh them here so a fresh import/removal shows up everywhere
+        // without each pane re-polling.
+        if (typeof oscRenderLibPicker === "function") oscRenderLibPicker();
+        if (typeof ozRenderLibPicker === "function") ozRenderLibPicker();
+        if (typeof habRenderLibPicker === "function") habRenderLibPicker();
+      }
+
+      // ── Batch edit: apply one filter to every checked Loaded Audio entry ──
+      function updateBatchEditStatus() {
+        const n = audioLibBatchSelected.size;
+        const btn = $("btnBatchBandpass");
+        const nBtn = $("btnBatchNormalize");
+        const sBtn = $("btnBatchSave");
+        const label = $("batchSelCount");
+        if (btn) btn.disabled = n === 0;
+        if (nBtn) nBtn.disabled = n === 0;
+        if (sBtn) sBtn.disabled = n === 0;
+        if (label) label.textContent = n ? n + " selected" : "";
+        // Habitus draws straight from this same selection, so its own
+        // "what's checked" readout + Draw-button state must track every
+        // individual checkbox click too, not just full library re-renders.
+        if (typeof habRenderLibPicker === "function") habRenderLibPicker();
+      }
+
+      function batchSelectAllLibrary(on) {
+        audioLibBatchSelected = on ? new Set(audioLibrary.map((e) => e.id)) : new Set();
+        renderAudioLibraryPanel();
+      }
+
+      // Filters every checked entry's stored samples in place (mirrors
+      // applyBandpass, but writes straight into the library rather than
+      // going through the single-active-file edit chain). If the active
+      // entry is among the selection, its live view is refreshed too.
+      function applyBatchBandpass() {
+        if (!audioLibBatchSelected.size) return;
+        let hp = parseFloat($("batchHp").value);
+        let lp = parseFloat($("batchLp").value);
+        if (!isFinite(hp) || hp < 0) hp = 0;
+        if (!isFinite(lp) || lp <= 0) lp = 0; // 0 -> per-entry Nyquist, resolved below
+
+        let touchedActive = false;
+        let count = 0;
+        audioLibrary.forEach((entry) => {
+          if (!audioLibBatchSelected.has(entry.id)) return;
+          const nyq = entry.rate / 2;
+          const entryLp = lp > 0 ? Math.min(lp, nyq) : nyq;
+          if (!(hp > 0) && entryLp >= nyq) return; // no-op passband, skip
+          if (hp > 0 && entryLp <= hp) {
+            log(`Skipped "${entry.name}": high-pass must be below low-pass.`, "warn");
+            return;
+          }
+          entry.samples = applyBandpass(entry.samples, entry.rate, hp, entryLp);
+          // Replace any previous bandpass tags rather than piling up stale ones.
+          entry.editTags = entry.editTags.filter((t) => !/(hpf|lpf)$/.test(t));
+          if (hp > 0) entry.editTags.push(freqSuffixLabel(hp) + "hpf");
+          if (entryLp < nyq) entry.editTags.push(freqSuffixLabel(entryLp) + "lpf");
+          count++;
+          if (entry.id === audioLibActiveId) touchedActive = true;
+        });
+
+        if (!count) {
+          log("Batch filter: nothing to apply.", "warn");
+          return;
+        }
+
+        // Refresh the Analyzer's working audio if it was one of the filtered
+        // entries, so the on-screen view matches what's now stored.
+        if (touchedActive) selectLibraryAudio(audioLibActiveId);
+
+        renderAudioLibraryPanel();
+        log(
+          `Batch bandpass applied to ${count} recording(s): ` +
+            (hp > 0 ? fmtHz(hp) : "DC") + " – " + (lp > 0 ? fmtHz(lp) : "Nyquist"),
+          "ok",
+        );
+      }
+
+      // Peak-normalizes every checked entry independently, each to the same
+      // target dBFS level, in place. Same "batch touches the library
+      // directly" model as applyBatchBandpass.
+      function applyBatchNormalize() {
+        if (!audioLibBatchSelected.size) return;
+        let targetDb = parseFloat($("batchNormDb").value);
+        if (!isFinite(targetDb)) targetDb = 0;
+        targetDb = Math.min(0, targetDb); // normalizing above full scale would just clip
+        const target = Math.pow(10, targetDb / 20);
+
+        let touchedActive = false;
+        let count = 0;
+        audioLibrary.forEach((entry) => {
+          if (!audioLibBatchSelected.has(entry.id)) return;
+          entry.samples = applyNormalize(entry.samples, target);
+          // Replace any previous normalize tag rather than piling up stale
+          // ones. The pattern matches the old "norm…" spelling too, so a file
+          // tagged by an earlier version doesn't end up carrying both.
+          entry.editTags = entry.editTags.filter(
+            (t) => !/^(?:norm|n)-?[\d.]+(?:dbfs)?$/.test(t),
+          );
+          entry.editTags.push("n" + targetDb);
+          count++;
+          if (entry.id === audioLibActiveId) touchedActive = true;
+        });
+
+        if (!count) {
+          log("Batch normalize: nothing to apply.", "warn");
+          return;
+        }
+
+        if (touchedActive) selectLibraryAudio(audioLibActiveId);
+
+        renderAudioLibraryPanel();
+        log(`Batch peak-normalize applied to ${count} recording(s), each to ${targetDb} dBFS.`, "ok");
       }
 
       // ── Save Edited Audio As… modal ─────────────────────────────────────
-      // "1500" -> "1.5khz", "1000" -> "1khz", "500" -> "500hz"
+      // Cutoff for a filename tag: kHz with the unit left implied, so a 2 kHz
+      // high-pass tags as "2hpf" rather than "2khzhpf". Two decimals is 10 Hz
+      // resolution — finer than any filter anyone sets here — and trailing
+      // zeros drop out, so round numbers stay round.
       function freqSuffixLabel(hz) {
-        if (hz >= 1000) {
-          const khz = hz / 1000;
-          return (Number.isInteger(khz) ? khz : Math.round(khz * 10) / 10) + "khz";
-        }
-        return Math.round(hz) + "hz";
+        return String(Math.round((hz / 1000) * 100) / 100);
       }
 
       // Builds a descriptive suffix from the active edit chain — e.g. a 1kHz
-      // high-pass plus a trim becomes "_1khzhpf_trimmed". Edits are not
+      // high-pass plus a trim becomes "_1hpf_trimmed". Edits are not
       // mutually exclusive: each applicable one appends its own tag.
       function defaultEditSuffix() {
         const parts = [];
@@ -1044,7 +1821,14 @@
         try {
           const bytes = _buildWav(samples, rate);
           const fname = /\.wav$/i.test(name) ? name : name + ".wav";
-          dlFile(fname, bytes, "audio/wav");
+          // exactName: `name` here is already the specific filename the
+          // caller intends (typed in "Save Edited Audio As…", or a Loaded
+          // Audio entry's own stored name) — without this, dlFile's
+          // "rename to match the currently active recording" intercept
+          // would silently overwrite it with whatever's currently loaded,
+          // which is exactly the bug where a saved file ends up named
+          // after the WRONG (active) recording instead of what was typed.
+          dlFile(fname, bytes, "audio/wav", { exactName: true });
           log('Exporting "' + fname + '" to disk…', "ok");
         } catch (e) {
           log("Audio export failed: " + e.message, "err");
@@ -1055,6 +1839,104 @@
         const entry = audioLibrary.find((e) => e.id === id);
         if (!entry) return;
         exportAudioToDisk(entry.name, entry.samples, entry.rate);
+      }
+
+      // Original base name + whatever batch edits were applied (see
+      // applyBatchBandpass/applyBatchNormalize) — e.g. "call_A" with a
+      // 1kHz high-pass and 0dBFS normalize becomes "call_A_1hpf_n0.wav".
+      // Untouched entries just keep their original name.
+      function defaultBatchFilename(entry) {
+        const base = entry.name.replace(/\.[^/.]+$/, "");
+        const suffix = entry.editTags.length ? "_" + entry.editTags.join("_") : "";
+        return base + suffix + ".wav";
+      }
+
+      // Writes every checked Loaded Audio entry to disk under its default
+      // edited name, in one folder — picked once, defaulting to wherever
+      // the most recent import came from.
+      async function saveSelectedLibraryFiles() {
+        if (!audioLibBatchSelected.size) {
+          log("Check at least one loaded recording first.", "warn");
+          return;
+        }
+        const entries = audioLibrary.filter((e) => audioLibBatchSelected.has(e.id));
+
+        if (
+          window.__TAURI__ &&
+          window.__TAURI__.dialog &&
+          typeof window.__TAURI__.dialog.open === "function" &&
+          window.__TAURI__.fs &&
+          typeof window.__TAURI__.fs.writeFile === "function"
+        ) {
+          const folder = await window.__TAURI__.dialog.open({
+            directory: true,
+            defaultPath: lastImportFolder || undefined,
+            title: "Choose a folder to save the edited files",
+          });
+          if (!folder) {
+            log("Batch save cancelled by user", "info");
+            return;
+          }
+          lastImportFolder = folder;
+          const sep = folder.includes("\\") ? "\\" : "/";
+
+          // Folder is already chosen, so from here on it is all app work —
+          // WAV encoding plus a disk write per file.
+          const count = await withBusy(
+            "Saving edited audio…",
+            async (progress) => {
+              let n = 0;
+              for (let i = 0; i < entries.length; i++) {
+                const entry = entries[i];
+                const fname = defaultBatchFilename(entry);
+                progress(
+                  "Saving " + (i + 1) + "/" + entries.length + " — " + fname,
+                  i / entries.length,
+                );
+                await busyTick();
+                try {
+                  const bytes = _buildWav(entry.samples, entry.rate);
+                  await window.__TAURI__.fs.writeFile(
+                    `${folder}${sep}${fname}`,
+                    bytes,
+                  );
+                  n++;
+                } catch (e) {
+                  log(`Failed to save "${fname}": ${e.message}`, "err");
+                }
+              }
+              return n;
+            },
+          );
+          log(`Saved ${count}/${entries.length} file(s) to ${folder}`, "ok");
+        } else {
+          // Browser fallback: no folder picker available, so trigger one
+          // download per file (goes to the browser's default location).
+          console.warn("Tauri desktop save APIs unavailable; falling back to browser downloads.");
+          await withBusy("Saving edited audio…", async (progress) => {
+            for (let i = 0; i < entries.length; i++) {
+              const entry = entries[i];
+              const fname = defaultBatchFilename(entry);
+              progress(
+                "Saving " + (i + 1) + "/" + entries.length + " — " + fname,
+                i / entries.length,
+              );
+              await busyTick();
+              const bytes = _buildWav(entry.samples, entry.rate);
+              const blob = new Blob([bytes], { type: "audio/wav" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = fname;
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              URL.revokeObjectURL(url);
+              await new Promise((r) => setTimeout(r, 150)); // avoid the browser blocking rapid downloads
+            }
+          });
+          log(`Downloaded ${entries.length} file(s) (no folder picker in this environment).`, "ok");
+        }
       }
 
       function readWavSampleRate(ab) {
@@ -1237,13 +2119,22 @@
           render();
         }
       }
-      function reprocessSpec() {
-        if (rawSamples) {
+      // Changing the FFT size re-runs a transform over the whole recording, so
+      // on a long file this blocks for seconds with no sign of life.
+      async function reprocessSpec() {
+        if (!rawSamples) return;
+        await withBusy("Rendering spectrogram…", async (progress) => {
+          progress("Computing spectrogram…", 0.1);
+          await busyTick();
           computeSpectrogram();
+          progress("Computing spectral centroid…", 0.7);
+          await busyTick();
           computeSpectralCentroid();
+          progress("Drawing…", 0.9);
+          await busyTick();
           render();
           renderMinimap();
-        }
+        });
       }
 
       // ═══════════════════════════════════════════════════════════════════
@@ -1806,7 +2697,6 @@
       // MINIMAP / OVERVIEW
       // ═══════════════════════════════════════════════════════════════════
       function renderMinimap() {
-        if (!rawSamples) return;
         const wrap = $("minimapWrap");
         const W = wrap.clientWidth,
           H = wrap.clientHeight;
@@ -1817,6 +2707,15 @@
         const ctx = c.getContext("2d");
         ctx.fillStyle = "#0a0e14";
         ctx.fillRect(0, 0, W, H);
+        if (!rawSamples) {
+          // Nothing loaded — clear any stale overview from a since-deleted
+          // recording instead of leaving it on screen.
+          const win = $("minimapWindow");
+          if (win) win.style.display = "none";
+          return;
+        }
+        const winEl = $("minimapWindow");
+        if (winEl) winEl.style.display = "";
         // Draw waveform overview
         const n = rawSamples.length,
           spp = n / W;
@@ -1935,8 +2834,8 @@
           const { t, f } = pixToTF(e.offsetX, e.offsetY, src);
           $("cursorInfo").textContent = "t=" + t.toFixed(5) + "s  " + fmtHz(f);
           if (trimMode) {
-            if (trimDrag) {
-              // Drag the active handle; keep t0 < t1 with a small min gap.
+            if (trimDrag === "t0" || trimDrag === "t1") {
+              // Resizing one edge from its handle; keep t0 < t1 with a small min gap.
               const minGap = 0.001;
               let nt = Math.max(0, Math.min(duration, t));
               if (trimDrag === "t0")
@@ -1946,18 +2845,43 @@
               trimSel.t1 = Math.min(duration, trimSel.t1);
               updateTrimReadout();
               render();
-            } else if (panState) {
-              // Pan the view by dragging empty space (lets you zoom + scroll
-              // to position handles precisely).
-              const W = getVizWidth();
-              const dx = e.offsetX - panState.startX;
-              const dtPerPx = viewDur / W;
-              setViewStart(panState.startViewStart - dx * dtPerPx);
+            } else if (trimDrag === "move") {
+              // Dragging the whole kept region — same duration, shifted by
+              // exactly the mouse delta, clamped to stay in bounds.
+              const dt = t - trimMoveStartT;
+              let nt0 = trimMoveStartT0 + dt;
+              let nt1 = trimMoveStartT1 + dt;
+              if (nt0 < 0) {
+                nt1 -= nt0;
+                nt0 = 0;
+              }
+              if (nt1 > duration) {
+                nt0 -= nt1 - duration;
+                nt1 = duration;
+              }
+              trimSel.t0 = Math.max(0, nt0);
+              trimSel.t1 = Math.min(duration, nt1);
+              updateTrimReadout();
               c.style.cursor = "grabbing";
+              render();
+            } else if (trimDrag === "new") {
+              // Dragging out a brand-new selection from an empty-space click.
+              if (Math.abs(e.offsetX - trimDragStartX) > 3) trimDidDragNew = true;
+              const nt = Math.max(0, Math.min(duration, t));
+              trimSel.t0 = Math.min(trimNewAnchor, nt);
+              trimSel.t1 = Math.max(trimNewAnchor, nt);
+              updateTrimReadout();
+              c.style.cursor = "crosshair";
+              render();
             } else {
-              // Hover feedback: resize cursor near a handle, else a grab hand.
+              // Hover feedback: resize cursor near a handle, grab hand over
+              // the kept region, crosshair over empty space (drag to select).
               c.style.cursor =
-                trimHandleHit(e.offsetX) !== null ? "ew-resize" : "grab";
+                trimHandleHit(e.offsetX) !== null
+                  ? "ew-resize"
+                  : t > trimSel.t0 && t < trimSel.t1
+                    ? "grab"
+                    : "crosshair";
             }
             return; // trim mode suppresses other tools
           }
@@ -1980,18 +2904,36 @@
         c.addEventListener("mousedown", (e) => {
           if (!rawSamples || e.button !== 0) return;
           if (trimMode) {
-            // Grab a handle only if the click is genuinely near a VISIBLE one.
-            // Clicking empty space pans the view (so you can zoom in and
-            // navigate to place each handle precisely).
+            const { t } = pixToTF(e.offsetX, e.offsetY, src);
+            const ct = Math.max(0, Math.min(duration, t));
+            // 1) Grab a handle only if the click is genuinely near a VISIBLE one.
             const which = trimHandleHit(e.offsetX);
             if (which !== null) {
               trimDrag = which;
               c.style.cursor = "ew-resize";
               render();
-            } else {
-              panState = { startX: e.offsetX, startViewStart: viewStart };
-              c.style.cursor = "grabbing";
+              return;
             }
+            // 2) Inside the kept region — drag the whole selection around.
+            if (ct > trimSel.t0 && ct < trimSel.t1) {
+              trimDrag = "move";
+              trimMoveStartT = ct;
+              trimMoveStartT0 = trimSel.t0;
+              trimMoveStartT1 = trimSel.t1;
+              c.style.cursor = "grabbing";
+              return;
+            }
+            // 3) Empty space — drag out a brand-new selection from here.
+            trimDrag = "new";
+            trimNewAnchor = ct;
+            trimPreDragSel = { t0: trimSel.t0, t1: trimSel.t1 };
+            trimDidDragNew = false;
+            trimDragStartX = e.offsetX;
+            trimSel.t0 = ct;
+            trimSel.t1 = ct;
+            c.style.cursor = "crosshair";
+            updateTrimReadout();
+            render();
             return;
           }
           if (activeTool === "annotate") {
@@ -2028,10 +2970,22 @@
         });
         c.addEventListener("mouseup", (e) => {
           if (trimMode) {
+            // A "new" drag that never actually moved was just a click on
+            // empty space — restore whatever selection existed before it,
+            // instead of collapsing to a zero-length one.
+            if (trimDrag === "new" && !trimDidDragNew) {
+              trimSel.t0 = trimPreDragSel.t0;
+              trimSel.t1 = trimPreDragSel.t1;
+              updateTrimReadout();
+            }
             trimDrag = null;
-            panState = null;
+            const { t } = pixToTF(e.offsetX, e.offsetY, src);
             c.style.cursor =
-              trimHandleHit(e.offsetX) !== null ? "ew-resize" : "grab";
+              trimHandleHit(e.offsetX) !== null
+                ? "ew-resize"
+                : t > trimSel.t0 && t < trimSel.t1
+                  ? "grab"
+                  : "crosshair";
             render();
             return;
           }
@@ -2488,6 +3442,13 @@
         );
         refreshAnnotList();
         render();
+        renderMinimap();
+        // The imported rows land as Spectral Analysis selections (annotations),
+        // so surface that tab — otherwise triggering this from any other tab
+        // (e.g. Temporal Analysis) silently updates a view nobody is looking
+        // at and looks like the button did nothing.
+        switchMainTab("analyzer", $("maintab-analyzer"));
+        setTimeout(render, 50);
       }
 
       // ── Self-contained XLSX reader (no dependencies) ─────────────────────
@@ -2822,7 +3783,7 @@
       let spectralMetricsRows = null;
 
       function exportSelectionSpectra() {
-        saveSpectralMetricsExcel();
+        return saveSpectralMetricsExcel();
       }
 
       function computeUnifiedSpectralMetrics() {
@@ -2871,6 +3832,12 @@
           const m = computeSpectralMetrics(a.start, a.end);
           const prev = i > 0 ? sorted[i - 1] : null;
           return {
+            source_file: pkSourceFile(),
+            temp_c: currentTempC,
+            specimen_id: currentSpecimenId,
+            species: currentSpecies,
+            country: currentCountry,
+            locality: currentLocality,
             selection: i + 1,
             label: a.label || "",
             start: Math.round(a.start * 1e6) / 1e6,
@@ -2930,7 +3897,7 @@
         );
       }
 
-      function saveSpectralMetricsExcel() {
+      async function saveSpectralMetricsExcel() {
         if (!rawSamples) {
           log("Load audio first", "warn");
           return;
@@ -2953,7 +3920,14 @@
           return;
         }
 
+        // Heavy part (summary statistics + XML/ZIP) runs behind the overlay;
+        // the save dialog afterwards does not, since that is the user's time,
+        // not the app's.
+        let built = null;
         try {
+          built = await withBusy(
+            "Building spectral workbook…",
+            async (progress) => {
           const fftN = measFftSize();
           // Choose the canonical rows source: prefer spectralMetricsRows (selections)
           // otherwise fall back to detMeasurements (amplitude-detection results).
@@ -2965,6 +3939,12 @@
                 : [];
           const meta = [
             {
+              source_file: pkSourceFile(),
+              temp_c: currentTempC,
+              specimen_id: currentSpecimenId,
+              species: currentSpecies,
+              country: currentCountry,
+              locality: currentLocality,
               generated: new Date().toISOString(),
               n_selections: rows.length,
               sample_rate_hz: sampleRate,
@@ -2991,21 +3971,33 @@
             return { metric: k, n: n, mean: mean, sd: sd, min: mn, max: mx };
           });
 
-          const bytes = _buildXlsx([
-            ["Spectral_Analysis", rows],
-            ["Summary", summary],
-            ["Info", meta],
-          ]);
+              progress("Serialising " + rows.length + " rows…", 0.5);
+              await busyTick();
+              return {
+                bytes: _buildXlsx([
+                  ["Spectral_Analysis", rows],
+                  ["Summary", summary],
+                  ["Info", meta],
+                ]),
+                nRows: rows.length,
+              };
+            },
+          );
+        } catch (e) {
+          log("Spectral export failed: " + e.message, "err");
+          return;
+        }
+        try {
           const stamp = new Date()
             .toISOString()
             .slice(0, 19)
             .replace(/[:T]/g, "-");
-          dlFile(
-            "spectral_analysis_" + stamp + ".xlsx",
-            bytes,
+          await dlFile(
+            "spec_" + stamp + ".xlsx",
+            built.bytes,
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
           );
-          log("Saved spectral analysis for " + rows.length + " rows", "ok");
+          log("Saved spectral analysis for " + built.nRows + " rows", "ok");
         } catch (e) {
           log("Spectral export failed: " + e.message, "err");
         }
@@ -3015,43 +4007,89 @@
       // [start,end] (seconds). Returns an object of spectral features in kHz, or
       // null if audio isn't loaded. Used by both the measurement table and the
       // per-selection spectral export, so the maths lives in exactly one place.
-      function computeSpectralMetrics(start, end) {
-        if (!rawSamples) return null;
-        const fftN = measFftSize();
-        const bins = fftN >> 1;
-        const binHz = sampleRate / fftN;
-        const win = hannWin(fftN);
-        const hop = Math.max(1, fftN >> 2);
-        const n = rawSamples.length;
-        const khz3 = (hz) => Math.round((hz / 1000) * 1000) / 1000;
+      // Smallest transform we will ever use. Below this the spectrum is too
+      // coarse to say anything, even about a single pulse.
+      const SPEC_MIN_FFT = 64;
+      // Analysis window, in samples, that delivers a requested frequency
+      // resolution. Resolution is 1/T, so T = 1/R — and because this is an
+      // exact sample count rather than a power of two, the SAME requested
+      // resolution gives the same real resolution at 44.1, 48 or 96 kHz.
+      // Rounding T up to a power of two was what made those rates disagree.
+      function pkFrameForRes(resHz) {
+        return Math.max(
+          2,
+          Math.round(sampleRate / Math.max(0.1, resHz)),
+        );
+      }
 
-        // Welch-style averaged power spectrum over the window (zero-padded single
-        // frame if the window is shorter than one FFT).
+      // Zero-padding factor. The analysis window sets the real resolution; the
+      // transform is padded past it so the spectrum is read off a grid finer
+      // than the lobes it is measuring. Bin spacing lands near R/4, which
+      // keeps threshold-crossing measures like bw_20db from being quantised
+      // by the grid.
+      const SPEC_PAD_FACTOR = 4;
+
+      // Spectral metrics over [start,end] (seconds).
+      //
+      // Pass targetResHz to pin the analysis window to a frequency resolution.
+      // That is the sample-rate-independent way to make rows comparable: every
+      // row is measured over the same DURATION of signal, whatever the file's
+      // sample rate. Without it the window follows the span, which is only
+      // sensible for a one-off look at a single selection.
+      function computeSpectralMetrics(start, end, targetResHz) {
+        if (!rawSamples) return null;
+        const n = rawSamples.length;
         const s0 = Math.max(0, Math.round(start * sampleRate));
         const s1 = Math.min(n, Math.round(end * sampleRate));
-        const span = s1 - s0;
+        const span = Math.max(1, s1 - s0);
+
+        // frameSamp — how much signal goes into one transform (sets the real
+        // resolution).  fftN — the padded transform length (sets bin spacing).
+        let frameSamp, fftN;
+        if (targetResHz) {
+          frameSamp = Math.min(span, pkFrameForRes(targetResHz));
+          fftN = SPEC_MIN_FFT;
+          const want = frameSamp * SPEC_PAD_FACTOR;
+          while (fftN < want && fftN < 65536) fftN <<= 1;
+        } else {
+          fftN = measFftSize();
+          while (fftN > SPEC_MIN_FFT && fftN > span) fftN >>= 1;
+          frameSamp = Math.min(span, fftN);
+        }
+        const bins = fftN >> 1;
+        const binHz = sampleRate / fftN;
+        const win = hannWin(frameSamp);
+        const hop = Math.max(1, frameSamp >> 2);
+        const khz3 = (hz) => Math.round((hz / 1000) * 1000) / 1000;
+
         const spec = new Float32Array(bins);
         let frames = 0;
         const re = new Float32Array(fftN),
           im = new Float32Array(fftN);
-        const addFrame = (off) => {
+
+        // One frame: frameSamp windowed samples, centred in a zero-filled
+        // buffer of fftN. Never reads beyond [a, a+frameSamp), so a frame can
+        // not pull in a neighbouring pulse the way widening the window did.
+        const addFrame = (a) => {
           re.fill(0);
           im.fill(0);
-          for (let i = 0; i < fftN; i++) {
-            const si = off + i;
-            re[i] = si >= 0 && si < n ? rawSamples[si] * win[i] : 0;
+          const off = (fftN - frameSamp) >> 1;
+          for (let i = 0; i < frameSamp; i++) {
+            const si = a + i;
+            if (si >= 0 && si < n) re[off + i] = rawSamples[si] * win[i];
           }
           fft(re, im, fftN);
           for (let b = 0; b < bins; b++)
             spec[b] += re[b] * re[b] + im[b] * im[b];
           frames++;
         };
-        if (span >= fftN) {
-          for (let off = s0; off + fftN <= s1; off += hop) addFrame(off);
-          if (frames === 0) addFrame(s1 - fftN);
+
+        if (span > frameSamp) {
+          // Longer than one window: Welch-average across it.
+          for (let off = s0; off + frameSamp <= s1; off += hop) addFrame(off);
+          if (frames === 0) addFrame(s1 - frameSamp);
         } else {
-          const centre = Math.round((s0 + s1) / 2);
-          addFrame(centre - (fftN >> 1));
+          addFrame(s0);
         }
         if (frames > 1) for (let b = 0; b < bins; b++) spec[b] /= frames;
 
@@ -3103,6 +4141,35 @@
           sden += spec[b];
         }
         const specCent = sden > 0 ? snum / sden : peakFreq;
+
+        // Shape of the power spectrum treated as a distribution over
+        // frequency, weighted by power: the 2nd, 3rd and 4th central moments
+        // about the centroid.
+        //   spread    — spectral standard deviation, in kHz
+        //   skewness  — 0 symmetric, >0 tail toward high frequency
+        //   kurtosis  — RAW, so 3 is Gaussian; higher means a sharper peak
+        //               with heavier tails
+        // These are computed over the whole spectrum, the standard definition.
+        // That makes them sensitive to the noise floor: broadband background
+        // widens the spread and flattens the kurtosis, so they compare cleanly
+        // only between windows of the same length. spec_res_hz on every row is
+        // what tells you whether two rows are comparable.
+        let m2 = 0,
+          m3 = 0,
+          m4 = 0;
+        if (sden > 0) {
+          for (let b = 0; b < bins; b++) {
+            const d = b * binHz - specCent;
+            const w = spec[b] / sden;
+            const d2 = d * d;
+            m2 += w * d2;
+            m3 += w * d2 * d;
+            m4 += w * d2 * d2;
+          }
+        }
+        const specSpread = Math.sqrt(Math.max(0, m2));
+        const specSkew = specSpread > 0 ? m3 / (specSpread ** 3) : null;
+        const specKurt = specSpread > 0 ? m4 / (specSpread ** 4) : null;
 
         let ent = 0;
         if (sden > 0)
@@ -3188,12 +4255,23 @@
         const iqBw = (q75b - q25b) * binHz;
 
         return {
+          // Signal in one transform. This is what sets the real resolution,
+          // and it is the number to check when comparing recordings.
+          spec_signal_ms: Math.round((frameSamp / sampleRate) * 1e5) / 1e2,
+          // Real resolution, 1/T. Independent of sample rate.
+          spec_res_hz: Math.round((sampleRate / frameSamp) * 100) / 100,
+          // Bin spacing after zero-padding — interpolation density, NOT
+          // resolution. Finer than spec_res_hz by roughly SPEC_PAD_FACTOR.
+          spec_bin_hz: Math.round(binHz * 100) / 100,
           peak_freq_khz: khz3(peakFreq),
           freq_min_khz: khz3(freqMin20),
           freq_max_khz: khz3(freqMax20),
           bw_20db_khz: khz3(freqMax20 - freqMin20),
           bw_10db_khz: khz3(bw10),
           spec_centroid_khz: khz3(specCent),
+          spec_spread_khz: khz3(specSpread),
+          spec_skew: specSkew !== null ? Math.round(specSkew * 1e4) / 1e4 : null,
+          spec_kurt: specKurt !== null ? Math.round(specKurt * 1e4) / 1e4 : null,
           iq_bw_khz: khz3(iqBw),
           spec_entropy: Math.round(entNorm * 1e4) / 1e4,
           spec_flatness: Math.round(flatness * 1e4) / 1e4,
@@ -3215,6 +4293,12 @@
           const gap = idx > 0 ? d.start - detections[idx - 1].end : null;
           const m = computeSpectralMetrics(d.start, d.end);
           return {
+            source_file: pkSourceFile(),
+            temp_c: currentTempC,
+            specimen_id: currentSpecimenId,
+            species: currentSpecies,
+            country: currentCountry,
+            locality: currentLocality,
             n: idx + 1,
             start: d.start,
             end: d.end,
@@ -3458,25 +4542,44 @@
         dlFile("detections.txt", txt, "text/plain");
         log("Exported " + detections.length + " detections", "ok");
       }
-      async function dlFile(defaultFilename, content, mimeType) {
+      async function dlFile(defaultFilename, content, mimeType, opts) {
         try {
           const extension = defaultFilename.split(".").pop();
           let finalDefaultPath = defaultFilename;
 
-          if (currentAudioFileName) {
+          // exactName: skip the "rename to match the loaded audio" intercept
+          // below — used where the caller has already built a specific,
+          // meaningful filename (e.g. a numbered trim-selection export) that
+          // must not be collapsed back down to the bare audio file name.
+          if (!opts?.exactName && currentAudioFileName) {
             const baseAudioName = currentAudioFileName.replace(/\.[^/.]+$/, "");
 
-            // Smart intercept: match the appendix to what the original export called
+            // Smart intercept: match the appendix to what the original export
+            // called it.
+            //
+            // Matched as whole underscore-delimited TOKENS, not bare
+            // substrings: "specimen_metadata.json" starts with "spec" but is
+            // not a spectral export, and tagging it as one would rename a
+            // specimen's metadata after somebody else's analysis.
+            //
+            // The results tables are all emitted as "Rthoptera_<table>_data",
+            // so they are matched on that whole shape rather than on the table
+            // word alone — a locality called "Peak District" would otherwise
+            // tag a cross-recording summary as a peak table.
+            const stem = defaultFilename.replace(/\.[^/.]+$/, "");
+            const table = stem.match(
+              /(^|_)(peak|train|motif|motseq|summ)_data(_|$)/i,
+            );
             let appendix = "";
-            if (defaultFilename.includes("spectral_analysis"))
-              appendix = "_spectral_analysis";
-            else if (defaultFilename.includes("temporal_analysis"))
-              appendix = "_temporal_analysis";
-            else if (defaultFilename.includes("measurements"))
-              appendix = "_measurements";
-            else if (defaultFilename.includes("detections"))
-              appendix = "_detections";
-            else if (extension === "xlsx") appendix = "_results";
+            if (/(^|_)spec(_|$)/i.test(stem)) appendix = "_spec";
+            else if (/(^|_)temp(_|$)/i.test(stem)) appendix = "_temp";
+            else if (/(^|_)det(ections)?(_|$)/i.test(stem)) appendix = "_det";
+            else if (/(^|_)meas(urements?)?(_|$)/i.test(stem))
+              appendix = "_meas";
+            else if (table) appendix = "_" + table[2].toLowerCase();
+            else if (/(^|_)summ(ary)?(_|$)/i.test(stem)) appendix = "_summ";
+            else if (/(^|_)raven(_|$)/i.test(stem)) appendix = "_raven";
+            else if (/(^|_)meta(data)?(_|$)/i.test(stem)) appendix = "_meta";
 
             const outputName = `${baseAudioName}${appendix}.${extension}`;
             if (currentAudioFileFolder) {
@@ -3485,6 +4588,9 @@
             } else {
               finalDefaultPath = outputName;
             }
+          } else if (opts?.exactName && currentAudioFileFolder) {
+            const sep = currentAudioFileFolder.includes("\\") ? "\\" : "/";
+            finalDefaultPath = `${currentAudioFileFolder}${sep}${defaultFilename}`;
           }
 
           // Use Tauri APIs when available (desktop), otherwise fallback to browser download
@@ -4362,34 +5468,119 @@
       // ═══════════════════════════════════════════════════════════════════
       // MAIN VIEW TABS (Analyzer / Export Plot)
       // ═══════════════════════════════════════════════════════════════════
+      // "Plotting" is a parent tab holding Multiplot/Osc. Stack/Osc.
+      // Zoom/Habitus as sub-tabs (see switchPlotSubtab below). Remembers
+      // the last sub-tab so re-entering "Plotting" doesn't reset it.
+      let plotActiveSubtab = "plot";
+
       function switchMainTab(name, el) {
-        ["analyzer", "plot", "peaks", "oscstack", "osczoom", "habitus"].forEach((n) => {
-          const t = $("maintab-" + n);
-          if (t) t.classList.toggle("active", n === name);
-        });
+        // Landing has no tab button of its own — activating any real tab
+        // (via a click, or programmatically on first audio load) retires it
+        // for good.
+        const landing = $("mainview-landing");
+        if (landing) landing.style.display = "none";
+        ["preprocess", "peaks", "analyzer", "plotting", "summarize"].forEach(
+          (n) => {
+            const t = $("maintab-" + n);
+            if (t) t.classList.toggle("active", n === name);
+          },
+        );
+        const pp = $("mainview-preprocess");
         const a = $("mainview-analyzer");
-        const p = $("mainview-plot");
         const k = $("mainview-peaks");
-        const o = $("mainview-oscstack");
-        const z = $("mainview-osczoom");
-        const h = $("mainview-habitus");
+        const plotBar = $("plotSubtabBar");
         const sb = $("sidebar");
+        const sm = $("mainview-summarize");
+        if (pp) pp.style.display = name === "preprocess" ? "flex" : "none";
         if (a) a.style.display = name === "analyzer" ? "flex" : "none";
-        if (p) p.style.display = name === "plot" ? "flex" : "none";
         if (k) k.style.display = name === "peaks" ? "flex" : "none";
-        if (o) o.style.display = name === "oscstack" ? "flex" : "none";
-        if (z) z.style.display = name === "osczoom" ? "flex" : "none";
-        if (h) h.style.display = name === "habitus" ? "flex" : "none";
-        // Sidebar is only relevant for the Analyzer
+        if (plotBar) plotBar.style.display = name === "plotting" ? "flex" : "none";
+        if (sm) sm.style.display = name === "summarize" ? "flex" : "none";
+        ["plot", "oscstack", "osczoom", "habitus"].forEach((n) => {
+          const v = $("mainview-" + n);
+          if (v) v.style.display = name === "plotting" && n === plotActiveSubtab ? "flex" : "none";
+        });
+        // Sidebar (Time Axis / Frequency Axis / Spectrogram display
+        // settings) is only relevant for the Analyzer's own visualization.
         if (sb) sb.style.display = name === "analyzer" ? "flex" : "none";
+        _placeSharedViewer(name);
         if (name === "peaks")
           setTimeout(() => {
             if (pkEnv) pkDrawEnvelope();
           }, 50);
-        if (name === "analyzer")
+        if (name === "analyzer" || name === "preprocess")
           setTimeout(() => {
             render();
           }, 50);
+        // Entering Plotting re-activates whichever sub-tab was last shown,
+        // which also re-fires that sub-tab's library-picker refresh below.
+        if (name === "plotting") switchPlotSubtab(plotActiveSubtab);
+      }
+
+      // Physically moves the shared waveform/spectrogram viewer (one DOM
+      // subtree, one set of canvas IDs — see #waveSpecViewer in index.html)
+      // between its home in Spectral Analysis and Preprocessing's slot, so
+      // Preprocessing can preview filters/normalization/trim on the same
+      // render pipeline without duplicating any canvases or IDs. The
+      // detection/annotation/tool controls in its transport bar only make
+      // sense in Spectral Analysis, so they're hidden elsewhere.
+      function _placeSharedViewer(name) {
+        const viewer = $("waveSpecViewer");
+        if (!viewer) return;
+        const targetSlot =
+          name === "preprocess" ? $("preprocessViewerSlot") : $("analyzerViewerSlot");
+        if (targetSlot && viewer.parentElement !== targetSlot) {
+          targetSlot.appendChild(viewer);
+        }
+        const analyzerOnly = $("analyzerOnlyControls");
+        if (analyzerOnly)
+          analyzerOnly.style.display = name === "analyzer" ? "contents" : "none";
+      }
+
+      // Brings back the landing/guide view. Unlike the real tabs, landing
+      // has no maintab- button of its own, so it just deactivates whichever
+      // tab is currently active and re-shows the landing pane in its place.
+      function goHome() {
+        const landing = $("mainview-landing");
+        if (landing) landing.style.display = "flex";
+        ["preprocess", "peaks", "analyzer", "plotting", "summarize"].forEach(
+          (n) => {
+            const t = $("maintab-" + n);
+            if (t) t.classList.remove("active");
+          },
+        );
+        const pp = $("mainview-preprocess");
+        const a = $("mainview-analyzer");
+        const k = $("mainview-peaks");
+        const plotBar = $("plotSubtabBar");
+        const sb = $("sidebar");
+        const sm = $("mainview-summarize");
+        if (pp) pp.style.display = "none";
+        if (a) a.style.display = "none";
+        if (k) k.style.display = "none";
+        if (plotBar) plotBar.style.display = "none";
+        if (sb) sb.style.display = "none";
+        if (sm) sm.style.display = "none";
+        ["plot", "oscstack", "osczoom", "habitus"].forEach((n) => {
+          const v = $("mainview-" + n);
+          if (v) v.style.display = "none";
+        });
+        _placeSharedViewer("home"); // parks the viewer back in analyzerViewerSlot
+      }
+
+      function switchPlotSubtab(name, el) {
+        plotActiveSubtab = name;
+        ["plot", "oscstack", "osczoom", "habitus"].forEach((n) => {
+          const t = $("plotsubtab-" + n);
+          if (t) t.classList.toggle("active", n === name);
+          const v = $("mainview-" + n);
+          if (v) v.style.display = n === name ? "flex" : "none";
+        });
+        // Each library-backed picker only re-renders on library changes;
+        // catch it up here too, in case audio was imported on another tab.
+        if (name === "oscstack" && typeof oscRenderLibPicker === "function") oscRenderLibPicker();
+        if (name === "osczoom" && typeof ozRenderLibPicker === "function") ozRenderLibPicker();
+        if (name === "habitus" && typeof habRenderLibPicker === "function") habRenderLibPicker();
       }
 
       // ═══════════════════════════════════════════════════════════════════
@@ -4548,12 +5739,16 @@
         else renderMinimap();
       });
       window.addEventListener("load", () => {
-        // Initialize main tab state
-        switchMainTab("analyzer", $("maintab-analyzer"));
+        // Main tab state is left alone here: the Landing view (see
+        // mainview-landing in index.html) is shown by default and only
+        // retired once a real tab is activated (by click, or by the first
+        // audio import — see switchMainTab).
         makePointer("waveI", "wave");
         makePointer("specI", "spec");
         initDragHandles();
         initMinimap();
+        pkWatchCanvasResize();
+        showAppVersion();
         _refreshPresetLabels();
         if (typeof _pkRefreshPresetLabels === "function")
           _pkRefreshPresetLabels();
@@ -4607,6 +5802,11 @@
       let pkTrains = [];
       let pkMotifs = [];
       let pkMotifSeqs = [];
+      // ids of annotations most recently pushed by pkApplyDetectionsToSpectral
+      // — tracked so a re-apply after editing detections REPLACES them
+      // (correct edits + chronological renumbering) instead of piling up
+      // stale duplicates alongside freshly-numbered ones.
+      let pkAppliedAnnotationIds = [];
       let pkPeakData = [];
       let pkTrainData = [];
       let pkMotifData = [];
@@ -4655,6 +5855,27 @@
           const el = $(id);
           if (el) el.addEventListener("input", () => regroup(note));
         });
+        // "Max peak gap" / "Max amp diff" (the Train Grouping panel) drive
+        // peak-to-train segmentation itself, one level below the trio above.
+        // Re-derive splitAfter for ALL peaks from the new threshold — this
+        // never adds, removes, or moves a peak (manually added/removed peaks
+        // stay exactly as they are), it only redraws train boundaries around
+        // the peaks that already exist. Any hand-toggled split/merge/assign
+        // is a boundary edit too, so a threshold change here supersedes it,
+        // same as it does at detection time.
+        const regroupBoundaries = (note) => {
+          if (pkPeaks && pkPeaks.length) {
+            pkInitBoundaries();
+            pkLiveUpdate(note);
+          }
+        };
+        [
+          ["pkMaxGap", "max peak gap"],
+          ["pkMaxDiff", "max amp diff"],
+        ].forEach(([id, note]) => {
+          const el = $(id);
+          if (el) el.addEventListener("input", () => regroupBoundaries(note));
+        });
       });
 
       // ── Envelope computation ────────────────────────────────────────────
@@ -4679,6 +5900,45 @@
         for (let i = 0; i < n; i++) if (env[i] > mx) mx = env[i];
         if (mx > 1e-10) for (let i = 0; i < n; i++) env[i] /= mx;
         return env;
+      }
+
+      // Outward-scan cap for pkProminenceAt, in samples (~5s worth at a
+      // typical 44.1kHz recording). Real bioacoustic envelopes find their
+      // true valley/wall long before this; it only bounds the pathological
+      // case of a long, near-monotonic stretch (e.g. a slowly decaying
+      // train tail) so a single call can't degrade toward O(n) — once a dip
+      // this deep has been scanned without finding a taller point, the
+      // measured prominence already exceeds any realistic percentage
+      // threshold, so capping here doesn't change real outcomes.
+      const PK_PROMINENCE_SCAN_CAP = 220500;
+
+      // True topographic prominence of the local maximum `cv` at `idx`: walk
+      // outward in each direction tracking the lowest point crossed, until
+      // hitting a strictly taller sample (the "wall") or the signal edge.
+      // Prominence = cv minus the HIGHER of the two sides' lowest points —
+      // i.e. the shallower of the two dips is what actually limits how much
+      // this peak stands out (matches scipy.signal.peak_prominences).
+      function pkProminenceAt(env, idx, cv, cap) {
+        const n = env.length;
+        let leftMin = cv;
+        let j = idx - 1,
+          steps = 0;
+        while (j >= 0 && steps < cap) {
+          if (env[j] > cv) break;
+          if (env[j] < leftMin) leftMin = env[j];
+          j--;
+          steps++;
+        }
+        let rightMin = cv;
+        j = idx + 1;
+        steps = 0;
+        while (j < n && steps < cap) {
+          if (env[j] > cv) break;
+          if (env[j] < rightMin) rightMin = env[j];
+          j++;
+          steps++;
+        }
+        return cv - Math.max(leftMin, rightMin);
       }
 
       // ── Local peak detection ────────────────────────────────────────────
@@ -4724,15 +5984,17 @@
           }
 
           // Is i the start of a maximal run of equal values (the plateau top)?
-          // First require that nothing in the window strictly exceeds cv.
-          let isMax = true,
-            minV = cv;
+          // First require that nothing in the window strictly exceeds cv. This
+          // ±winSamp check is purely about peak WIDTH/spacing — confirming i is
+          // locally the tallest point so closely-packed samples don't each
+          // register as their own peak — and is intentionally decoupled from
+          // prominence (see below), which needs to look arbitrarily far out.
+          let isMax = true;
           for (let j = i - winSamp; j <= i + winSamp; j++) {
             if (env[j] > cv) {
               isMax = false;
               break;
             }
-            if (env[j] < minV) minV = env[j];
           }
           if (!isMax) {
             i++;
@@ -4761,9 +6023,15 @@
             pStart--;
 
           // Confirm it's a genuine top: the samples just outside the flat run must
-          // not be higher (they can't be, given isMax), and prominence must hold.
-          if (cv - minV >= peakThr) {
-            const centre = Math.round((pStart + pEnd) / 2);
+          // not be higher (they can't be, given isMax), and TRUE prominence must
+          // hold — measured by walking outward until a taller point (or the
+          // signal edge) is found on each side, not just within ±winSamp. A
+          // narrow window here was the actual bug: it under-measured prominence
+          // for peaks with a gradual approach (missing genuine train-onset
+          // peaks) while over-crediting tiny noise wiggles sitting close to a
+          // strong peak (spurious detections in quiet trailing tails).
+          const centre = Math.round((pStart + pEnd) / 2);
+          if (pkProminenceAt(env, centre, cv, PK_PROMINENCE_SCAN_CAP) >= peakThr) {
             cands.push({
               idx: centre,
               time: centre / sampleRate,
@@ -4809,92 +6077,227 @@
         return peaks;
       }
 
-      // ── Arch detection helper ───────────────────────────────────────────
-      function pkLinSlope(amps) {
-        // slope of linear fit over array of amplitudes
-        const n = amps.length;
-        if (n < 2) return 0;
-        const mx = amps.reduce((s, v) => s + v, 0) / n;
-        const xi = (n - 1) / 2; // mean x = (0+1+...+n-1)/n
-        let num = 0,
-          den = 0;
-        for (let i = 0; i < n; i++) {
-          num += (i - xi) * (amps[i] - mx);
-          den += (i - xi) * (i - xi);
+      // ── Arch (valley) train splitting ───────────────────────────────────
+      // Some species run their trains back to back: the silence between two
+      // trains is no longer than the spacing between peaks inside one, so the
+      // gap rule can never separate them. What still separates them by eye is
+      // the ARCH — amplitude climbs to a crest, falls away, climbs again — and
+      // the boundary is the VALLEY between two crests.
+      //
+      // This is a SECOND pass, applied to the trains the gap rule has already
+      // produced. A train the gap rule got right, holding a single arch, has
+      // no qualifying valley and passes through untouched.
+      //
+      // Everything works on the peak contour — the line through the peak tops,
+      // indexed by peak rather than by sample. That is the curve the eye
+      // actually follows, and it is far cheaper and quieter than the envelope.
+      //
+      // Two properties matter, and both are places the previous slope-based
+      // arch splitter went wrong:
+      //   • The cut lands at the MIDDLE of the valley floor, not at the point
+      //     where the descent first passes some threshold. Cutting on the
+      //     falling limb hands the tail of each train to the next one.
+      //   • Valley depth is measured as a FRACTION of the adjacent crests, so
+      //     a quiet train and a loud one are judged alike. An absolute slope
+      //     or drop is either unreachable in quiet passages or tripped by
+      //     jitter in loud ones.
+
+      // Peaks within this fraction of a train's amplitude range count as "the
+      // same level" and merge into one basin — valley floors are rarely a
+      // single peak wide.
+      const PK_VALLEY_FLAT_TOL = 0.05;
+      // Under this many peaks a train cannot hold two arches worth splitting.
+      const PK_VALLEY_MIN_PEAKS = 5;
+      // Depth at which a valley is unmistakable. Used only to seed the
+      // automatic minimum-duration estimate, never as the user's threshold.
+      const PK_VALLEY_CLEAR_DEPTH = 0.6;
+      // Automatic minimum train duration, as a fraction of the median duration
+      // the unmistakable valleys produce.
+      const PK_VALLEY_DUR_FRAC = 0.5;
+
+      // Candidate valleys inside one train: flat-bottomed local minima, each
+      // scored by how deep it sits relative to the crests immediately beside
+      // it. Returns [{mid, depth}] where `mid` is the index to cut after.
+      function pkTrainValleys(train) {
+        const n = train.length;
+        if (n < PK_VALLEY_MIN_PEAKS) return [];
+        const amps = train.map((p) => p.amp);
+        let lo = Infinity,
+          hi = -Infinity;
+        for (const a of amps) {
+          if (a < lo) lo = a;
+          if (a > hi) hi = a;
         }
-        return den > 0 ? num / den : 0;
+        const tol = (hi - lo) * PK_VALLEY_FLAT_TOL;
+
+        // Basins: interior floors walled in by a clearly higher peak on each
+        // side. Seeded on a true local minimum, then widened across peaks
+        // within tol of the bottom on EITHER side.
+        //
+        // The two-sided widening is load-bearing. A one-sided "keep going
+        // while the next peak is no higher than the running minimum" test is
+        // satisfied by any descent, so a basin swallows the whole falling limb
+        // from the crest down and its midpoint lands halfway down the slope —
+        // reintroducing the very mid-slope cut this rewrite exists to avoid.
+        const basins = [];
+        for (let m = 1; m < n - 1; m++) {
+          if (!(amps[m] < amps[m - 1] && amps[m] <= amps[m + 1])) continue;
+          const mn = amps[m];
+          let s = m,
+            e = m;
+          while (s - 1 >= 1 && Math.abs(amps[s - 1] - mn) <= tol) s--;
+          while (e + 1 <= n - 2 && Math.abs(amps[e + 1] - mn) <= tol) e++;
+          if (amps[s - 1] > mn + tol && amps[e + 1] > mn + tol) {
+            if (basins.length && basins[basins.length - 1].e >= s) continue;
+            basins.push({ s, e, mn });
+            m = e;
+          }
+        }
+
+        // Depth against the ADJACENT crest on each side, not the train's
+        // overall maximum: in a run of arches of unequal height, measuring
+        // against a distant tall arch would inflate every valley beside a
+        // short one.
+        return basins.map((b, j) => {
+          const lStart = j > 0 ? basins[j - 1].e + 1 : 0;
+          const rEnd = j < basins.length - 1 ? basins[j + 1].s - 1 : n - 1;
+          let lMax = 0;
+          for (let k = lStart; k < b.s; k++) if (amps[k] > lMax) lMax = amps[k];
+          let rMax = 0;
+          for (let k = b.e + 1; k <= rEnd; k++)
+            if (amps[k] > rMax) rMax = amps[k];
+          const crest = Math.min(lMax, rMax);
+          // Where to cut. For a floor several peaks wide, its middle.
+          //
+          // For a floor exactly ONE peak wide the midpoint rule always hands
+          // that peak to the train on its left, even when it sits much closer
+          // in time to the one on its right. That misassigns the peak, and it
+          // also drops the boundary into the NARROWER of the two gaps, where
+          // train edge padding then makes the two trains overlap. So a lone
+          // valley peak goes to whichever side its nearest peak is on — which
+          // is the same thing as putting the cut in the wider gap.
+          let mid = Math.floor((b.s + b.e) / 2);
+          if (b.s === b.e) {
+            const m = b.s;
+            const toLeft = train[m].time - train[m - 1].time;
+            const toRight = train[m + 1].time - train[m].time;
+            // Move it only when the right side is MEANINGFULLY closer. Peak
+            // times carry floating-point noise, and a bare `<` flips the
+            // assignment on differences of ~1e-17 — which is no difference at
+            // all. On a genuine tie the peak stays left, as it always did.
+            if (toLeft - toRight > (toLeft + toRight) * 1e-6) mid = m - 1;
+          }
+          return { mid, depth: crest > 0 ? 1 - b.mn / crest : 0 };
+        });
+      }
+
+      // Accept valleys deepest-first, refusing any cut that would leave a
+      // segment shorter than minDurSec. Deepest-first is what makes this
+      // stable: the real inter-train valleys are claimed before shallow
+      // within-train modulation gets a chance at the same stretch.
+      function pkAcceptValleys(train, cands, minDepth, minDurSec) {
+        const n = train.length;
+        const bounds = [-1, n - 1]; // sorted last-peak index of each segment
+        const cuts = [];
+        const ranked = cands
+          .filter((c) => c.depth >= minDepth)
+          .sort((a, b) => b.depth - a.depth);
+        for (const c of ranked) {
+          let li = 0;
+          while (li + 1 < bounds.length && bounds[li + 1] < c.mid) li++;
+          const loB = bounds[li],
+            hiB = bounds[li + 1];
+          if (c.mid <= loB || c.mid >= hiB) continue; // stretch already cut
+          if (minDurSec > 0) {
+            const leftDur = train[c.mid].time - train[loB + 1].time;
+            const rightDur = train[hiB].time - train[c.mid + 1].time;
+            if (leftDur < minDurSec || rightDur < minDurSec) continue;
+          }
+          bounds.splice(li + 1, 0, c.mid);
+          cuts.push(c.mid);
+        }
+        return cuts.sort((a, b) => a - b);
+      }
+
+      function pkCutTrain(train, cuts) {
+        const out = [];
+        let start = 0;
+        for (const c of cuts) {
+          out.push(train.slice(start, c + 1));
+          start = c + 1;
+        }
+        out.push(train.slice(start));
+        return out;
+      }
+
+      // minDurMs null ⇒ derive it from the recording itself: take the trains
+      // the unmistakable valleys carve out, and call half their median
+      // duration the shortest believable train. This is the "average train
+      // duration" guard, without asking for a number that differs per species.
+      function pkSplitByValleys(trains, minDepthPct, minDurMs) {
+        const minDepth = minDepthPct / 100;
+        const cands = trains.map(pkTrainValleys);
+        let minDurSec = minDurMs != null ? minDurMs / 1000 : null;
+        if (minDurSec == null) {
+          const durs = [];
+          trains.forEach((t, i) => {
+            const cuts = pkAcceptValleys(t, cands[i], PK_VALLEY_CLEAR_DEPTH, 0);
+            pkCutTrain(t, cuts).forEach((seg) => {
+              if (seg.length) durs.push(seg[seg.length - 1].time - seg[0].time);
+            });
+          });
+          durs.sort((a, b) => a - b);
+          const med = durs.length
+            ? durs[Math.floor(durs.length / 2)]
+            : 0;
+          minDurSec = med * PK_VALLEY_DUR_FRAC;
+        }
+        const out = [];
+        trains.forEach((t, i) => {
+          pkCutTrain(t, pkAcceptValleys(t, cands[i], minDepth, minDurSec)).forEach(
+            (seg) => {
+              if (seg.length) out.push(seg);
+            },
+          );
+        });
+        return out;
       }
 
       // ── Group peaks into trains ─────────────────────────────────────────
+      // Pass 1 is the gap/amplitude-drop rule and always runs. Pass 2 is the
+      // arch splitter, and only subdivides what pass 1 produced — it can add
+      // boundaries, never remove one the gap rule found.
       function pkGroupTrains(
         peaks,
         maxGapMs,
         maxDiffPct,
         archEnable,
-        archHard,
-        archK,
-        archDropPct,
+        archDepthPct,
+        archMinDurMs,
       ) {
         if (!peaks.length) return [];
         const maxGap = maxGapMs / 1000;
         const maxDiff = maxDiffPct != null ? maxDiffPct / 100 : null;
-        const dropFrac = archDropPct / 100;
 
         const trains = [];
         let cur = [peaks[0]];
-        let archMax = peaks[0].amp;
-        let archPhase = "rising"; // 'rising' | 'peaked' | 'falling'
-
-        const flushTrain = (nextPeak) => {
-          trains.push([...cur]);
-          cur = nextPeak ? [nextPeak] : [];
-          archMax = nextPeak ? nextPeak.amp : 0;
-          archPhase = "rising";
-        };
-
         for (let i = 1; i < peaks.length; i++) {
           const prev = peaks[i - 1],
             curr = peaks[i];
-          const timeGap = curr.time - prev.time;
           const ampDrop =
             maxDiff != null &&
             prev.amp > curr.amp &&
             prev.amp - curr.amp > maxDiff;
-
-          // Update arch state
-          if (archEnable && cur.length >= archK) {
-            const recent = cur.slice(-archK).map((p) => p.amp);
-            const slope = pkLinSlope(recent);
-            if (archPhase === "rising" && slope < -0.005) {
-              archPhase = "peaked";
-              archMax = Math.max(...cur.map((p) => p.amp));
-            }
-            if (archPhase === "peaked" && slope < -0.005) {
-              archPhase = "falling";
-            }
-          }
-          if (curr.amp > archMax) {
-            archMax = curr.amp;
-            archPhase = "rising";
-          }
-
-          const archSplit =
-            archEnable &&
-            archPhase === "falling" &&
-            curr.amp < archMax * (1 - dropFrac) &&
-            cur.length >= archK;
-
-          const doSplit = timeGap > maxGap || ampDrop || archSplit;
-
-          if (doSplit) {
-            flushTrain(curr);
-          } else {
-            cur.push(curr);
-            if (curr.amp > archMax) archMax = curr.amp;
-          }
+          if (curr.time - prev.time > maxGap || ampDrop) {
+            trains.push(cur);
+            cur = [curr];
+          } else cur.push(curr);
         }
         if (cur.length) trains.push(cur);
-        return trains;
+
+        return archEnable
+          ? pkSplitByValleys(trains, archDepthPct, archMinDurMs)
+          : trains;
       }
 
       // ── Group trains into motifs ────────────────────────────────────────
@@ -4961,13 +6364,16 @@
         "pkThresh",
         "pkDetThr",
         "pkLinkThr",
+        "pkFalseDiff",
+        "pkSpecResPeak",
+        "pkSpecResTrain",
+        "pkSpecResMotif",
         "pkMaxGap",
         "pkMaxDiff",
         "pkMinPeaks",
         "pkArchEnable",
-        "pkArchHard",
-        "pkArchK",
-        "pkArchDrop",
+        "pkArchDepth",
+        "pkArchMinDur",
         "pkMaxTrainGap",
         "pkMotifSeq",
         "pkMaxMotifGap",
@@ -5001,6 +6407,29 @@
         return data;
       }
       function _pkApply(data) {
+        // Presets saved before the field was renamed carry the old key. Map it
+        // across on read so an existing slot doesn't silently lose its Δ.
+        if ("pkFakeDiff" in data && !("pkFalseDiff" in data))
+          data = { ...data, pkFalseDiff: data.pkFakeDiff };
+        // Spectral windows used to be stored as durations. Convert an old
+        // preset's milliseconds into the resolution it was really asking for,
+        // so a saved parameter set keeps meaning the same thing.
+        if ("pkSpecWin" in data && !("pkSpecResPeak" in data))
+          data = {
+            ...data,
+            pkSpecResPeak: String(
+              Math.round(1000 / Math.max(0.1, parseFloat(data.pkSpecWin) || 0.667)),
+            ),
+          };
+        if ("pkSpecTrainWin" in data && !("pkSpecResTrain" in data))
+          data = {
+            ...data,
+            pkSpecResTrain: String(
+              Math.round(
+                1000 / Math.max(1, parseFloat(data.pkSpecTrainWin) || 20),
+              ),
+            ),
+          };
         PK_PRESET_FIELDS.forEach((id) => {
           const el = $(id);
           if (!el || !(id in data)) return;
@@ -5132,6 +6561,76 @@
         }
       }
 
+      // ── Presets as files ────────────────────────────────────────────────
+      // The ten slots live in this machine's local storage. That is fine for
+      // day-to-day work but cannot be copied to another computer, handed to a
+      // collaborator, or kept in a project folder beside the recordings it
+      // belongs to. A .json file does all three.
+      const PK_PRESET_FILE_TYPE = "rthoptera-temporal-preset";
+
+      async function pkPresetExportFile() {
+        const sel = $("pkPresetSelect");
+        let suggested = "";
+        if (sel && sel.value) {
+          try {
+            const d = JSON.parse(
+              localStorage.getItem(_pkPresetKey(sel.value)) || "null",
+            );
+            if (d && d._name) suggested = d._name;
+          } catch (e) {}
+        }
+        const data = _pkCapture();
+        data._type = PK_PRESET_FILE_TYPE;
+        data._version = 1;
+        data._name = suggested || "temporal preset";
+        data._saved = new Date().toISOString();
+
+        // No JS prompt for the name: dlFile opens the OS save dialog, where
+        // the folder can be browsed and the filename edited directly. Asking
+        // twice for the same thing is just an extra step to dismiss.
+        const stem =
+          data._name.replace(/[^\w.-]+/g, "_").toLowerCase() || "temporal_preset";
+        try {
+          // exactName: a preset describes a parameter set, not a recording, so
+          // it has to escape dlFile's rename-after-the-loaded-audio intercept
+          // — otherwise every preset would be saved under the name of whatever
+          // WAV happened to be open.
+          await dlFile(
+            stem + "_preset.json",
+            JSON.stringify(data, null, 2),
+            "application/json",
+            { exactName: true },
+          );
+          _pkPresetStatus("Preset exported.");
+        } catch (e) {
+          _pkPresetStatus("Export failed: " + e.message, true);
+        }
+      }
+
+      async function pkPresetImportFile(file) {
+        if (!file) return;
+        try {
+          const data = JSON.parse(await file.text());
+          // Accept anything carrying recognisable parameter fields, so a
+          // preset hand-edited or produced by an older build still loads; only
+          // reject a file with nothing usable in it at all.
+          const known = PK_PRESET_FIELDS.filter((id) => id in data);
+          const legacy = "pkFakeDiff" in data;
+          if (!known.length && !legacy)
+            throw new Error("no Temporal Analysis parameters in this file");
+          _pkApply(data);
+          _pkPresetStatus(
+            'Loaded ' +
+              (known.length + (legacy && !known.includes("pkFalseDiff") ? 1 : 0)) +
+              " parameter(s)" +
+              (data._name ? ' from "' + data._name + '"' : "") +
+              ". Not stored in a slot — use 💾 Save to keep it.",
+          );
+        } catch (e) {
+          _pkPresetStatus("Could not read preset: " + e.message, true);
+        }
+      }
+
       // ── Shared parameter + grouping helpers ─────────────────────────────
       function pkReadParams() {
         const maxDiffRaw = $("pkMaxDiff").value.trim();
@@ -5145,14 +6644,752 @@
           maxGapMs: parseFloat($("pkMaxGap").value) || 10,
           maxDiff: maxDiffRaw === "" ? null : parseFloat(maxDiffRaw),
           archEnable: $("pkArchEnable").checked,
-          archHard: $("pkArchHard").checked,
-          archK: parseInt($("pkArchK").value) || 3,
-          archDrop: parseFloat($("pkArchDrop").value) || 30,
+          archDepth: parseFloat($("pkArchDepth").value) || 40,
+          // Blank ⇒ derive the shortest believable train from the recording.
+          archMinDur:
+            $("pkArchMinDur").value.trim() === ""
+              ? null
+              : parseFloat($("pkArchMinDur").value),
           maxTrainGapMs: parseFloat($("pkMaxTrainGap").value) || 300,
           minPeaks: parseInt($("pkMinPeaks").value) || 3,
           useMotifSeq: $("pkMotifSeq").checked,
           maxMotifGapMs: parseFloat($("pkMaxMotifGap").value) || 800,
         };
+      }
+
+      // ── Stage 1: fit grouping parameters to hand-corrected trains ───────
+      // The boundaries you have already fixed by hand ARE the training target.
+      // pkInitBoundaries freezes the algorithm into splitAfter flags and every
+      // manual edit only moves those flags, so the current state of a selected
+      // span is already a labelled example — no separate annotation step.
+      //
+      // Only the GROUPING parameters are fitted: Max peak gap, Max amp diff,
+      // and the arch splitter's on/off + valley depth + min train. Peak
+      // DETECTION is held fixed. It decides which peaks exist, so refitting it
+      // would move the target and the reference at the same time, and would
+      // mean recomputing the envelope once per candidate.
+      let pkFitBest = null;
+
+      // The span to train on: the peaks you selected, else whatever is on
+      // screen. Selection is the deliberate choice; the visible range is the
+      // convenient fallback.
+      function pkFitWindow() {
+        const idxs = pkSelectionIndices();
+        if (idxs.length >= 2)
+          return {
+            lo: idxs[0],
+            hi: idxs[idxs.length - 1],
+            source: "selection",
+          };
+        const t0 = pkViewStart;
+        const t1 = pkViewEnd == null ? duration : pkViewEnd;
+        let lo = -1,
+          hi = -1;
+        pkPeaks.forEach((p, i) => {
+          if (p.time >= t0 && p.time <= t1) {
+            if (lo < 0) lo = i;
+            hi = i;
+          }
+        });
+        return lo < 0 ? null : { lo, hi, source: "visible range" };
+      }
+
+      // Boundaries are compared as TIMES, not peak indices, so a score stays
+      // meaningful even if the peak set later shifts under it.
+      function pkRefBoundaries(lo, hi) {
+        const out = [];
+        for (let i = lo; i < hi; i++)
+          if (pkPeaks[i].splitAfter)
+            out.push((pkPeaks[i].time + pkPeaks[i + 1].time) / 2);
+        return out;
+      }
+      function pkTrainBoundaryTimes(trains) {
+        const out = [];
+        for (let i = 0; i + 1 < trains.length; i++) {
+          const a = trains[i][trains[i].length - 1];
+          const b = trains[i + 1][0];
+          out.push((a.time + b.time) / 2);
+        }
+        return out;
+      }
+
+      // F1 over greedily matched boundaries. Both empty is a perfect score —
+      // predicting no boundary where none was marked is correct, not a miss.
+      function pkMatchF1(ref, pred, tol) {
+        if (!ref.length && !pred.length) return 1;
+        const used = new Array(pred.length).fill(false);
+        let tp = 0;
+        for (const r of ref) {
+          let best = -1,
+            bestD = tol;
+          for (let j = 0; j < pred.length; j++) {
+            if (used[j]) continue;
+            const d = Math.abs(pred[j] - r);
+            if (d <= bestD) {
+              bestD = d;
+              best = j;
+            }
+          }
+          if (best >= 0) {
+            used[best] = true;
+            tp++;
+          }
+        }
+        if (!tp) return 0;
+        return (2 * tp) / (2 * tp + (pred.length - tp) + (ref.length - tp));
+      }
+
+      // ── Amplitude-shape agreement ────────────────────────────────────────
+      // How well a train's amplitudes form ONE arc. Find the crest, then total
+      // every move that contradicts a single rise-then-fall — a dip before the
+      // crest, a climb after it — as a share of the profile's total movement.
+      // 1 means a clean arc; a train holding two arches scores well below.
+      //
+      // Note this measures unimodality, not "must rise then fall": a train
+      // that only decays is still one arc, and correctly scores 1. What it
+      // punishes is UNDER-splitting, where two arches sit in one train.
+      function pkArcUnimodality(train) {
+        const n = train.length;
+        if (n < 3) return 1;
+        let imax = 0;
+        for (let i = 1; i < n; i++)
+          if (train[i].amp > train[imax].amp) imax = i;
+        let viol = 0,
+          tv = 0;
+        for (let i = 0; i + 1 < n; i++) {
+          const d = train[i + 1].amp - train[i].amp;
+          tv += Math.abs(d);
+          if (i < imax ? d < 0 : d > 0) viol += Math.abs(d);
+        }
+        return tv > 0 ? 1 - viol / tv : 1;
+      }
+
+      // Shape + size summary of a segmentation, for comparing a candidate's
+      // behaviour against the hand-corrected trains.
+      function pkSegStats(trains) {
+        const durs = [];
+        let wsum = 0,
+          w = 0;
+        trains.forEach((t) => {
+          if (t.length < 2) return;
+          durs.push(t[t.length - 1].time - t[0].time);
+          wsum += pkArcUnimodality(t) * t.length;
+          w += t.length;
+        });
+        durs.sort((a, b) => a - b);
+        return {
+          medDur: durs.length ? durs[Math.floor(durs.length / 2)] : 0,
+          arc: w ? wsum / w : 1,
+        };
+      }
+
+      // Unimodality alone would happily reward chopping every arc into
+      // fragments — each fragment is trivially one arc. Pairing it with
+      // agreement on median train DURATION closes that off from both sides:
+      // over-splitting shortens the trains, under-splitting wrecks the arcs.
+      function pkShapePenalty(st, refStats) {
+        const durTerm =
+          refStats.medDur > 0 && st.medDur > 0
+            ? Math.abs(Math.log(st.medDur / refStats.medDur))
+            : 2;
+        return durTerm + (1 - st.arc);
+      }
+
+      // Every threshold strictly between two observed values behaves
+      // identically, so the midpoints between consecutive observed values
+      // enumerate every distinct behaviour a threshold can have — a complete
+      // search over far fewer candidates than an arbitrary numeric grid.
+      function pkCandidateThresholds(values, cap) {
+        const u = [...new Set(values)].sort((a, b) => a - b);
+        if (!u.length) return [];
+        const out = [u[0] * 0.5];
+        for (let i = 0; i + 1 < u.length; i++) out.push((u[i] + u[i + 1]) / 2);
+        out.push(u[u.length - 1] * 1.5);
+        if (out.length <= cap) return out;
+        const step = (out.length - 1) / (cap - 1);
+        const thin = [];
+        for (let i = 0; i < cap; i++) thin.push(out[Math.round(i * step)]);
+        return [...new Set(thin)];
+      }
+
+      const PK_FIT_DEPTHS = [5, 15, 25, 35, 45, 55, 65, 75, 85, 95];
+
+      // Exhaustive over the candidate grid. Pass 1 (gap + amp drop) depends
+      // only on the first two parameters, so it is computed once per pair and
+      // the arch variants are layered on top of the result.
+      //
+      // Scores against SEVERAL reference sets in one sweep and returns the
+      // best for each. Leave-one-out needs a fit per held-out boundary, and
+      // those fits differ only in scoring — the regrouping is identical. Doing
+      // them as separate sweeps made leave-one-out cost 19× the fit itself
+      // (9.2s on a 500-peak span); folded in here it is close to free.
+      //
+      // Ties are broken toward the CENTRE of each parameter's candidate range.
+      // With only a handful of boundaries many settings score identically, and
+      // the ones sitting on a cliff edge are the ones that break on the next
+      // recording.
+      async function pkFitSearch(peaks, refSets, tol, minRefDurSec, onProgress) {
+        const gaps = pkCandidateThresholds(
+          peaks.slice(1).map((p, i) => p.time - peaks[i].time),
+          30,
+        );
+        const drops = [];
+        for (let i = 1; i < peaks.length; i++) {
+          const d = peaks[i - 1].amp - peaks[i].amp;
+          if (d > 0) drops.push(d);
+        }
+        const diffs = [null, ...pkCandidateThresholds(drops, 15)];
+        // A guard longer than the shortest reference train would veto a cut
+        // the reference says is correct, so cap the candidates below it.
+        const minDurs = [null, 0];
+        if (minRefDurSec > 0)
+          minDurs.push(minRefDurSec * 500, minRefDurSec * 900); // ms
+        const mid = (i, n) => (n < 2 ? 0 : Math.abs(i - (n - 1) / 2) / (n - 1));
+
+        const bests = refSets.map(() => null);
+        // Settings that tie with the leader on the real reference set (index
+        // 0). The labels cannot separate these, so amplitude shape does it
+        // afterwards — see pkFitEvaluate.
+        const ties = [];
+        const offer = (cen, params, pred) => {
+          refSets.forEach((ref, si) => {
+            const f1 = pkMatchF1(ref, pred, tol);
+            const b = bests[si];
+            const better = !b || f1 > b.f1 + 1e-9;
+            if (better || (f1 > b.f1 - 1e-9 && cen < b.cen))
+              bests[si] = { f1, cen, params, pred };
+            if (si === 0) {
+              if (better) {
+                ties.length = 0;
+                ties.push({ cen, params });
+              } else if (
+                f1 > bests[0].f1 - 1e-9 &&
+                ties.length < PK_FIT_MAX_TIES
+              )
+                ties.push({ cen, params });
+            }
+          });
+        };
+
+        for (let gi = 0; gi < gaps.length; gi++) {
+          const g = gaps[gi];
+          diffs.forEach((d, di) => {
+            const gapMs = g * 1000;
+            const diffPct = d == null ? null : d * 100;
+            const base = pkGroupTrains(peaks, gapMs, diffPct, false, 0, null);
+            const cen0 = mid(gi, gaps.length) + mid(di, diffs.length);
+            offer(
+              cen0,
+              {
+                maxGapMs: gapMs,
+                maxDiff: diffPct,
+                archEnable: false,
+                archDepth: 40,
+                archMinDur: null,
+              },
+              pkTrainBoundaryTimes(base),
+            );
+            PK_FIT_DEPTHS.forEach((dep, pi) => {
+              minDurs.forEach((md, mi) => {
+                offer(
+                  cen0 +
+                    mid(pi, PK_FIT_DEPTHS.length) +
+                    mid(mi, minDurs.length),
+                  {
+                    maxGapMs: gapMs,
+                    maxDiff: diffPct,
+                    archEnable: true,
+                    archDepth: dep,
+                    archMinDur: md,
+                  },
+                  pkTrainBoundaryTimes(pkSplitByValleys(base, dep, md)),
+                );
+              });
+            });
+          });
+          // Yield every few gap values so the bar moves. Too often and the
+          // frame waits dominate the search; too rarely and it looks stuck.
+          if (onProgress && (gi % 4 === 3 || gi === gaps.length - 1)) {
+            onProgress((gi + 1) / gaps.length);
+            await busyTick();
+          }
+        }
+        return { bests, ties };
+      }
+
+      // ── Stage 2: fit peak-DETECTION parameters ───────────────────────────
+      // Stage 1 takes the peak set as given and only decides where to cut it.
+      // This decides the peak set itself, learning from the peaks you kept,
+      // added and deleted by hand — edits Stage 1 is blind to.
+      //
+      // Smoothing is deliberately NOT fitted. It is yours to set, and it is
+      // also the one parameter whose change forces the whole envelope to be
+      // recomputed; holding it fixed means the envelope is computed once and
+      // every candidate only re-runs peak finding.
+      //
+      // Detection runs on a padded SLICE of the envelope rather than the whole
+      // recording — hundreds of candidates over millions of samples would take
+      // minutes, over a few thousand it is instant. The padding gives the
+      // prominence walk somewhere to go before it hits an artificial edge.
+      const PK_FIT_SLICE_PAD_S = 0.05;
+
+      // F1 over greedily matched peak TIMES. Same shape as the boundary match,
+      // but the tolerance is much tighter: two peaks a whole spacing apart are
+      // different peaks, not a near miss.
+      function pkPeakMatchF1(refTimes, predTimes, tol) {
+        if (!refTimes.length && !predTimes.length) return 1;
+        const used = new Array(predTimes.length).fill(false);
+        let tp = 0;
+        for (const r of refTimes) {
+          let best = -1,
+            bestD = tol;
+          for (let j = 0; j < predTimes.length; j++) {
+            if (used[j]) continue;
+            const d = Math.abs(predTimes[j] - r);
+            if (d <= bestD) {
+              bestD = d;
+              best = j;
+            }
+          }
+          if (best >= 0) {
+            used[best] = true;
+            tp++;
+          }
+        }
+        if (!tp) return 0;
+        return (
+          (2 * tp) /
+          (2 * tp + (predTimes.length - tp) + (refTimes.length - tp))
+        );
+      }
+
+      // Search detection settings against the peaks you kept. Δ (false-peak)
+      // is applied as post-processing on an already-detected list, so it sits
+      // in the innermost loop and costs no extra detection passes.
+      async function pkFitDetection(refPeaks, t0, t1, maxGapMs, onProgress) {
+        const spac = refPeaks
+          .slice(1)
+          .map((p, i) => p.time - refPeaks[i].time)
+          .sort((a, b) => a - b);
+        const medSpac = spac.length ? spac[Math.floor(spac.length / 2)] : 0.002;
+        const tol = Math.max(medSpac * 0.25, 0.0002);
+        const refTimes = refPeaks.map((p) => p.time);
+
+        const pad = PK_FIT_SLICE_PAD_S;
+        const lo = Math.max(0, Math.floor((t0 - pad) * sampleRate));
+        const hi = Math.min(pkEnv.length, Math.ceil((t1 + pad) * sampleRate));
+        const slice = pkEnv.subarray(lo, hi);
+        const offsetSec = lo / sampleRate;
+        const silenceFloor = pkPercentile(pkEnv, 5);
+
+        // Peak window caps how close two peaks may be, so scale the candidates
+        // to the spacing actually present rather than to arbitrary numbers.
+        const msSpac = medSpac * 1000;
+        const winCands = [...new Set(
+          [0.05, 0.12, 0.25, 0.4].map((f) =>
+            Math.max(0.1, Math.round(msSpac * f * 100) / 100),
+          ),
+        )];
+        const promCands = [0.1, 0.25, 0.5, 1, 2, 4];
+        // Detection threshold: thresholds between observed reference
+        // amplitudes enumerate the distinct behaviours, same trick as Stage 1.
+        const detCands = pkCandidateThresholds(
+          refPeaks.map((p) => p.amp),
+          10,
+        ).map((v) => v * 100);
+        const falseCands = [null, 5, 15, 30];
+
+        let best = null;
+        let done = 0;
+        const total = winCands.length * promCands.length * detCands.length;
+        for (const winMs of winCands) {
+          for (const peakThr of promCands) {
+            for (const detThr of detCands) {
+              // Onset threshold only means anything below the detection bar.
+              for (const linkThr of [null, detThr * 0.5, detThr * 0.25]) {
+                const found = pkFindPeaks(
+                  slice,
+                  winMs,
+                  peakThr,
+                  detThr,
+                  linkThr,
+                  maxGapMs,
+                );
+                const shifted = found
+                  .map((p) => ({ time: p.time + offsetSec, amp: p.amp }))
+                  .filter((p) => p.time >= t0 && p.time <= t1);
+                for (const falseDiff of falseCands) {
+                  const kept = pkWithoutFalsePeaks(
+                    shifted,
+                    silenceFloor,
+                    falseDiff,
+                  );
+                  const f1 = pkPeakMatchF1(
+                    refTimes,
+                    kept.map((p) => p.time),
+                    tol,
+                  );
+                  if (!best || f1 > best.f1 + 1e-9) {
+                    best = {
+                      f1,
+                      peaks: kept,
+                      params: {
+                        winMs,
+                        peakThr,
+                        detThr,
+                        linkThr,
+                        falseDiff,
+                      },
+                    };
+                  }
+                }
+              }
+              done++;
+            }
+          }
+          if (onProgress) {
+            onProgress(done / total);
+            await busyTick();
+          }
+        }
+        return best;
+      }
+
+      // Hold out one reference boundary at a time, refit without it, and ask
+      // whether the fit puts it back. This is the number that says whether the
+      // training score is real or memorised — with a handful of boundaries the
+      // training score is nearly always 100%, and on its own means little.
+      const PK_FIT_MAX_FOLDS = 12;
+      // Ceiling on how many tied settings get the whole-recording shape check.
+      const PK_FIT_MAX_TIES = 120;
+
+      async function pkFitEvaluate(
+        peaks,
+        ref,
+        tol,
+        minRefDurSec,
+        allPeaks,
+        onProgress,
+      ) {
+        let foldOf = [];
+        if (ref.length >= 2) {
+          foldOf = ref.map((_, j) => j);
+          if (foldOf.length > PK_FIT_MAX_FOLDS) {
+            const step = (foldOf.length - 1) / (PK_FIT_MAX_FOLDS - 1);
+            foldOf = Array.from({ length: PK_FIT_MAX_FOLDS }, (_, i) =>
+              Math.round(i * step),
+            );
+            foldOf = [...new Set(foldOf)];
+          }
+        }
+        const sets = [
+          ref,
+          ...foldOf.map((j) => ref.filter((_, k) => k !== j)),
+        ];
+        const { bests, ties } = await pkFitSearch(
+          peaks,
+          sets,
+          tol,
+          minRefDurSec,
+          onProgress,
+        );
+        let loo = null;
+        if (foldOf.length) {
+          let hit = 0;
+          foldOf.forEach((j, i) => {
+            const b = bests[i + 1];
+            if (b && b.pred.some((t) => Math.abs(t - ref[j]) <= tol)) hit++;
+          });
+          loo = { hit, total: foldOf.length };
+        }
+
+        // ── Amplitude tie-break ──────────────────────────────────────────
+        // Boundary times alone cannot separate settings that produce the same
+        // cuts inside the training window, yet those settings can behave very
+        // differently over the REST of the recording — which is the part that
+        // matters and the part with no labels on it.
+        //
+        // So among the tied settings, prefer the one whose trains most
+        // resemble the hand-corrected ones across the whole file: same kind of
+        // amplitude arc, same rough duration. This is the only place peak
+        // amplitude enters the fit, and it is deliberately a tie-break — it
+        // can never override a setting that matches your boundaries better.
+        let shape = null;
+        if (allPeaks && allPeaks.length && ties.length > 1) {
+          const refTrains = [];
+          let seg = [peaks[0]];
+          const refSet = new Set(ref);
+          for (let i = 1; i < peaks.length; i++) {
+            const bt = (peaks[i - 1].time + peaks[i].time) / 2;
+            if (refSet.has(bt)) {
+              refTrains.push(seg);
+              seg = [peaks[i]];
+            } else seg.push(peaks[i]);
+          }
+          refTrains.push(seg);
+          const refStats = pkSegStats(refTrains);
+
+          let pick = null;
+          for (const c of ties) {
+            const p = c.params;
+            const st = pkSegStats(
+              pkGroupTrains(
+                allPeaks,
+                p.maxGapMs,
+                p.maxDiff,
+                p.archEnable,
+                p.archDepth,
+                p.archMinDur,
+              ),
+            );
+            const pen = pkShapePenalty(st, refStats);
+            if (!pick || pen < pick.pen - 1e-9 ||
+                (pen < pick.pen + 1e-9 && c.cen < pick.cen))
+              pick = { pen, cen: c.cen, params: p, arc: st.arc };
+          }
+          if (pick) {
+            shape = {
+              considered: ties.length,
+              arc: pick.arc,
+              refArc: refStats.arc,
+              changed:
+                JSON.stringify(pick.params) !==
+                JSON.stringify(bests[0].params),
+            };
+            bests[0] = { ...bests[0], params: pick.params };
+          }
+        }
+        return { best: bests[0], loo, shape };
+      }
+
+      function _pkFitStatus(msg, cls) {
+        const el = $("pkFitStatus");
+        if (!el) return;
+        el.textContent = msg || "";
+        el.style.color =
+          cls === "err"
+            ? "#f85149"
+            : cls === "warn"
+              ? "#d29922"
+              : "var(--txt3)";
+      }
+
+      async function pkFitGrouping() {
+        pkFitBest = null;
+        const applyBtn = $("btnPkFitApply");
+        if (applyBtn) applyBtn.disabled = true;
+        if (!pkPeaks.length) {
+          _pkFitStatus("Detect peaks first.", "err");
+          return;
+        }
+        const win = pkFitWindow();
+        if (!win || win.hi - win.lo < 2) {
+          _pkFitStatus(
+            "Select the peaks of the trains you corrected (or zoom to them).",
+            "err",
+          );
+          return;
+        }
+        const peaks = pkPeaks.slice(win.lo, win.hi + 1);
+        const ref = pkRefBoundaries(win.lo, win.hi);
+        if (!ref.length) {
+          _pkFitStatus(
+            "No train boundaries inside that span — nothing to learn from.",
+            "err",
+          );
+          return;
+        }
+
+        // Match tolerance: half the median peak spacing. Tight enough that a
+        // boundary in the wrong gap counts as wrong, loose enough to survive
+        // a cut landing one peak either side of the reference.
+        const spac = peaks
+          .slice(1)
+          .map((p, i) => p.time - peaks[i].time)
+          .sort((a, b) => a - b);
+        const tol = spac.length ? spac[Math.floor(spac.length / 2)] / 2 : 0.001;
+
+        // Shortest reference train in the span, used to cap the min-train
+        // guard candidates.
+        let minRefDur = Infinity,
+          segStart = 0;
+        const refIdx = [];
+        for (let i = win.lo; i < win.hi; i++)
+          if (pkPeaks[i].splitAfter) refIdx.push(i - win.lo);
+        [...refIdx, peaks.length - 1].forEach((end) => {
+          minRefDur = Math.min(
+            minRefDur,
+            peaks[end].time - peaks[segStart].time,
+          );
+          segStart = end + 1;
+        });
+        if (!isFinite(minRefDur)) minRefDur = 0;
+
+        const alsoDetect = !!$("pkFitDetect")?.checked;
+
+        const fitted = await withBusy("Fitting…", async (progress) => {
+          // Stage 2 first, if asked: the peak set it settles on is what
+          // Stage 1 then gets grouped. Fitting grouping against the OLD peaks
+          // and detection against the new ones would leave the two disagreeing.
+          let det = null;
+          let detRejected = false;
+          let workPeaks = peaks;
+          if (alsoDetect) {
+            const d = await pkFitDetection(
+              peaks,
+              peaks[0].time,
+              peaks[peaks.length - 1].time,
+              parseFloat($("pkMaxGap").value) || 10,
+              (f) =>
+                progress(
+                  "Fitting peak detection… " + Math.round(f * 100) + "%",
+                  f * 0.5,
+                ),
+            );
+            // Adopt the detection fit only if it produced a usable peak set.
+            // Keeping its parameters after rejecting its peaks would write
+            // settings into the panels that the grouping fit never saw, and
+            // that find almost nothing when Apply re-runs detection.
+            if (d && d.peaks.length >= 3) {
+              det = d;
+              workPeaks = d.peaks;
+            } else if (d) detRejected = true;
+          }
+          const ev = await pkFitEvaluate(
+            workPeaks,
+            ref,
+            tol,
+            minRefDur,
+            alsoDetect ? null : pkPeaks,
+            (f) =>
+              progress(
+                "Fitting grouping… " + Math.round(f * 100) + "%",
+                alsoDetect ? 0.5 + f * 0.5 : f,
+              ),
+          );
+          return { ...ev, det, detRejected };
+        });
+
+        const { best, loo, shape, det, detRejected } = fitted;
+        if (!best) {
+          _pkFitStatus("Search produced no candidate.", "err");
+          return;
+        }
+        if (det) best.params = { ...best.params, detection: det.params };
+        pkFitBest = best;
+        if (applyBtn) applyBtn.disabled = false;
+
+        const p = best.params;
+        const bits = [];
+        if (det)
+          bits.push(
+            "peaks " +
+              (det.f1 * 100).toFixed(0) +
+              "% (win " +
+              det.params.winMs +
+              "ms, prom " +
+              det.params.peakThr +
+              "%, det " +
+              det.params.detThr.toFixed(1) +
+              "%, onset " +
+              (det.params.linkThr == null
+                ? "off"
+                : det.params.linkThr.toFixed(1) + "%") +
+              ", Δ " +
+              (det.params.falseDiff == null
+                ? "off"
+                : det.params.falseDiff + "%") +
+              ")",
+          );
+        bits.push(
+          "gap " + p.maxGapMs.toFixed(1) + "ms",
+          "amp diff " + (p.maxDiff == null ? "off" : p.maxDiff.toFixed(1) + "%"),
+          p.archEnable
+            ? "arch " +
+              p.archDepth +
+              "% / " +
+              (p.archMinDur == null ? "auto" : p.archMinDur.toFixed(0) + "ms")
+            : "arch off",
+        );
+        const trainPct = (best.f1 * 100).toFixed(0);
+        let msg =
+          ref.length +
+          " boundaries from " +
+          win.source +
+          " → " +
+          bits.join(", ") +
+          " · fit " +
+          trainPct +
+          "%";
+        let cls = "";
+        if (loo) {
+          msg += " · held-out " + loo.hit + "/" + loo.total;
+          if (loo.hit < loo.total) cls = "warn";
+        }
+        if (shape) {
+          msg +=
+            " · arc " +
+            (shape.arc * 100).toFixed(0) +
+            "% vs " +
+            (shape.refArc * 100).toFixed(0) +
+            "% ref" +
+            (shape.changed
+              ? " (chosen from " + shape.considered + " tied on shape)"
+              : "");
+        }
+        if (ref.length < 9) {
+          msg += " · only " + ref.length + " boundaries — check on more";
+          cls = cls || "warn";
+        }
+        // Say plainly which half was fitted: with the box unticked, Apply
+        // changes grouping only, and that is easy to mistake for a fault.
+        if (detRejected) {
+          msg += " · detection fit found too few peaks — grouping only";
+          cls = "warn";
+        } else if (!det) {
+          msg += " · grouping only (tick “incl. peak detection” to fit that too)";
+        }
+        _pkFitStatus(msg, cls);
+      }
+
+      // Writes the fitted values into the parameter inputs and re-applies them
+      // across the WHOLE recording. Manual edits are replaced — boundary edits
+      // always, and peak edits too when detection was part of the fit. That is
+      // the point: the parameters now reproduce them without the hand work.
+      async function pkFitApply() {
+        if (!pkFitBest) return;
+        const p = pkFitBest.params;
+        $("pkMaxGap").value = String(Math.round(p.maxGapMs * 10) / 10);
+        $("pkMaxDiff").value =
+          p.maxDiff == null ? "" : String(Math.round(p.maxDiff * 10) / 10);
+        $("pkArchEnable").checked = p.archEnable;
+        $("pkArchDepth").value = String(p.archDepth);
+        $("pkArchMinDur").value =
+          p.archMinDur == null ? "" : String(Math.round(p.archMinDur));
+
+        if (p.detection) {
+          const d = p.detection;
+          $("pkWin").value = String(d.winMs);
+          $("pkThresh").value = String(d.peakThr);
+          $("pkDetThr").value = String(Math.round(d.detThr * 100) / 100);
+          $("pkLinkThr").value =
+            d.linkThr == null ? "" : String(Math.round(d.linkThr * 100) / 100);
+          $("pkFalseDiff").value =
+            d.falseDiff == null ? "" : String(d.falseDiff);
+          // Detection changed, so the peak list itself has to be rebuilt —
+          // re-freezing boundaries over the old peaks would be meaningless.
+          // Smoothing is untouched, so the envelope comes out identical.
+          await pkDetect();
+          _pkFitStatus(
+            "Applied. Peaks re-detected and boundaries regrouped — manual edits replaced.",
+            "",
+          );
+          return;
+        }
+
+        pkInitBoundaries();
+        pkLiveUpdate("fitted parameters applied to the whole recording");
+        _pkFitStatus("Applied. Manual boundary edits were replaced.", "");
       }
 
       // ── Frozen segmentation ─────────────────────────────────────────────
@@ -5181,9 +7418,8 @@
           P.maxGapMs,
           P.maxDiff,
           P.archEnable,
-          P.archHard,
-          P.archK,
-          P.archDrop,
+          P.archDepth,
+          P.archMinDur,
         );
         pkPeaks.forEach((p) => {
           p.splitAfter = false;
@@ -5229,22 +7465,313 @@
         }
         const applyBtn = $("btnPkApplySpectral");
         if (applyBtn) applyBtn.disabled = !pkPeaks.length;
+        const falseBtn = $("btnPkFilterFalse");
+        if (falseBtn) falseBtn.disabled = !pkPeaks.length;
         pkUpdateSelectionButtons();
         pkDrawEnvelope();
       }
 
+      // Approximate percentile of a large array via a fixed-bin histogram —
+      // O(n), avoids sorting a possibly multi-million-sample envelope just
+      // to find a robust "silence floor" reference.
+      function pkPercentile(arr, pct) {
+        const NB = 1000;
+        const hist = new Uint32Array(NB);
+        const n = arr.length;
+        for (let i = 0; i < n; i++) {
+          let b = Math.floor(arr[i] * NB);
+          if (b < 0) b = 0;
+          else if (b >= NB) b = NB - 1;
+          hist[b]++;
+        }
+        const target = Math.max(1, Math.round((n * pct) / 100));
+        let cum = 0;
+        for (let b = 0; b < NB; b++) {
+          cum += hist[b];
+          if (cum >= target) return b / NB;
+        }
+        return 1;
+      }
+
+      // ── False-peak filter ────────────────────────────────────────────────
+      // Removes peaks that are only technically local maxima — they clear the
+      // prominence check on their own tiny dip — but sit at the bottom of the
+      // envelope between clearly taller real peaks. That covers a single low
+      // bump between two pulses and, just as often, a run of several bumps at
+      // much the same near-floor level.
+      //
+      // A peak is dropped only when BOTH conditions hold, and requiring both
+      // is the whole point of the rule:
+      //   • Near the floor on its own is not enough. The quiet onset and
+      //     offset peaks that open and close a real train live down there
+      //     too, and dropping them on that basis alone tore trains apart at
+      //     their own edges — the hole left behind exceeded Max peak gap, so
+      //     one train came out as two or three.
+      //   • Below both neighbours on its own is not enough either. A genuine
+      //     dip inside a loud train can be deeper than Δ while sitting
+      //     nowhere near the floor.
+      //
+      // Near-floor peaks are grouped into RUNS and each run is judged as a
+      // unit against the taller peaks flanking the whole run. Judging peak by
+      // peak against immediate neighbours is what let clusters survive: every
+      // member of a run has another run member for a neighbour, so no drop is
+      // ever measured across that pair and the run shields itself.
+      // The rule itself, as pure index arithmetic: [start,end] index pairs of
+      // near-floor runs that sit more than `thr` below the peaks flanking the
+      // whole run. Shared by the live filter and by the parameter fitter, so
+      // the two can never drift apart.
+      function pkFalsePeakRuns(peaks, silenceFloor, thr) {
+        const nearFloor = (p) => p.amp - silenceFloor <= thr;
+        const doomed = [];
+        for (let i = 0; i < peaks.length; ) {
+          if (!nearFloor(peaks[i])) {
+            i++;
+            continue;
+          }
+          let end = i;
+          while (end + 1 < peaks.length && nearFloor(peaks[end + 1])) end++;
+          // Compare the flankers against the run's TALLEST member: the run has
+          // to sit below them as a whole, so one member standing clear of the
+          // threshold keeps the entire run.
+          let runMax = peaks[i].amp;
+          for (let k = i + 1; k <= end; k++)
+            if (peaks[k].amp > runMax) runMax = peaks[k].amp;
+          const left = peaks[i - 1];
+          const right = peaks[end + 1];
+          // A missing flanker means the run opens or closes the recording —
+          // nothing shows it sits BETWEEN real peaks, so leave it alone.
+          if (
+            left &&
+            right &&
+            left.amp - runMax > thr &&
+            right.amp - runMax > thr
+          )
+            doomed.push([i, end]);
+          i = end + 1;
+        }
+        return doomed;
+      }
+
+      // Same rule, applied functionally: returns a NEW array with the false
+      // peaks gone. Used by the fitter, which must try Δ values without
+      // touching pkPeaks or the DOM.
+      function pkWithoutFalsePeaks(peaks, silenceFloor, falseDiffPct) {
+        if (!(falseDiffPct > 0)) return peaks;
+        const doomed = pkFalsePeakRuns(peaks, silenceFloor, falseDiffPct / 100);
+        if (!doomed.length) return peaks;
+        const drop = new Uint8Array(peaks.length);
+        doomed.forEach(([s, e]) => {
+          for (let k = s; k <= e; k++) drop[k] = 1;
+        });
+        return peaks.filter((_, i) => !drop[i]);
+      }
+
+      function pkFilterFalsePeaks(silent) {
+        if (!pkPeaks.length || !pkEnv) {
+          if (!silent) pkLiveUpdate("no peaks to filter");
+          return 0;
+        }
+        const raw = $("pkFalseDiff") ? $("pkFalseDiff").value.trim() : "";
+        const falseDiffPct = raw === "" ? null : parseFloat(raw);
+        if (falseDiffPct == null || !(falseDiffPct > 0)) {
+          if (!silent) pkLiveUpdate("false-peak filter is off");
+          return 0;
+        }
+        const silenceFloor = pkPercentile(pkEnv, 5); // 5th percentile ≈ background level
+        const thr = falseDiffPct / 100;
+        const maxGapMs = parseFloat($("pkMaxGap")?.value) || 10;
+        const doomed = pkFalsePeakRuns(pkPeaks, silenceFloor, thr);
+        if (!silent && doomed.length) pkSnapshot("remove false peaks");
+
+        let removed = 0;
+        for (let d = doomed.length - 1; d >= 0; d--) {
+          const [s, e] = doomed[d];
+          const left = pkPeaks[s - 1];
+          const right = pkPeaks[e + 1];
+          for (let k = s; k <= e; k++) {
+            const p = pkPeaks[k];
+            pkSelection.delete(p);
+            // A boundary that sat on a dropped peak has to outlive it.
+            if (left) left.splitAfter = left.splitAfter || p.splitAfter;
+          }
+          // Closing the hole can leave the survivors further apart than a
+          // train tolerates — that IS a train boundary, so mark it.
+          if (left && right && (right.time - left.time) * 1000 > maxGapMs)
+            left.splitAfter = true;
+          pkPeaks.splice(s, e - s + 1);
+          removed += e - s + 1;
+        }
+        if (!silent) {
+          pkLiveUpdate(
+            removed +
+              " false peak(s) removed (floor≈" +
+              (silenceFloor * 100).toFixed(2) +
+              "%)",
+          );
+        }
+        return removed;
+      }
+
+      // ── Import a saved Peaks table ──────────────────────────────────────
+      // The exported Peaks sheet carries peak_time, peak_amp and train_id —
+      // everything needed to restore a hand-curated result: the peaks, and a
+      // train boundary wherever train_id changes. Undo only lasts a session;
+      // this survives a restart, a different machine, or a colleague.
+      //
+      // Boundaries come straight from the file. The grouping algorithm is NOT
+      // consulted — re-deriving them would throw away the very hand edits the
+      // table was exported to preserve.
+      async function pkImportPeaksFile(file) {
+        if (!file) return;
+        if (!rawSamples) {
+          log("Load the matching audio before importing peaks.", "warn");
+          return;
+        }
+        let workbook;
+        try {
+          const buf = new Uint8Array(await file.arrayBuffer());
+          workbook = await _readXlsx(buf);
+        } catch (err) {
+          log("Could not read Excel file: " + err.message, "err");
+          return;
+        }
+
+        // Find the sheet that looks like a Peaks table, by columns not name,
+        // so a renamed sheet still works.
+        const key = (row, want) =>
+          Object.keys(row).find((k) => k.toLowerCase() === want);
+        let rows = null;
+        for (const name of Object.keys(workbook)) {
+          const r = workbook[name];
+          if (r && r.length && key(r[0], "peak_time")) {
+            rows = r;
+            break;
+          }
+        }
+        if (!rows) {
+          log(
+            "No Peaks table in that workbook (need a peak_time column).",
+            "err",
+          );
+          return;
+        }
+
+        const tK = key(rows[0], "peak_time"),
+          aK = key(rows[0], "peak_amp"),
+          trK = key(rows[0], "train_id"),
+          moK = key(rows[0], "motif_id");
+
+        const parsed = [];
+        let skipped = 0,
+          outside = 0;
+        rows.forEach((r) => {
+          const t = parseFloat(r[tK]);
+          if (!isFinite(t) || t < 0) {
+            skipped++;
+            return;
+          }
+          if (t > duration) {
+            outside++;
+            return;
+          }
+          const a = aK != null ? parseFloat(r[aK]) : NaN;
+          parsed.push({
+            time: t,
+            amp: isFinite(a) ? a : null,
+            train: trK != null ? String(r[trK] ?? "") : "",
+            motif: moK != null ? String(r[moK] ?? "") : "",
+          });
+        });
+        if (!parsed.length) {
+          log("No usable rows in that Peaks table.", "err");
+          return;
+        }
+        // A table from a different recording is the likely cause of peaks
+        // landing past the end, so say so rather than silently dropping them.
+        if (outside) {
+          log(
+            outside +
+              " peak(s) fall past the end of this " +
+              duration.toFixed(2) +
+              "s recording — is this table from a different file?",
+            "warn",
+          );
+        }
+        parsed.sort((x, y) => x.time - y.time);
+
+        // The trace has to exist before anything can be drawn on it, and the
+        // user may never have pressed Detect on this file.
+        if (!pkEnv) pkRefreshEnvelope();
+
+        const n = pkEnv ? pkEnv.length : 0;
+        pkPeaks = parsed.map((p, i) => {
+          const idx = Math.max(
+            0,
+            Math.min(n - 1, Math.round(p.time * sampleRate)),
+          );
+          const next = parsed[i + 1];
+          return {
+            idx,
+            time: p.time,
+            amp: p.amp != null ? p.amp : pkEnv ? pkEnv[idx] : 0,
+            // Boundary wherever the train (or motif) label changes.
+            splitAfter: !!next && (next.train !== p.train || next.motif !== p.motif),
+          };
+        });
+
+        pkConfirmed = false;
+        $("pkResults").style.display = "none";
+        pkClearSelection();
+        pkResetUndo();
+        pkViewStart = 0;
+        pkViewEnd = null;
+
+        const trains = pkBuildTrains();
+        $("pkStatus").textContent =
+          pkPeaks.length +
+          " peaks imported → " +
+          trains.length +
+          " trains (boundaries from the file)" +
+          (skipped ? " · " + skipped + " unreadable row(s) skipped" : "") +
+          (outside ? " · " + outside + " outside the recording" : "");
+        $("btnPkConfirm").disabled = pkPeaks.length === 0;
+        const applyBtn = $("btnPkApplySpectral");
+        if (applyBtn) applyBtn.disabled = pkPeaks.length === 0;
+        const falseBtn = $("btnPkFilterFalse");
+        if (falseBtn) falseBtn.disabled = !pkPeaks.length;
+        pkDrawEnvelope();
+        log(
+          "Imported " + pkPeaks.length + ' peaks from "' + file.name + '".',
+          "ok",
+        );
+      }
+
       // ── Main detect ─────────────────────────────────────────────────────
-      function pkDetect() {
+      // The envelope pass alone touches every sample in the recording, so on a
+      // long file this blocks for seconds. Staged behind the busy overlay, with
+      // a yield between stages so each label is actually painted.
+      async function pkDetect() {
         if (!rawSamples) {
           log("Load audio first", "warn");
           return;
         }
+        return withBusy("Detecting peaks…", (progress) =>
+          _pkDetectStages(progress),
+        );
+      }
+
+      async function _pkDetectStages(progress) {
         pkConfirmed = false;
         $("pkResults").style.display = "none";
 
         const P = pkReadParams();
 
+        progress("Computing envelope…", 0.05);
+        await busyTick();
         pkEnv = pkComputeEnv(P.smoothMs);
+
+        progress("Finding peaks…", 0.4);
+        await busyTick();
         const rawPeaks = pkFindPeaks(
           pkEnv,
           P.winMs,
@@ -5254,6 +7781,13 @@
           P.maxGapMs,
         );
         pkPeaks = rawPeaks;
+
+        progress("Grouping trains…", 0.8);
+        await busyTick();
+        pkResetUndo();
+        // Strip near-floor "false" peaks before boundaries are ever drawn from
+        // this set, so trains/motifs are built on the cleaned list.
+        const falseRemoved = pkFilterFalsePeaks(true);
         pkClearSelection();
         // Reset view to full on new detection
         pkViewStart = 0;
@@ -5269,7 +7803,9 @@
 
         $("pkStatus").textContent =
           rawPeaks.length +
-          " peaks → " +
+          " peaks" +
+          (falseRemoved ? " (" + falseRemoved + " false removed)" : "") +
+          " → " +
           filtered.length +
           " trains → " +
           rawMotifs.length +
@@ -5279,6 +7815,32 @@
         if (applyBtn) applyBtn.disabled = rawPeaks.length === 0;
 
         pkDrawEnvelope();
+      }
+
+      // pkDrawEnvelope sizes the canvas backing store from its CSS box, so
+      // any change to that box leaves the previous bitmap stretched across the
+      // new size until something redraws. A long status message reflowing the
+      // panels above was enough to do it, and so was resizing the window —
+      // the window handler never touched this canvas.
+      //
+      // Watch the element itself rather than the window, so a layout change
+      // from ANY cause is caught: panels wrapping, a tab switch, a dragged
+      // splitter. Writing canvas.width/height only touches the backing store,
+      // not the CSS box, so redrawing cannot re-trigger the observer — the
+      // size comparison guards against it regardless.
+      function pkWatchCanvasResize() {
+        const c = $("pkCanvas");
+        if (!c || typeof ResizeObserver === "undefined") return;
+        let lastW = 0,
+          lastH = 0;
+        new ResizeObserver(() => {
+          const w = c.offsetWidth,
+            h = c.offsetHeight;
+          if (!w || !h || (w === lastW && h === lastH)) return;
+          lastW = w;
+          lastH = h;
+          pkDrawEnvelope();
+        }).observe(c);
       }
 
       // ── Draw envelope canvas ────────────────────────────────────────────
@@ -5293,7 +7855,15 @@
         ctx.scale(dpr, dpr);
         ctx.fillStyle = "#0d1117";
         ctx.fillRect(0, 0, W, H);
-        if (!pkEnv) return;
+        if (!pkEnv) {
+          // No envelope (nothing loaded) — also clear the synced mini
+          // spectrogram and nav/overview bar below, which otherwise keep
+          // showing whatever was drawn for the last-loaded recording since
+          // they're normally only redrawn further down in this function.
+          pkDrawSpectrogram(0, 0, 0, 0);
+          pkDrawNav();
+          return;
+        }
 
         const n = pkEnv.length;
         const dur = n / sampleRate;
@@ -5579,8 +8149,14 @@
         const f0 = Math.max(0, (vStart * sampleRate) / hop);
         const f1 = Math.min(frames - 1, (vEnd * sampleRate) / hop);
         const floorDb = logMax - 70; // dynamic range window
-        const iw = Math.max(1, Math.round(pw));
-        const img = ctx.createImageData(iw, Math.round(ph));
+        // putImageData always writes raw DEVICE pixels — unlike every other
+        // draw call here, it ignores ctx.setTransform(dpr,...). Sizing/
+        // placing it in CSS pixels (as this used to) squeezed the whole
+        // raster into the top-left 1/dpr of the canvas on any HiDPI
+        // display, badly desyncing it from the envelope's time axis above.
+        // Build and place it in device pixels instead.
+        const iw = Math.max(1, Math.round(pw * dpr));
+        const img = ctx.createImageData(iw, Math.max(1, Math.round(ph * dpr)));
         const data = img.data;
         const ih = img.height;
         for (let px = 0; px < iw; px++) {
@@ -5610,7 +8186,7 @@
             data[idx + 3] = 255;
           }
         }
-        ctx.putImageData(img, Math.round(padL), 0);
+        ctx.putImageData(img, Math.round(padL * dpr), 0);
         // Left axis labels (kHz)
         ctx.fillStyle = "#8b949e";
         ctx.font = "9px monospace";
@@ -5640,7 +8216,11 @@
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.fillStyle = "#0a0e14";
         ctx.fillRect(0, 0, W, H);
-        if (!pkEnv) return;
+        if (!pkEnv) {
+          if (winEl) winEl.style.display = "none";
+          return;
+        }
+        if (winEl) winEl.style.display = "";
         const n = pkEnv.length,
           dur = n / sampleRate;
         // envelope overview (max per pixel column)
@@ -5745,6 +8325,13 @@
           e.preventDefault();
         });
         document.addEventListener("mousemove", (e) => {
+          // Same stuck-drag guard as the envelope pan: if the button was
+          // released outside the window, this self-heals instead of the
+          // nav bar tracking the cursor forever.
+          if (dragging && !(e.buttons & 1)) {
+            dragging = false;
+            return;
+          }
           if (dragging) navSeek(e.clientX);
         });
         document.addEventListener("mouseup", () => {
@@ -5878,26 +8465,31 @@
           manual: true,
           splitAfter: false,
         };
+        pkSnapshot("add peak");
         // Insert keeping pkPeaks sorted by time
         let lo = 0;
         while (lo < pkPeaks.length && pkPeaks[lo].time < np.time) lo++;
-        // If the insertion point is between two trains, assign the new peak to the
-        // nearest one rather than always attaching it to the left train.
-        if (lo > 0 && lo < pkPeaks.length && pkPeaks[lo - 1].splitAfter) {
-          const leftDist = np.time - pkPeaks[lo - 1].time;
-          const rightDist = pkPeaks[lo].time - np.time;
-          if (leftDist <= rightDist) {
-            // assign to left train: move the boundary to the new peak
-            np.splitAfter = true;
-            pkPeaks[lo - 1].splitAfter = false;
-          } else {
-            // assign to right train: keep the old boundary before the new peak
-            np.splitAfter = false;
-          }
-        } else if (lo > 0) {
-          np.splitAfter = pkPeaks[lo - 1].splitAfter;
+        const leftPeer = lo > 0 ? pkPeaks[lo - 1] : null;
+        const rightPeer = lo < pkPeaks.length ? pkPeaks[lo] : null;
+        // Merge into whichever neighbouring train(s) fall within the gap
+        // threshold — independently on each side. If both sides are within
+        // threshold, the new peak bridges the two trains into one; if only
+        // one side is, it joins just that train; if neither is, it stands
+        // alone as its own single-peak train.
+        const maxGapMs = parseFloat($("pkMaxGap")?.value) || 10;
+        if (leftPeer) {
+          const leftGapMs = (np.time - leftPeer.time) * 1000;
+          leftPeer.splitAfter = leftGapMs > maxGapMs;
+        }
+        if (rightPeer) {
+          const rightGapMs = (rightPeer.time - np.time) * 1000;
+          np.splitAfter = rightGapMs > maxGapMs;
         }
         pkPeaks.splice(lo, 0, np);
+        // Selecting the new peak (and only it) makes it obvious what was
+        // just added and where it landed.
+        pkSelection.clear();
+        pkSelection.add(np);
         pkLiveUpdate(
           "peak added @ " +
             (np.time * 1000).toFixed(2) +
@@ -5912,6 +8504,89 @@
       // The gap to the RIGHT of peak i is owned by pkPeaks[i].splitAfter.
 
       // Merge: clear one boundary, touch nothing else.
+      // ── Undo for peak + boundary edits ──────────────────────────────────
+      // Snapshots the whole peak list before each edit. Snapshots are stored as
+      // typed arrays rather than cloned objects: a long recording carries tens
+      // of thousands of peaks, and forty snapshots of forty thousand small
+      // objects would be hundreds of megabytes, where this is a few hundred
+      // kilobytes each.
+      //
+      // The selection is captured as INDICES and restored with the peaks, so
+      // undo puts back what was highlighted before the edit, not an empty
+      // selection or a set of dead object references.
+      const PK_UNDO_LIMIT = 40;
+      let pkUndoStack = [];
+
+      function pkSnapshot(label) {
+        const n = pkPeaks.length;
+        const snap = {
+          label,
+          n,
+          idx: new Int32Array(n),
+          time: new Float64Array(n),
+          amp: new Float32Array(n),
+          flags: new Uint8Array(n),
+          sel: [],
+        };
+        for (let i = 0; i < n; i++) {
+          const p = pkPeaks[i];
+          snap.idx[i] = p.idx == null ? -1 : p.idx;
+          snap.time[i] = p.time;
+          snap.amp[i] = p.amp;
+          snap.flags[i] = (p.splitAfter ? 1 : 0) | (p.manual ? 2 : 0);
+          if (pkSelection.has(p)) snap.sel.push(i);
+        }
+        pkUndoStack.push(snap);
+        if (pkUndoStack.length > PK_UNDO_LIMIT) pkUndoStack.shift();
+        pkUpdateUndoButton();
+      }
+
+      // Wipe the history when the peak list is replaced wholesale — after a
+      // fresh detection or a reset, the old snapshots describe peaks that no
+      // longer relate to what is on screen.
+      function pkResetUndo() {
+        pkUndoStack = [];
+        pkUpdateUndoButton();
+      }
+
+      function pkUpdateUndoButton() {
+        const b = $("btnPkUndo");
+        if (!b) return;
+        b.disabled = !pkUndoStack.length;
+        b.title = pkUndoStack.length
+          ? "Undo: " +
+            pkUndoStack[pkUndoStack.length - 1].label +
+            "  (Ctrl+Z)  ·  " +
+            pkUndoStack.length +
+            " step(s) available"
+          : "Nothing to undo (Ctrl+Z)";
+      }
+
+      function pkUndo() {
+        const snap = pkUndoStack.pop();
+        if (!snap) {
+          pkLiveUpdate("nothing to undo");
+          return;
+        }
+        pkPeaks = new Array(snap.n);
+        for (let i = 0; i < snap.n; i++) {
+          const p = {
+            idx: snap.idx[i] < 0 ? null : snap.idx[i],
+            time: snap.time[i],
+            amp: snap.amp[i],
+            splitAfter: !!(snap.flags[i] & 1),
+          };
+          if (snap.flags[i] & 2) p.manual = true;
+          pkPeaks[i] = p;
+        }
+        pkSelection.clear();
+        snap.sel.forEach((i) => {
+          if (pkPeaks[i]) pkSelection.add(pkPeaks[i]);
+        });
+        pkUpdateUndoButton();
+        pkLiveUpdate("undo: " + snap.label);
+      }
+
       function pkMerge(i, dir) {
         const p = pkPeaks[i];
         if (!p) return;
@@ -5920,6 +8595,7 @@
             pkLiveUpdate("no peak to the right");
             return;
           }
+          pkSnapshot("merge right");
           p.splitAfter = false;
           pkLiveUpdate("merged right");
         } else {
@@ -5927,6 +8603,7 @@
             pkLiveUpdate("no peak to the left");
             return;
           }
+          pkSnapshot("merge left");
           pkPeaks[i - 1].splitAfter = false;
           pkLiveUpdate("merged left");
         }
@@ -5938,6 +8615,7 @@
           pkLiveUpdate("no peak to the left");
           return;
         }
+        pkSnapshot("split left");
         pkPeaks[i - 1].splitAfter = true;
         pkLiveUpdate("split left");
       }
@@ -5946,6 +8624,7 @@
           pkLiveUpdate("no peak to the right");
           return;
         }
+        pkSnapshot("split right");
         pkPeaks[i].splitAfter = true;
         pkLiveUpdate("split right");
       }
@@ -5962,6 +8641,7 @@
             pkLiveUpdate("no train to the left");
             return;
           }
+          pkSnapshot("assign left");
           pkPeaks[i - 1].splitAfter = false; // join with left
           if (i + 1 < pkPeaks.length) pkPeaks[i].splitAfter = true; // end the train here
           pkLiveUpdate("assigned to left train");
@@ -5970,6 +8650,7 @@
             pkLiveUpdate("no train to the right");
             return;
           }
+          pkSnapshot("assign right");
           if (i - 1 >= 0) pkPeaks[i - 1].splitAfter = true; // cut from left
           pkPeaks[i].splitAfter = false; // join with right
           pkLiveUpdate("assigned to right train");
@@ -5978,12 +8659,23 @@
 
       // Remove a peak. The two gaps around it collapse into one; a boundary is
       // preserved if either side had one, so trains never accidentally merge.
+      // The collapsed gap can also end up wider than the train-grouping
+      // threshold on its own — even if neither original half-gap was flagged
+      // — so re-check against it and split there too if needed.
       function pkRemovePeak(i) {
         const p = pkPeaks[i];
         if (!p) return;
+        pkSnapshot("remove peak");
         if (pkSelection.has(p)) pkSelection.delete(p);
         const prev = pkPeaks[i - 1];
-        if (prev) prev.splitAfter = prev.splitAfter || p.splitAfter;
+        const next = pkPeaks[i + 1];
+        if (prev) {
+          prev.splitAfter = prev.splitAfter || p.splitAfter;
+          const maxGapMs = parseFloat($("pkMaxGap")?.value) || 10;
+          if (next && (next.time - prev.time) * 1000 > maxGapMs) {
+            prev.splitAfter = true;
+          }
+        }
         pkPeaks.splice(i, 1);
         pkLiveUpdate("peak removed");
       }
@@ -5996,6 +8688,7 @@
           pkLiveUpdate("nothing to reset");
           return;
         }
+        pkSnapshot("reset boundaries");
         pkInitBoundaries();
         pkLiveUpdate("boundaries reset to detected");
       }
@@ -6093,6 +8786,7 @@
         if (idxs.length < 2) return;
         const lo = idxs[0],
           hi = idxs[idxs.length - 1];
+        pkSnapshot("assign " + idxs.length + " peaks");
         for (let i = lo; i < hi; i++) pkPeaks[i].splitAfter = false; // join the block internally
         if (dir === "right") {
           if (hi < pkPeaks.length - 1) pkPeaks[hi].splitAfter = false; // merge into right train
@@ -6110,6 +8804,7 @@
         if (idxs.length < 2) return;
         const lo = idxs[0],
           hi = idxs[idxs.length - 1];
+        pkSnapshot("isolate " + idxs.length + " peaks");
         for (let i = lo; i < hi; i++) pkPeaks[i].splitAfter = false;
         if (lo > 0) pkPeaks[lo - 1].splitAfter = true;
         if (hi < pkPeaks.length - 1) pkPeaks[hi].splitAfter = true;
@@ -6121,17 +8816,28 @@
         if (idxs.length < 2) return;
         const lo = idxs[0],
           hi = idxs[idxs.length - 1];
+        pkSnapshot("join selection");
         for (let i = lo; i < hi; i++) pkPeaks[i].splitAfter = false;
         pkLiveUpdate("joined within selection");
       }
       function pkBulkRemove() {
         const idxs = pkSelectionIndices();
         if (!idxs.length) return;
-        // Remove from the end so earlier indices stay valid; preserve boundaries.
+        pkSnapshot("remove " + idxs.length + " peak(s)");
+        const maxGapMs = parseFloat($("pkMaxGap")?.value) || 10;
+        // Remove from the end so earlier indices stay valid; preserve boundaries,
+        // and split if the collapsed gap now exceeds the train threshold even
+        // when neither original half-gap was flagged (same fix as pkRemovePeak).
         for (let k = idxs.length - 1; k >= 0; k--) {
           const i = idxs[k];
           const prev = pkPeaks[i - 1];
-          if (prev) prev.splitAfter = prev.splitAfter || pkPeaks[i].splitAfter;
+          const next = pkPeaks[i + 1];
+          if (prev) {
+            prev.splitAfter = prev.splitAfter || pkPeaks[i].splitAfter;
+            if (next && (next.time - prev.time) * 1000 > maxGapMs) {
+              prev.splitAfter = true;
+            }
+          }
           pkPeaks.splice(i, 1);
         }
         const n = idxs.length;
@@ -6182,6 +8888,16 @@
       document.addEventListener("mousemove", (e) => {
         const canvas = $("pkCanvas");
         const geo = canvas._pkGeo;
+        // If the mouse button was released outside the window/webview, no
+        // "mouseup" ever reaches us to clear the drag/band state, and the
+        // pan or rubber-band would otherwise keep tracking the cursor
+        // forever. e.buttons reflects what's ACTUALLY held right now, so
+        // use it to self-heal instead of relying solely on mouseup.
+        if ((pkIsDragging || pkBand) && !(e.buttons & 1)) {
+          pkIsDragging = false;
+          pkBand = null;
+          canvas.style.cursor = pkEditMode === "add" ? "copy" : "crosshair";
+        }
         const rect = canvas.getBoundingClientRect();
         pkLastMouseTime =
           geo &&
@@ -6331,6 +9047,22 @@
             active.tagName === "TEXTAREA" ||
             active.tagName === "SELECT" ||
             active.isContentEditable);
+        // Ctrl+Z / Cmd+Z — undo the last peak or boundary edit. Guarded on
+        // pkEnv so it only fires once Temporal Analysis has something to edit,
+        // and skipped while a text field has focus so it does not steal undo
+        // from whatever the user is typing in.
+        if (
+          (e.key === "z" || e.key === "Z") &&
+          (e.ctrlKey || e.metaKey) &&
+          !e.shiftKey &&
+          !e.altKey &&
+          !isTyping &&
+          pkEnv
+        ) {
+          pkUndo();
+          e.preventDefault();
+          return;
+        }
         if ((e.key === "+" || e.key === "Add") && !isTyping && pkEnv) {
           if (pkLastMouseTime !== null) {
             pkAddPeakAt(pkLastMouseTime);
@@ -6348,12 +9080,245 @@
         ) {
           pkBulkRemove();
           e.preventDefault();
+          return;
+        }
+        // ── Boundary-edit shortcuts (Temporal Analysis) ──────────────────
+        // Shift+←/→ = Split left/right · ←/→ = Assign left/right ·
+        // Ctrl+←/→ = Merge left/right · Ctrl+M = Join selection.
+        if (!isTyping && pkEnv && pkSelection.size) {
+          const isLeft = e.key === "ArrowLeft";
+          const isRight = e.key === "ArrowRight";
+          if ((isLeft || isRight) && e.shiftKey && !e.ctrlKey && !e.altKey) {
+            pkSplitSelection(isLeft ? "left" : "right");
+            e.preventDefault();
+            return;
+          }
+          if ((isLeft || isRight) && e.ctrlKey && !e.shiftKey && !e.altKey) {
+            pkMergeSelection(isLeft ? "left" : "right");
+            e.preventDefault();
+            return;
+          }
+          if ((isLeft || isRight) && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+            pkAssignSelection(isLeft ? "left" : "right");
+            e.preventDefault();
+            return;
+          }
+          if (
+            e.key.toLowerCase() === "m" &&
+            e.ctrlKey &&
+            !e.shiftKey &&
+            !e.altKey
+          ) {
+            pkBulkJoin();
+            e.preventDefault();
+            return;
+          }
+        }
+        // Alt+←/→ = pan the view left/right — unlike the boundary-edit
+        // arrow combos above, this doesn't need a selection.
+        if (!isTyping && pkEnv) {
+          const isLeft = e.key === "ArrowLeft";
+          const isRight = e.key === "ArrowRight";
+          if ((isLeft || isRight) && e.altKey && !e.ctrlKey && !e.shiftKey) {
+            pkPanView(isLeft ? -1 : 1);
+            e.preventDefault();
+          }
         }
       });
 
+      // Shifts the current view window by a fraction of its own duration,
+      // clamped to the signal's bounds — same math as dragging the envelope.
+      function pkPanView(dir) {
+        const dur = pkEnv.length / sampleRate;
+        const vEnd = pkViewEnd !== null ? pkViewEnd : dur;
+        const vDur = vEnd - pkViewStart;
+        const step = vDur * 0.2 * dir;
+        let ns = Math.max(0, Math.min(dur - vDur, pkViewStart + step));
+        pkViewStart = ns;
+        pkViewEnd = ns + vDur;
+        pkDrawEnvelope();
+      }
+
       // ── Confirm & compute metrics ───────────────────────────────────────
-      function pkConfirm() {
+      // A peak's amplitude should always be set at creation, but this is a
+      // safety net: fall back to re-reading it straight from the envelope
+      // at the peak's sample index if it's ever missing/invalid, so a
+      // stale/malformed peak object can never blank out an export instead
+      // of just reporting a real number.
+      // Name of the audio these numbers came from. Every exported row carries
+      // it so a table can always be traced back to its recording — filenames
+      // get renamed and workbooks get merged, and specimen_id is typed by hand
+      // and often left blank.
+      function pkSourceFile() {
+        return currentAudioFileName || "";
+      }
+
+      function _pkAmpOf(p) {
+        if (typeof p.amp === "number" && isFinite(p.amp)) return p.amp;
+        return pkEnv && p.idx != null ? pkEnv[p.idx] : null;
+      }
+
+      // Spectral columns for train- and motif-level rows. These spans are long
+      // enough for the whole measure set, unlike a single pulse.
+      function pkSpecCols(m) {
+        if (!m)
+          return {
+            peak_freq_khz: null,
+            bw_20db_khz: null,
+            bw_10db_khz: null,
+            spec_centroid_khz: null,
+            spec_spread_khz: null,
+            spec_skew: null,
+            spec_kurt: null,
+            spec_entropy: null,
+            spec_flatness: null,
+            q_20db: null,
+            spec_signal_ms: null,
+            spec_res_hz: null,
+            spec_bin_hz: null,
+          };
+        return {
+          peak_freq_khz: m.peak_freq_khz,
+          bw_20db_khz: m.bw_20db_khz,
+          bw_10db_khz: m.bw_10db_khz,
+          spec_centroid_khz: m.spec_centroid_khz,
+          spec_spread_khz: m.spec_spread_khz,
+          spec_skew: m.spec_skew,
+          spec_kurt: m.spec_kurt,
+          spec_entropy: m.spec_entropy,
+          spec_flatness: m.spec_flatness,
+          q_20db: m.q_20db,
+          spec_signal_ms: m.spec_signal_ms,
+          spec_res_hz: m.spec_res_hz,
+          spec_bin_hz: m.spec_bin_hz,
+        };
+      }
+
+      // Motif rows carry the spectrum TWICE, because the two answers differ
+      // and both are wanted.
+      //
+      //   spec_*        — one transform over the whole motif span, at the
+      //                   motif resolution. The long window resolves fine
+      //                   structure the shorter train window cannot, but its
+      //                   frames also cross the silence between trains, so on
+      //                   a low duty cycle some frames are pure background and
+      //                   entropy and flatness read high.
+      //   spec_*_tmean  — the mean of the motif's train rows. Every number is
+      //                   anchored to actual signal, at the train resolution.
+      //
+      // Disagreement between them is informative: it means the motif is not
+      // spectrally uniform across its trains, or the background is loud.
+      const PK_SPEC_MEAN_KEYS = [
+        "peak_freq_khz",
+        "bw_20db_khz",
+        "bw_10db_khz",
+        "spec_centroid_khz",
+        "spec_spread_khz",
+        "spec_skew",
+        "spec_kurt",
+        "spec_entropy",
+        "spec_flatness",
+        "q_20db",
+        "spec_signal_ms",
+        "spec_res_hz",
+        "spec_bin_hz",
+        "freq_spread",
+      ];
+
+      function pkMotifSpecMeans(motifId) {
+        const rows = pkTrainData.filter((r) => r.motif_id === motifId);
+        const out = {};
+        PK_SPEC_MEAN_KEYS.forEach((k) => {
+          const v = rows
+            .map((r) => r[k])
+            .filter((x) => typeof x === "number" && isFinite(x));
+          const val = v.length
+            ? Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 1e4) / 1e4
+            : null;
+          // freq_spread has no direct counterpart — it is the scatter of peak
+          // carriers within a train, which a single transform cannot report —
+          // so it keeps its plain name. Everything else is suffixed to sit
+          // beside the motif's own measurement without colliding.
+          out[k === "freq_spread" ? k : k + "_tmean"] = val;
+        });
+        return out;
+      }
+
+      // ── Peak-level spectra ──────────────────────────────────────────────
+      // Two separate things, and conflating them was the bug.
+      //
+      // The TRANSFORM LENGTH comes from "Peak spec win (ms)" and nothing else.
+      // It fixes the bin grid, so every peak — in this recording and in every
+      // other recording measured with the same preset — is described on the
+      // same frequency axis. Deriving it from the data (the tightest pair of
+      // peaks, say) makes columns comparable inside one file and meaningless
+      // between files, because a dense recording and a sparse one would end up
+      // on different grids.
+      //
+      // The signal is capped at half the distance to each neighbouring peak,
+      // so adjacent pulses never enter the same frame.
+      //
+      // That cap is also a hard limit on resolution, and it is a physical one:
+      // resolution is 1/T, so a peak with only 0.7 ms of clear space around it
+      // cannot be resolved finer than ~1400 Hz no matter what is requested.
+      // Zero-padding interpolates the curve, it does not add information. So
+      // the requested resolution is a TARGET, spec_res_hz reports what each
+      // peak actually achieved, and rows only sit on a common frequency axis
+      // if the target is coarse enough for every peak to reach it.
+      function pkPeakHalfWindow(peaks, i, want) {
+        const p = peaks[i];
+        let half = want;
+        if (i > 0) half = Math.min(half, (p.time - peaks[i - 1].time) / 2);
+        if (i + 1 < peaks.length)
+          half = Math.min(half, (peaks[i + 1].time - p.time) / 2);
+        // Floor of a few samples, only so a transform is possible at all. It
+        // used to be half of SPEC_MIN_FFT, which at a coarse target (1500 Hz
+        // wants 0.67 ms) is LONGER than the requested window — the floor would
+        // then have widened the frame past the neighbouring pulse, defeating
+        // the cap above. Padding now supplies the transform length, so this
+        // can stay small and let the cap decide.
+        const minHalf = 4 / sampleRate;
+        return Math.max(half, minHalf);
+      }
+
+      // Target frequency resolution per level, in Hz. Set in Hz rather than
+      // milliseconds because that is what has to be held constant to compare
+      // recordings, and it stays the same number whatever the sample rate.
+      function pkPeakSpecRes() {
+        return Math.max(1, parseFloat($("pkSpecResPeak")?.value) || 1500);
+      }
+      function pkTrainSpecRes() {
+        return Math.max(1, parseFloat($("pkSpecResTrain")?.value) || 50);
+      }
+      function pkMotifSpecRes() {
+        return Math.max(1, parseFloat($("pkSpecResMotif")?.value) || 10);
+      }
+
+      function pkPeakSpectrum(peaks, i, resHz) {
+        // Requested resolution implies a duration; the neighbours may allow
+        // less, and then the row simply reports the coarser resolution it
+        // actually got via spec_res_hz.
+        const want = sampleRate / pkFrameForRes(resHz) / 2;
+        const half = pkPeakHalfWindow(peaks, i, want);
+        const t = peaks[i].time;
+        return computeSpectralMetrics(
+          pkClampT(t - half),
+          pkClampT(t + half),
+          resHz,
+        );
+      }
+
+      // Confirm now runs one FFT per peak on top of the temporal maths, which
+      // on a long recording is thousands of transforms — far too slow to hold
+      // the UI thread without saying anything.
+      async function pkConfirm() {
         if (!pkPeaks.length) return;
+        return withBusy("Computing metrics\u2026", (progress) =>
+          _pkConfirmStages(progress),
+        );
+      }
+
+      async function _pkConfirmStages(progress) {
         const maxTrainGapMs = parseFloat($("pkMaxTrainGap").value) || 300;
         const minPeaks = parseInt($("pkMinPeaks").value) || 3;
         const useMotifSeq = $("pkMotifSeq").checked;
@@ -6366,31 +9331,85 @@
           ? pkGroupMotifSeqs(motifs, maxMotifGapMs)
           : [];
 
+        progress("Peak spectra\u2026", 0.1);
+        await busyTick();
         // ── Build peak_data ──────────────────────────────────────────────
-        pkPeakData = [];
+        // Period is the interval to the NEXT peak, measured straight through
+        // train and motif boundaries.
+        //
+        // It used to be measured BACKWARDS and only within a train, which left
+        // the first peak of every train blank — so every extra train cost
+        // another missing value, and arch splitting produces a lot more trains
+        // than the gap rule alone did. Forwards and un-segmented, exactly one
+        // peak in the table has no successor: the last one.
+        const flat = [];
         motifs.forEach((motif, mi) => {
           motif.forEach((train, ti) => {
-            train.forEach((p, pi) => {
-              const prevP = pi > 0 ? train[pi - 1] : null;
-              const period = prevP ? p.time - prevP.time : null;
-              pkPeakData.push({
-                motif_id: mi + 1,
-                train_id: ti + 1,
-                peak_id: pi + 1,
-                peak_time: round4(p.time),
-                peak_period_ms: period !== null ? round4(period * 1000) : null,
-                peak_amp: round4(p.amp),
-              });
-            });
+            train.forEach((p, pi) => flat.push({ p, mi, ti, pi }));
           });
         });
+        // One short FFT per peak. Only the measures that survive a frame this
+        // short are reported: entropy and flatness need many bins to mean
+        // anything and would just be noise dressed as data.
+        const allPeaks = flat.map((e) => e.p);
+        const peakRes = pkPeakSpecRes();
+        // Peak carrier frequencies, kept so the train pass can report how much
+        // they vary within a train (freq_spread).
+        const peakFreqOf = new Map();
+        pkPeakData = flat.map((e, k) => {
+          const next = k + 1 < flat.length ? flat[k + 1].p : null;
+          const period = next ? next.time - e.p.time : null;
+          const sm = pkPeakSpectrum(allPeaks, k, peakRes) || {};
+          if (sm.peak_freq_khz != null) peakFreqOf.set(e.p, sm.peak_freq_khz);
+          return {
+            source_file: pkSourceFile(),
+            temp_c: currentTempC,
+            specimen_id: currentSpecimenId,
+            species: currentSpecies,
+            country: currentCountry,
+            locality: currentLocality,
+            motif_id: e.mi + 1,
+            train_id: e.ti + 1,
+            peak_id: e.pi + 1,
+            peak_time: round4(e.p.time),
+            peak_period_ms: period !== null ? round4(period * 1000) : null,
+            peak_amp: round4(_pkAmpOf(e.p)),
+            peak_freq_khz: sm.peak_freq_khz ?? null,
+            bw_20db_khz: sm.bw_20db_khz ?? null,
+            spec_centroid_khz: sm.spec_centroid_khz ?? null,
+            spec_spread_khz: sm.spec_spread_khz ?? null,
+            spec_skew: sm.spec_skew ?? null,
+            spec_kurt: sm.spec_kurt ?? null,
+            q_20db: sm.q_20db ?? null,
+            spec_signal_ms: sm.spec_signal_ms ?? null,
+            spec_res_hz: sm.spec_res_hz ?? null,
+            spec_bin_hz: sm.spec_bin_hz ?? null,
+          };
+        });
 
+        progress("Train metrics\u2026", 0.6);
+        await busyTick();
         // ── Build train_data ─────────────────────────────────────────────
         pkTrainData = [];
+        // Same split as for peaks: the transform length comes from "Train
+        // spec win (ms)", not from the shortest train in this recording, so
+        // train rows line up across recordings. A train shorter than the
+        // transform is zero-padded; a longer one is Welch-averaged.
+        const trainRes = pkTrainSpecRes();
+
+        // Sample standard deviation (n-1). One pulse cannot support a spread,
+        // so that reports null rather than a misleading zero.
+        const sd = (v) => {
+          if (v.length < 2) return null;
+          const mu = v.reduce((a, b) => a + b, 0) / v.length;
+          const q = v.reduce((a, b) => a + (b - mu) * (b - mu), 0);
+          return Math.sqrt(q / (v.length - 1));
+        };
+
         motifs.forEach((motif, mi) => {
           motif.forEach((train, ti) => {
             const times = train.map((p) => p.time);
-            const amps = train.map((p) => p.amp);
+            const amps = train.map((p) => _pkAmpOf(p) ?? 0);
             const pad = pkTrainPadSec();
             const rawStart = times[0],
               rawEnd = times[times.length - 1];
@@ -6428,23 +9447,52 @@
               ? round4(pkClampT(nextTrain[0].time - pad) - end)
               : null;
             pkTrainData.push({
+              source_file: pkSourceFile(),
+              temp_c: currentTempC,
+              specimen_id: currentSpecimenId,
+              species: currentSpecies,
+              country: currentCountry,
+              locality: currentLocality,
               motif_id: mi + 1,
               train_id: ti + 1,
               train_start: round4(start),
               train_end: round4(end),
               train_dur_ms: round4(dur * 1000),
               n_peaks: nPeaks,
-              peak_rate_hz: rate,
+              peak_rate_pps: rate, // peaks per second — "Hz" is reserved for spectral frequency
               mean_amp: meanAmp,
               tem_exc: temExc,
               dyn_exc: dynExc,
               train_gap_ms: gap !== null ? round4(gap * 1000) : null,
+              // Onset to the next train's onset, within this motif. Null on
+              // the motif's last train — the interval to the next motif's
+              // first train is a motif period, not a train period.
+              train_period_ms:
+                gap !== null
+                  ? round4(
+                      (pkClampT(nextTrain[0].time - pad) - start) * 1000,
+                    )
+                  : null,
+              ...pkSpecCols(computeSpectralMetrics(start, end, trainRes)),
+              // How much the per-peak carrier moves across this train. Large
+              // values mean the train's own bandwidth is driven by drift
+              // between pulses rather than the width of any one pulse.
+              freq_spread: (() => {
+                const f = train
+                  .map((pk) => peakFreqOf.get(pk))
+                  .filter((v) => typeof v === "number" && isFinite(v));
+                const v = sd(f);
+                return v === null ? null : round4(v);
+              })(),
             });
           });
         });
 
+        progress("Motif metrics\u2026", 0.85);
+        await busyTick();
         // ── Build motif_data ─────────────────────────────────────────────
         pkMotifData = [];
+        const motifRes = pkMotifSpecRes();
         motifs.forEach((motif, mi) => {
           const allPeaks = motif.flat();
           const pad = pkTrainPadSec();
@@ -6463,43 +9511,65 @@
           const dutyCycle = mDur > 0 ? round4((sumDur / 1000 / mDur) * 100) : 0;
           const temExcMean = round4(mean(myTrains.map((t) => t.tem_exc)));
           const dynExcMean = round4(mean(myTrains.map((t) => t.dyn_exc)));
-          // PCI: proportions of train durations and gaps within motif
-          const props = [];
+          // PCI-syl — the motif divided at TRAIN boundaries: each train's
+          // duration, then the gap that follows it. This is the original
+          // index. It describes the syllable pattern, but it also inherits
+          // whatever grouping parameters produced those trains.
+          const propsSyl = [];
           myTrains.forEach((t, i) => {
-            props.push(t.train_dur_ms / 1000 / mDur);
+            propsSyl.push(t.train_dur_ms / 1000 / mDur);
             if (t.train_gap_ms !== null && i < myTrains.length - 1)
-              props.push(t.train_gap_ms / 1000 / mDur);
+              propsSyl.push(t.train_gap_ms / 1000 / mDur);
           });
-          const propsFiltered = props.filter((v) => v > 0);
-          const propsMean = mean(propsFiltered);
-          const propsSD = sd(propsFiltered);
-          const propsCV = propsMean > 0 ? propsSD / propsMean : 0;
-          const propsEnt = -propsFiltered.reduce(
-            (s, v) => s + v * Math.log(v),
-            0,
-          );
-          const pci = round4(
-            (propsEnt * propsCV + Math.sqrt(nTrains)) / (Math.sqrt(mDur) + 1),
-          );
+          const syl = pkPatternComplexity(propsSyl, nTrains, mDur);
+
+          // PCI-agn — the same motif divided at EVERY PEAK: the intervals
+          // between consecutive peaks, with no notion of where one train ends
+          // and the next begins. Nothing about the grouping enters it, so it
+          // is a behaviour-agnostic description of the same motif and can be
+          // compared against PCI-syl to test whether train segmentation adds
+          // information or only adds assumptions.
+          const propsAgn = [];
+          for (let i = 1; i < allPeaks.length; i++)
+            propsAgn.push((allPeaks[i].time - allPeaks[i - 1].time) / mDur);
+          const agn = pkPatternComplexity(propsAgn, allPeaks.length, mDur);
           // Gap to next motif
           const nextMotif = motifs[mi + 1];
           const mGap = nextMotif
             ? round4(pkClampT(nextMotif[0][0].time - pad) - mEnd)
             : null;
+          // Onset to the next motif's onset. Null on the last motif.
+          const mPeriod = nextMotif
+            ? round4(pkClampT(nextMotif[0][0].time - pad) - mStart)
+            : null;
           pkMotifData.push({
+            source_file: pkSourceFile(),
+            temp_c: currentTempC,
+            specimen_id: currentSpecimenId,
+            species: currentSpecies,
+            country: currentCountry,
+            locality: currentLocality,
             motif_id: mi + 1,
             motif_start: round4(mStart),
             motif_end: round4(mEnd),
             motif_dur_s: round4(mDur),
             motif_gap_s: mGap,
+            motif_period_s: mPeriod,
             n_trains: nTrains,
-            train_rate_hz: trainRate,
+            train_rate_tps: trainRate, // trains per second — "Hz" is reserved for spectral frequency
             duty_cycle_pct: dutyCycle,
             tem_exc_mean: temExcMean,
             dyn_exc_mean: dynExcMean,
-            props_ent: round4(propsEnt),
-            props_cv: round4(propsCV),
-            pci,
+            props_ent_syl: syl.ent,
+            props_cv_syl: syl.cv,
+            pci_syl: syl.pci,
+            props_ent_agn: agn.ent,
+            props_cv_agn: agn.cv,
+            pci_agn: agn.pci,
+            // The motif's own spectrum, at the motif resolution — a long
+            // window Welch-averaged across the span, silences included.
+            ...pkSpecCols(computeSpectralMetrics(mStart, mEnd, motifRes)),
+            ...pkMotifSpecMeans(mi + 1),
           });
         });
 
@@ -6516,6 +9586,12 @@
               ? round4(pkClampT(nextSeq[0][0][0].time - pad) - sEnd)
               : null;
             pkMotifSeqData.push({
+              source_file: pkSourceFile(),
+              temp_c: currentTempC,
+              specimen_id: currentSpecimenId,
+              species: currentSpecies,
+              country: currentCountry,
+              locality: currentLocality,
               seq_id: si + 1,
               seq_start: round4(sStart),
               seq_end: round4(sEnd),
@@ -6528,11 +9604,19 @@
 
         // ── Build summary ────────────────────────────────────────────────
         pkSummaryData = {
+          source_file: pkSourceFile(),
+          temp_c: currentTempC,
+          specimen_id: currentSpecimenId,
+          species: currentSpecies,
+          country: currentCountry,
+          locality: currentLocality,
           n_peaks: pkPeakData.length,
           n_trains: pkTrainData.length,
           n_motifs: pkMotifData.length,
-          pci_mean: round4(mean(pkMotifData.map((m) => m.pci))),
-          pci_sd: round4(sd(pkMotifData.map((m) => m.pci))),
+          pci_syl_mean: round4(mean(pkMotifData.map((m) => m.pci_syl))),
+          pci_syl_sd: round4(sd(pkMotifData.map((m) => m.pci_syl))),
+          pci_agn_mean: round4(mean(pkMotifData.map((m) => m.pci_agn))),
+          pci_agn_sd: round4(sd(pkMotifData.map((m) => m.pci_agn))),
           duty_cycle_mean: round4(
             mean(pkMotifData.map((m) => m.duty_cycle_pct)),
           ),
@@ -6561,8 +9645,8 @@
           ),
           peaks_per_train_mean: round4(mean(pkTrainData.map((t) => t.n_peaks))),
           peaks_per_train_sd: round4(sd(pkTrainData.map((t) => t.n_peaks))),
-          peak_rate_mean: round4(mean(pkTrainData.map((t) => t.peak_rate_hz))),
-          peak_rate_sd: round4(sd(pkTrainData.map((t) => t.peak_rate_hz))),
+          peak_rate_mean: round4(mean(pkTrainData.map((t) => t.peak_rate_pps))),
+          peak_rate_sd: round4(sd(pkTrainData.map((t) => t.peak_rate_pps))),
           tem_exc_mean: round4(mean(pkTrainData.map((t) => t.tem_exc))),
           tem_exc_sd: round4(sd(pkTrainData.map((t) => t.tem_exc))),
           dyn_exc_mean: round4(mean(pkTrainData.map((t) => t.dyn_exc))),
@@ -6571,10 +9655,38 @@
 
         pkConfirmed = true;
         $("btnPkConfirm").disabled = false;
+        // The report is now mostly temporal, so confirming unlocks it — it
+        // used to be reachable only through the spectral measurement paths.
+        if ($("btnExportTextReport")) $("btnExportTextReport").disabled = false;
         $("pkResults").style.display = "";
         $("pkTabBtnMotSeq").style.display = useMotifSeq ? "" : "none";
         pkShowTable("peak");
         pkRenderSummaryCards();
+        // Peaks packed closer than the requested resolution needs are limited
+        // by their neighbours, and those rows are NOT on the same frequency
+        // axis as the rest. Say so plainly, with the number to fall back to,
+        // rather than leaving it to be discovered in the spreadsheet.
+        const achieved = pkPeakData
+          .map((r) => r.spec_res_hz)
+          .filter((v) => v != null);
+        const wantRes = pkPeakSpecRes();
+        const worst = achieved.length ? Math.max(...achieved) : 0;
+        const short = achieved.filter((v) => v > wantRes * 1.01).length;
+        let resNote = "";
+        if (short) {
+          resNote =
+            " | ⚠ " +
+            short +
+            "/" +
+            achieved.length +
+            " peaks too close together for " +
+            Math.round(wantRes) +
+            " Hz (coarsest " +
+            Math.round(worst) +
+            " Hz) — use " +
+            Math.ceil(worst / 50) * 50 +
+            " Hz for one common axis";
+        }
         $("pkStatus").textContent =
           "✓ " +
           pkPeakData.length +
@@ -6582,11 +9694,43 @@
           pkTrainData.length +
           " trains | " +
           pkMotifData.length +
-          " motifs";
+          " motifs" +
+          resNote;
         pkDrawEnvelope();
       }
 
       // ── Helpers ──────────────────────────────────────────────────────────
+      // Pattern Complexity Index.
+      //
+      // `props` are the segments a motif divides into, each as a fraction of
+      // the motif's duration; `count` is how many elements that division
+      // produced. Entropy rewards many comparable segments, CV rewards them
+      // being uneven, sqrt(count) rewards there being more of them, and the
+      // sqrt(dur) denominator stops a long motif scoring high merely for being
+      // long.
+      //
+      // The SCORING is shared between both variants; only the DIVISION differs
+      // — which is exactly the thing being tested. PCI-syl divides the motif
+      // at train boundaries, PCI-agn at every peak. Keeping one formula means
+      // a difference between the two columns can only come from the division.
+      //
+      // Note this deliberately does not bail out on an empty `props`: the
+      // count term alone is still a defined score, and PCI-syl has to
+      // reproduce the earlier single-PCI numbers exactly.
+      function pkPatternComplexity(props, count, durSec) {
+        const p = props.filter(
+          (v) => typeof v === "number" && isFinite(v) && v > 0,
+        );
+        const m = mean(p);
+        const cv = m > 0 ? sd(p) / m : 0;
+        const ent = -p.reduce((s, v) => s + v * Math.log(v), 0);
+        return {
+          ent: round4(ent),
+          cv: round4(cv),
+          pci: round4((ent * cv + Math.sqrt(count)) / (Math.sqrt(durSec) + 1)),
+        };
+      }
+
       function round4(v) {
         return v !== null && isFinite(v) ? +v.toFixed(4) : null;
       }
@@ -6651,9 +9795,10 @@
           { lbl: "Peaks", v: pkSummaryData.n_peaks },
           { lbl: "Trains", v: pkSummaryData.n_trains },
           { lbl: "Motifs", v: pkSummaryData.n_motifs },
-          { lbl: "PCI (mean)", v: pkSummaryData.pci_mean },
+          { lbl: "PCI-syl (mean)", v: pkSummaryData.pci_syl_mean },
+          { lbl: "PCI-agn (mean)", v: pkSummaryData.pci_agn_mean },
           { lbl: "Duty cycle %", v: pkSummaryData.duty_cycle_mean },
-          { lbl: "Peak rate (Hz)", v: pkSummaryData.peak_rate_mean },
+          { lbl: "Peak rate (peaks/s)", v: pkSummaryData.peak_rate_mean },
           { lbl: "Tem. Exc.", v: pkSummaryData.tem_exc_mean },
           { lbl: "Dyn. Exc.", v: pkSummaryData.dyn_exc_mean },
         ];
@@ -6701,7 +9846,7 @@
       // Export every results table into ONE .xlsx workbook (one sheet per table).
       // Self-contained: builds the OOXML + ZIP by hand, no external library, works
       // fully offline.
-      function pkExportAll() {
+      async function pkExportAll() {
         const sheets = [
           ["Peaks", pkPeakData],
           ["Trains", pkTrainData],
@@ -6715,14 +9860,33 @@
           return;
         }
 
+        // A Peaks sheet routinely runs to tens of thousands of rows, and the
+        // whole workbook is serialised to XML and zipped on this thread.
+        //
+        // The save DIALOG is deliberately left outside the overlay: at that
+        // point the app is waiting on the user, not working, and a spinner
+        // sitting over a file picker reads as a hang.
+        let bytes;
         try {
-          const bytes = _buildXlsx(sheets);
+          bytes = await withBusy(
+            "Building Excel workbook…",
+            async (progress) => {
+              progress("Building " + sheets.length + " sheets…", 0.3);
+              await busyTick();
+              return _buildXlsx(sheets);
+            },
+          );
+        } catch (e) {
+          log("Excel export failed: " + e.message, "warn");
+          return;
+        }
+        try {
           const stamp = new Date()
             .toISOString()
             .slice(0, 19)
             .replace(/[:T]/g, "-");
-          dlFile(
-            "Rthoptera_temporal_analysis_" + stamp + ".xlsx",
+          await dlFile(
+            "Rthoptera_temp_" + stamp + ".xlsx",
             bytes,
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
           );
@@ -7000,10 +10164,21 @@
           _xmlEsc(title) +
           "</w:t></w:r></w:p>" +
           "<w:p/>";
+        // A paragraph is either a plain string or { text, bold } for a
+        // section heading. Strings must keep working: summSaveReport re-reads
+        // the user-editable textarea and passes nothing but strings.
         paragraphs.forEach((p) => {
+          const text = typeof p === "string" ? p : p.text;
+          const bold = typeof p === "object" && p.bold;
           body +=
-            '<w:p><w:pPr><w:spacing w:after="200"/></w:pPr><w:r><w:t xml:space="preserve">' +
-            _xmlEsc(p) +
+            '<w:p><w:pPr><w:spacing w:before="' +
+            (bold ? "240" : "0") +
+            '" w:after="' +
+            (bold ? "80" : "200") +
+            '"/></w:pPr><w:r>' +
+            (bold ? "<w:rPr><w:b/></w:rPr>" : "") +
+            '<w:t xml:space="preserve">' +
+            _xmlEsc(text) +
             "</w:t></w:r></w:p>";
         });
         return (
@@ -7032,74 +10207,183 @@
         return _zipStore(files);
       }
 
-      // Turns the current measurements table into a short plain-language
-      // narrative ("The X file had a peak frequency of A ± B kHz…"), one
-      // paragraph per topic, skipping any metric with no valid values.
-      function buildTextReportParagraphs() {
-        if (!detMeasurements || !detMeasurements.length) return null;
-        const n = detMeasurements.length;
-        const nums = (k) =>
-          detMeasurements
-            .map((m) => m[k])
-            .filter((v) => typeof v === "number" && isFinite(v));
-        const mean = (a) =>
-          a.length ? a.reduce((s, v) => s + v, 0) / a.length : null;
-        const sd = (a) => {
-          if (!a.length) return null;
-          const m = mean(a);
-          return Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / a.length);
-        };
-        const pm = (a, d) => {
-          const m = mean(a),
-            s = sd(a);
-          return m == null ? null : m.toFixed(d) + " ± " + s.toFixed(d);
-        };
-
-        const fname = currentAudioFileName || "recording";
-        const unitWord = n === 1 ? "unit" : "units";
-        const totalDurS = duration ? duration.toFixed(2) + " s" : "an unknown duration";
-
-        const durs = nums("dur_ms");
-        const peaks = nums("peak_freq_khz");
-        const bw20 = nums("bw_20db_khz");
-        const bw10 = nums("bw_10db_khz");
-        const q3 = nums("q_3db");
-        const ent = nums("spec_entropy");
-        const cent = nums("spec_centroid_khz");
-
-        const paras = [];
-        paras.push(
-          `The ${fname} file contained ${n} measured sound ${unitWord} over a total recording duration of ${totalDurS}.`,
+      // "24.03 ± 0.86 [22.66–25.86] ms" — mean, SD and range in one string.
+      //
+      // Nulls are dropped first, and this matters: train_gap_ms,
+      // train_period_ms, motif_gap_s and motif_period_s are all null on their
+      // last element by design, and the shared mean() coerces null to 0, which
+      // would drag every one of those statistics low.
+      //
+      // Returns null when nothing is left, so the caller omits the line rather
+      // than printing "0.00 ± 0.00".
+      function _statStr(vals, digits, unit) {
+        const v = vals.filter((x) => typeof x === "number" && isFinite(x));
+        if (!v.length) return null;
+        const lo = Math.min(...v),
+          hi = Math.max(...v);
+        const u = unit ? " " + unit : "";
+        return (
+          mean(v).toFixed(digits) +
+          " ± " +
+          sd(v).toFixed(digits) +
+          " [" +
+          lo.toFixed(digits) +
+          "–" +
+          hi.toFixed(digits) +
+          "]" +
+          u
         );
+      }
 
-        const bits = [];
-        if (peaks.length)
-          bits.push(`a peak frequency of ${pm(peaks, 3)} kHz (mean ± SD)`);
-        if (durs.length) bits.push(`a duration of ${pm(durs, 2)} ms`);
-        if (bits.length)
+      // Inter-peak intervals WITHIN each train.
+      //
+      // The peak_period_ms column cannot be averaged directly: it is built
+      // from the globally flattened peak list, so the last peak of every train
+      // carries the inter-train interval instead of a pulse period. Averaging
+      // it would blend pulse periods with train gaps and inflate the result.
+      // Regrouping by (motif_id, train_id) and dropping each train's last peak
+      // leaves only genuine within-train periods.
+      function _pkWithinTrainPeriods() {
+        const byTrain = new Map();
+        pkPeakData.forEach((r) => {
+          const k = r.motif_id + "/" + r.train_id;
+          if (!byTrain.has(k)) byTrain.set(k, []);
+          byTrain.get(k).push(r);
+        });
+        const out = [];
+        byTrain.forEach((rows) => {
+          for (let i = 0; i < rows.length - 1; i++) {
+            const v = rows[i].peak_period_ms;
+            if (typeof v === "number" && isFinite(v)) out.push(v);
+          }
+        });
+        return out;
+      }
+
+      // Turns the confirmed temporal analysis into a statistics report: one
+      // bold heading per level, then one line per metric as
+      // mean ± SD [min–max]. The spectral-detection narrative that used to
+      // be the whole report is kept and appended when those measurements exist.
+      function buildTextReportParagraphs() {
+        const paras = [];
+        const col = (rows, k) => rows.map((r) => r[k]);
+
+        if (pkConfirmed && pkPeakData.length) {
+          const fname = currentAudioFileName || "recording";
           paras.push(
-            `The average sound unit had ${bits.join("; ")}.`,
+            "Temporal analysis of " +
+              fname +
+              " over " +
+              (duration ? duration.toFixed(2) + " s" : "an unknown duration") +
+              ": " +
+              pkPeakData.length +
+              " peaks in " +
+              pkTrainData.length +
+              " trains and " +
+              pkMotifData.length +
+              " motifs. Values are mean ± SD [min–max].",
           );
 
-        const bwBits = [];
-        if (bw20.length) bwBits.push(`-20 dB bandwidth of ${pm(bw20, 3)} kHz`);
-        if (bw10.length) bwBits.push(`-10 dB bandwidth of ${pm(bw10, 3)} kHz`);
-        if (bwBits.length)
-          paras.push(`Bandwidth measured a mean ${bwBits.join(" and a mean ")}.`);
+          // Each entry: [label, values, decimals, unit]. Lines with no valid
+          // data are skipped rather than printed as zeros.
+          const section = (title, rows) => {
+            const lines = rows
+              .map(([lbl, vals, d, unit]) => {
+                const st = _statStr(vals, d, unit);
+                return st ? lbl + ": " + st : null;
+              })
+              .filter(Boolean);
+            if (!lines.length) return;
+            paras.push({ text: title, bold: true });
+            lines.forEach((l) => paras.push(l));
+          };
 
-        if (q3.length)
-          paras.push(`The average Q-factor at -3 dB was ${pm(q3, 2)}.`);
+          section("Peaks", [
+            ["Peak period (within train)", _pkWithinTrainPeriods(), 2, "ms"],
+            ["Peaks per train", col(pkTrainData, "n_peaks"), 1, null],
+          ]);
 
-        const shapeBits = [];
-        if (cent.length)
-          shapeBits.push(`a spectral centroid of ${pm(cent, 3)} kHz`);
-        if (ent.length) shapeBits.push(`a spectral entropy of ${pm(ent, 4)}`);
-        if (shapeBits.length)
+          section("Trains", [
+            ["Train rate", col(pkMotifData, "train_rate_tps"), 2, "trains/s"],
+            ["Trains per motif", col(pkMotifData, "n_trains"), 1, null],
+            ["Train duration", col(pkTrainData, "train_dur_ms"), 2, "ms"],
+            ["Train period", col(pkTrainData, "train_period_ms"), 2, "ms"],
+            ["Train gap", col(pkTrainData, "train_gap_ms"), 2, "ms"],
+            ["Dynamic excursion (DE)", col(pkTrainData, "dyn_exc"), 3, null],
+            ["Temporal excursion (TE)", col(pkTrainData, "tem_exc"), 2, null],
+          ]);
+
+          section("Motifs", [
+            ["Motif duration", col(pkMotifData, "motif_dur_s"), 3, "s"],
+            ["Motif period", col(pkMotifData, "motif_period_s"), 3, "s"],
+            ["Duty cycle", col(pkMotifData, "duty_cycle_pct"), 1, "%"],
+            // The motif's OWN transform, not the _tmean average of its trains.
+            ["Peak frequency", col(pkMotifData, "peak_freq_khz"), 3, "kHz"],
+            ["Bandwidth at -20 dB", col(pkMotifData, "bw_20db_khz"), 3, "kHz"],
+            ["Bandwidth at -10 dB", col(pkMotifData, "bw_10db_khz"), 3, "kHz"],
+            ["PCI-agn", col(pkMotifData, "pci_agn"), 3, null],
+            ["PCI-syl", col(pkMotifData, "pci_syl"), 3, null],
+          ]);
+        }
+
+        // The original spectral-detection narrative, unchanged, kept so
+        // nothing that worked before this report was rewritten is lost.
+        if (detMeasurements && detMeasurements.length) {
+          const n = detMeasurements.length;
+          const nums = (k) =>
+            detMeasurements
+              .map((m) => m[k])
+              .filter((v) => typeof v === "number" && isFinite(v));
+          const pm = (a, d) =>
+            a.length ? mean(a).toFixed(d) + " ± " + sd(a).toFixed(d) : null;
+
+          const durs = nums("dur_ms"),
+            peaks = nums("peak_freq_khz"),
+            bw20 = nums("bw_20db_khz"),
+            bw10 = nums("bw_10db_khz"),
+            q3 = nums("q_3db"),
+            ent = nums("spec_entropy"),
+            cent = nums("spec_centroid_khz");
+
+          paras.push({ text: "Measured selections", bold: true });
           paras.push(
-            `On average, sound units had ${shapeBits.join(" and ")}.`,
+            "The measurements table held " +
+              n +
+              " measured sound " +
+              (n === 1 ? "unit" : "units") +
+              ".",
           );
+          const bits = [];
+          if (peaks.length)
+            bits.push("a peak frequency of " + pm(peaks, 3) + " kHz");
+          if (durs.length) bits.push("a duration of " + pm(durs, 2) + " ms");
+          if (bits.length)
+            paras.push("The average sound unit had " + bits.join("; ") + ".");
 
-        return paras;
+          const bwBits = [];
+          if (bw20.length)
+            bwBits.push("-20 dB bandwidth of " + pm(bw20, 3) + " kHz");
+          if (bw10.length)
+            bwBits.push("-10 dB bandwidth of " + pm(bw10, 3) + " kHz");
+          if (bwBits.length)
+            paras.push(
+              "Bandwidth measured a mean " + bwBits.join(" and a mean ") + ".",
+            );
+          if (q3.length)
+            paras.push("The average Q-factor at -3 dB was " + pm(q3, 2) + ".");
+
+          const shapeBits = [];
+          if (cent.length)
+            shapeBits.push("a spectral centroid of " + pm(cent, 3) + " kHz");
+          if (ent.length)
+            shapeBits.push("a spectral entropy of " + pm(ent, 4));
+          if (shapeBits.length)
+            paras.push(
+              "On average, sound units had " + shapeBits.join(" and ") + ".",
+            );
+        }
+
+        return paras.length ? paras : null;
       }
 
       function exportTextReport() {
@@ -7109,17 +10393,17 @@
         }
         const paragraphs = buildTextReportParagraphs();
         if (!paragraphs || !paragraphs.length) {
-          log("Compute spectral metrics before exporting a report.", "warn");
+          log(
+            "Run Detect Peaks and Confirm (or compute spectral metrics) before exporting a report.",
+            "warn",
+          );
           return;
         }
         try {
           const fname = currentAudioFileName || "recording";
-          const bytes = _buildDocx(
-            "Spectral Analysis Report — " + fname,
-            paragraphs,
-          );
+          const bytes = _buildDocx("Analysis Report — " + fname, paragraphs);
           dlFile(
-            "spectral_analysis_report.docx",
+            "report.docx",
             bytes,
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
           );
@@ -7306,6 +10590,18 @@
           return;
         }
 
+        // Replace whatever this function added last time — otherwise
+        // editing detections (splitting/joining/deleting peaks) and
+        // re-applying just piles fresh, correctly-numbered selections on
+        // top of the stale ones from before the edit, instead of updating
+        // them. Selections created some other way (manual drag-select)
+        // are untouched since only previously-applied ids are removed.
+        if (pkAppliedAnnotationIds.length) {
+          const stale = new Set(pkAppliedAnnotationIds);
+          annotations = annotations.filter((a) => !stale.has(a.id));
+          pkAppliedAnnotationIds = [];
+        }
+
         const nyq = rawSamples ? sampleRate / 2 : 20000;
         let added = 0,
           skipped = 0;
@@ -7345,6 +10641,8 @@
           addedIds.push(aid);
           added++;
         });
+
+        pkAppliedAnnotationIds = addedIds.slice();
 
         if (addedIds.length) {
           selAid = addedIds[addedIds.length - 1];
@@ -7396,3 +10694,853 @@
       // Sync the Loaded Audio panel's settings inputs with any persisted
       // grid size on first load.
       renderAudioLibraryPanel();
+
+      // ═══════════════════════════════════════════════════════════════════
+      // SUMMARIZE — merge several Temporal/Spectral Analysis .xlsx exports
+      // (own recording or several individuals) into one workbook, pool
+      // stats across them, and draft a plain-language report. Works purely
+      // off the imported files; no audio needs to be loaded. Reuses the
+      // shared _readXlsx / _buildXlsx / _buildDocx / dlFile helpers.
+      // ═══════════════════════════════════════════════════════════════════
+      let summFilesData = []; // [{id, name, specimenId, fromData, sheets: {peaks:[],trains:[],...}}]
+      let summNextFileId = 1;
+      // Holds {specimenId, species, country, locality} copied from one file box via
+      // "📋 Copy metadata", so it can be pasted into others — cuts down on
+      // retyping the same tags across many files from one field trip.
+      let summMetaClipboard = null;
+      let summMerged = null; // {peaks:[],trains:[],motifs:[],motseq:[],spectral:[]}
+      let summStatsRows = null; // [{category, specimenId, metric, n, mean, sd, min, max}]
+
+      const SUMM_CATS = ["peaks", "trains", "motifs", "motseq", "spectral"];
+      const SUMM_LABEL = {
+        peaks: "Peaks",
+        trains: "Trains",
+        motifs: "Motifs",
+        motseq: "MotifSeqs",
+        spectral: "Spectral",
+      };
+      const SUMM_SHEET_NAME = {
+        peaks: "Peaks",
+        trains: "Trains",
+        motifs: "Motifs",
+        motseq: "MotifSeqs",
+        spectral: "Spectral_Analysis",
+      };
+
+      // Identify which of the 5 known table kinds a sheet holds — first by
+      // its name (matches Rthoptera's own export sheet names), falling back
+      // to its columns so renamed/re-saved sheets still classify correctly.
+      // "Summary"/"Info" sheets from source files are intentionally skipped:
+      // the merged Summary is recomputed fresh from the pooled raw rows.
+      function _summClassifySheet(name, rows) {
+        const nm = name.toLowerCase();
+        if (nm.includes("motifseq")) return "motseq";
+        if (nm.includes("motif")) return "motifs";
+        if (nm.includes("train")) return "trains";
+        if (nm.includes("peak")) return "peaks";
+        if (nm.includes("spectral")) return "spectral";
+        if (nm === "summary" || nm === "info") return null;
+        if (!rows || !rows.length) return null;
+        const cols = Object.keys(rows[0]).map((c) => c.toLowerCase());
+        const has = (...ks) => ks.every((k) => cols.includes(k));
+        if (has("motif_start", "motif_end")) return "motifs";
+        if (has("train_start", "train_end")) return "trains";
+        if (cols.includes("peak_time")) return "peaks";
+        if (
+          cols.some(
+            (c) =>
+              c.includes("peak_freq") ||
+              c.includes("bandwidth") ||
+              c.includes("bw_20db") ||
+              c.includes("spec_centroid"),
+          )
+        )
+          return "spectral";
+        return null;
+      }
+
+      // Scan every sheet in the workbook (not just the classified ones — the
+      // per-file Info/Summary sheets carry it too) for the first non-empty
+      // value of the given tag column (specimen_id / species / locality).
+      // Rthoptera's exports tag every row with whatever was entered in the
+      // toolbar for that recording; this recovers it so files group by the
+      // real tag instead of guessing from the file name.
+      function _summFindTagField(workbook, fieldName) {
+        for (const sn of Object.keys(workbook)) {
+          const rows = workbook[sn];
+          if (!rows || !rows.length) continue;
+          const key = Object.keys(rows[0]).find(
+            (k) => k.toLowerCase() === fieldName,
+          );
+          if (!key) continue;
+          for (const row of rows) {
+            const v = row[key];
+            if (v !== null && v !== undefined && String(v).trim() !== "") {
+              return String(v).trim();
+            }
+          }
+        }
+        return "";
+      }
+
+      // Rthoptera's own exports always keep the original audio file name as
+      // a prefix and append a fixed marker for what the export is — the
+      // Temporal Analysis workbook gets "_temp", Spectral Analysis exports
+      // get "_spec" (users sometimes rename theirs further, e.g.
+      // "..._spec_trains.xlsx", to tell apart repeated exports for different
+      // selection sets). Cut at the first such marker to recover the shared
+      // prefix, so several exports from the same audio file collapse into ONE
+      // recording instead of being counted once per file.
+      //
+      // Both spellings are matched: workbooks exported before the markers were
+      // shortened carry "_temporal_analysis" / "_spectral_analysis", and must
+      // still group with newer ones from the same recording.
+      //
+      // The lookahead is what keeps this honest — without it "_spec" would
+      // also fire inside a word like "..._specimen_notes", truncating a name
+      // that has no marker in it at all.
+      function _summRecordingKey(filename) {
+        const base = filename.replace(/\.[^/.]+$/, "");
+        const m = base.match(
+          /_temp(?:oral_analysis)?(?=_|$)|_spec(?:tral_analysis)?(?=_|$)/i,
+        );
+        return (m ? base.slice(0, m.index) : base).toLowerCase();
+      }
+
+      // Columns that are identifiers/labels, not measurements — they must
+      // never be averaged. Covers the metadata tags (specimen_id/species/
+      // locality/source_file), every *_id column (motif_id/train_id/
+      // peak_id/seq_id — these are categorical row numbers, not counts),
+      // and the plain running-index columns ("selection", "n").
+      function _summIsCategoricalKey(k) {
+        const kl = k.toLowerCase();
+        if (
+          kl === "source_file" ||
+          kl === "temp_c" ||
+          kl === "source_workbook" ||
+          kl === "specimen_id" ||
+          kl === "species" ||
+          kl === "country" ||
+          kl === "locality" ||
+          kl === "selection" ||
+          kl === "n"
+        )
+          return true;
+        if (/_id$/.test(kl)) return true;
+        return false;
+      }
+
+      async function summAddFiles(fileList) {
+        const files = Array.from(fileList || []);
+        if (!files.length) return;
+        for (const f of files) {
+          try {
+            const buf = new Uint8Array(await f.arrayBuffer());
+            const workbook = await _readXlsx(buf);
+            const sheets = {};
+            Object.keys(workbook).forEach((sn) => {
+              const kind = _summClassifySheet(sn, workbook[sn]);
+              if (kind)
+                sheets[kind] = (sheets[kind] || []).concat(workbook[sn]);
+            });
+            if (!Object.keys(sheets).length) {
+              log(
+                '"' +
+                  f.name +
+                  '": no recognizable Peaks/Trains/Motifs/Spectral table found — skipped.',
+                "warn",
+              );
+              continue;
+            }
+            const fromFile = _summFindTagField(workbook, "specimen_id");
+            const speciesFromFile = _summFindTagField(workbook, "species");
+            const countryFromFile = _summFindTagField(workbook, "country");
+            const localityFromFile = _summFindTagField(workbook, "locality");
+            const recordingKey = _summRecordingKey(f.name);
+            summFilesData.push({
+              id: summNextFileId++,
+              name: f.name,
+              recordingKey,
+              // Prefer the Specimen ID tagged in the file's own data; fall
+              // back to the shared recording key (original audio file name,
+              // export markers stripped) when the column is missing/blank,
+              // so multiple exports of the same recording default to the
+              // same specimen too — editable below either way.
+              specimenId: fromFile || recordingKey,
+              fromData: !!fromFile,
+              species: speciesFromFile,
+              country: countryFromFile,
+              locality: localityFromFile,
+              sheets,
+            });
+          } catch (err) {
+            log('Could not read "' + f.name + '": ' + err.message, "err");
+          }
+        }
+        summRenderFileList();
+      }
+
+      function summRenderFileList() {
+        const wrap = $("summFileList");
+        if (!summFilesData.length) {
+          wrap.innerHTML =
+            '<div style="color:var(--txt2);font-size:11px">No files added yet.</div>';
+          $("btnSummClear").disabled = true;
+          $("btnSummRun").disabled = true;
+          return;
+        }
+        wrap.innerHTML = "";
+        const keyCounts = {};
+        summFilesData.forEach((f) => {
+          keyCounts[f.recordingKey] = (keyCounts[f.recordingKey] || 0) + 1;
+        });
+        summFilesData.forEach((f) => {
+          const kinds = Object.keys(f.sheets)
+            .map((k) => SUMM_LABEL[k] || k)
+            .join(", ");
+          const siblings = keyCounts[f.recordingKey] - 1;
+          const row = document.createElement("div");
+          row.style.cssText =
+            "display:flex;flex-direction:column;gap:2px;padding:5px;border:1px solid var(--border);border-radius:4px;background:var(--bg3)";
+          row.innerHTML =
+            '<div style="display:flex;align-items:center;gap:5px">' +
+            '<span style="flex:1;font-size:11px;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' +
+            f.name.replace(/"/g, "&quot;") +
+            '">' +
+            f.name +
+            "</span>" +
+            '<button data-remove="' +
+            f.id +
+            '" style="font-size:10px;padding:1px 6px">✕</button>' +
+            "</div>" +
+            (siblings
+              ? '<div style="color:var(--txt3);font-size:10px">🔗 same recording as ' +
+                siblings +
+                " other file" +
+                (siblings === 1 ? "" : "s") +
+                "</div>"
+              : "") +
+            '<div style="display:flex;align-items:center;gap:4px">' +
+            '<button data-copymeta="' +
+            f.id +
+            '" title="Copy this file\'s Specimen ID/Species/Locality" style="font-size:10px;padding:1px 6px;flex:1">📋 Copy metadata</button>' +
+            '<button data-pastemeta="' +
+            f.id +
+            '" title="Paste the previously copied Specimen ID/Species/Locality here"' +
+            (summMetaClipboard ? "" : " disabled") +
+            ' style="font-size:10px;padding:1px 6px;flex:1">📥 Paste metadata</button>' +
+            "</div>" +
+            '<div style="display:flex;align-items:center;gap:4px">' +
+            '<span style="color:var(--txt2);font-size:10px" title="' +
+            (f.fromData
+              ? "Read from the specimen_id column in this file."
+              : "Not found in the file — guessed from the file name. Edit if wrong.") +
+            '">🏷 Specimen ID' +
+            (f.fromData ? "" : " ⚠") +
+            "</span>" +
+            '<input data-indiv="' +
+            f.id +
+            '" type="text" value="' +
+            f.specimenId.replace(/"/g, "&quot;") +
+            '" style="flex:1;font-size:11px;padding:1px 4px" />' +
+            "</div>" +
+            '<div style="display:flex;align-items:center;gap:4px">' +
+            '<span style="color:var(--txt2);font-size:10px;width:56px">Species</span>' +
+            '<input data-species="' +
+            f.id +
+            '" type="text" value="' +
+            (f.species || "").replace(/"/g, "&quot;") +
+            '" style="flex:1;font-size:11px;padding:1px 4px" />' +
+            "</div>" +
+            '<div style="display:flex;align-items:center;gap:4px">' +
+            '<span style="color:var(--txt2);font-size:10px;width:56px">Country</span>' +
+            '<input data-country="' +
+            f.id +
+            '" type="text" value="' +
+            (f.country || "").replace(/"/g, "&quot;") +
+            '" style="flex:1;font-size:11px;padding:1px 4px" />' +
+            "</div>" +
+            '<div style="display:flex;align-items:center;gap:4px">' +
+            '<span style="color:var(--txt2);font-size:10px;width:56px">Locality</span>' +
+            '<input data-locality="' +
+            f.id +
+            '" type="text" value="' +
+            (f.locality || "").replace(/"/g, "&quot;") +
+            '" style="flex:1;font-size:11px;padding:1px 4px" />' +
+            "</div>" +
+            '<div style="color:var(--txt2);font-size:10px">' +
+            (kinds || "no recognizable tables") +
+            "</div>";
+          wrap.appendChild(row);
+        });
+        wrap.querySelectorAll("[data-remove]").forEach((b) => {
+          b.onclick = () => {
+            const id = +b.dataset.remove;
+            summFilesData = summFilesData.filter((f) => f.id !== id);
+            summRenderFileList();
+          };
+        });
+        wrap.querySelectorAll("[data-copymeta]").forEach((b) => {
+          b.onclick = () => {
+            const id = +b.dataset.copymeta;
+            const f = summFilesData.find((x) => x.id === id);
+            if (!f) return;
+            summMetaClipboard = {
+              specimenId: f.specimenId,
+              species: f.species,
+              country: f.country,
+              locality: f.locality,
+            };
+            log(
+              'Copied metadata from "' + f.name + '" — paste it onto other files.',
+              "ok",
+            );
+            summRenderFileList();
+          };
+        });
+        wrap.querySelectorAll("[data-pastemeta]").forEach((b) => {
+          b.onclick = () => {
+            if (!summMetaClipboard) return;
+            const id = +b.dataset.pastemeta;
+            const f = summFilesData.find((x) => x.id === id);
+            if (!f) return;
+            f.specimenId = summMetaClipboard.specimenId;
+            f.fromData = true;
+            f.species = summMetaClipboard.species;
+            f.country = summMetaClipboard.country;
+            f.locality = summMetaClipboard.locality;
+            summRenderFileList();
+          };
+        });
+        wrap.querySelectorAll("[data-indiv]").forEach((inp) => {
+          inp.oninput = () => {
+            const id = +inp.dataset.indiv;
+            const f = summFilesData.find((x) => x.id === id);
+            if (f) {
+              // Manual edit is authoritative from here on — stop flagging it
+              // as a filename guess even if the box is cleared back to blank.
+              f.specimenId = inp.value.trim() || f.recordingKey;
+              f.fromData = true;
+            }
+          };
+        });
+        wrap.querySelectorAll("[data-species]").forEach((inp) => {
+          inp.oninput = () => {
+            const id = +inp.dataset.species;
+            const f = summFilesData.find((x) => x.id === id);
+            if (f) f.species = inp.value.trim();
+          };
+        });
+        wrap.querySelectorAll("[data-country]").forEach((inp) => {
+          inp.oninput = () => {
+            const id = +inp.dataset.country;
+            const f = summFilesData.find((x) => x.id === id);
+            if (f) f.country = inp.value.trim();
+          };
+        });
+        wrap.querySelectorAll("[data-locality]").forEach((inp) => {
+          inp.oninput = () => {
+            const id = +inp.dataset.locality;
+            const f = summFilesData.find((x) => x.id === id);
+            if (f) f.locality = inp.value.trim();
+          };
+        });
+        $("btnSummClear").disabled = false;
+        $("btnSummRun").disabled = false;
+      }
+
+      function summClearFiles() {
+        summFilesData = [];
+        summRenderFileList();
+        summResetResults();
+      }
+
+      function summResetResults() {
+        summMerged = null;
+        summStatsRows = null;
+        $("summCards").innerHTML =
+          '<div style="color:var(--txt2);font-size:11px">Add files and click Merge &amp; Summarize to see pooled counts and per-metric mean ± SD here.</div>';
+        $("summTableHead").innerHTML = "";
+        $("summTableBody").innerHTML = "";
+        $("summReportText").value = "";
+        $("summStatus").textContent = "";
+        $("btnSummSaveXlsx").disabled = true;
+        $("btnSummSaveReport").disabled = true;
+      }
+
+      function summRun() {
+        if (!summFilesData.length) {
+          log("Add at least one Excel file first.", "warn");
+          return;
+        }
+        // Several files (Temporal Analysis, Spectral Analysis exported per
+        // selection set, etc.) commonly cover the SAME recording — count
+        // distinct recording keys, not files, or re-importing Trains and
+        // Motifs spectral exports for one audio file would look like 2+
+        // recordings.
+        const nRecordings = new Set(
+          summFilesData.map((f) => f.recordingKey),
+        ).size;
+        // A row's own tag value (specimen_id/species/locality, tagged at
+        // export time) wins; only fall back to this file's editable field
+        // when the column is missing or blank — the "fill it in here" path.
+        const TAG_FIELDS = [
+          ["specimen_id", "specimenId"],
+          ["species", "species"],
+          ["country", "country"],
+          ["locality", "locality"],
+        ];
+        const merged = { peaks: [], trains: [], motifs: [], motseq: [], spectral: [] };
+        summFilesData.forEach((f) => {
+          SUMM_CATS.forEach((cat) => {
+            const rows = f.sheets[cat];
+            if (!rows || !rows.length) return;
+            rows.forEach((r) => {
+              const rest = Object.assign({}, r);
+              const tags = {};
+              TAG_FIELDS.forEach(([col, fileField]) => {
+                const rowKey = Object.keys(rest).find(
+                  (k) => k.toLowerCase() === col,
+                );
+                const rowVal = rowKey ? String(rest[rowKey] ?? "").trim() : "";
+                if (rowKey) delete rest[rowKey];
+                tags[col] = rowVal || f[fileField] || "";
+              });
+              merged[cat].push(
+                Object.assign(
+                  {
+                    specimen_id: tags.specimen_id,
+                    species: tags.species,
+                    country: tags.country,
+                    locality: tags.locality,
+                    // The WORKBOOK this row was read from. Distinct from
+                    // source_file, which the exports now carry and which names
+                    // the AUDIO. Keeping them apart matters because `rest` is
+                    // merged over these defaults: a row from a newer export
+                    // would otherwise overwrite this with its audio filename,
+                    // and one column would mean the workbook for old files and
+                    // the recording for new ones.
+                    source_workbook: f.name,
+                  },
+                  rest,
+                ),
+              );
+            });
+          });
+        });
+        summMerged = merged;
+
+        // Individuals are counted from the actual per-row specimen_id
+        // (post fallback above), not guessed from file names — this is
+        // what makes the count correct even when several files share one
+        // specimen, or a Specimen ID was corrected in the file list.
+        const individuals = [
+          ...new Set(
+            SUMM_CATS.flatMap((cat) => merged[cat].map((r) => r.specimen_id)).filter(
+              (v) => v,
+            ),
+          ),
+        ];
+        const stats = [];
+        SUMM_CATS.forEach((cat) => {
+          const rows = merged[cat];
+          if (!rows.length) return;
+          const keys = new Set();
+          rows.forEach((r) =>
+            Object.keys(r).forEach((k) => {
+              if (!_summIsCategoricalKey(k)) keys.add(k);
+            }),
+          );
+          const groups =
+            individuals.length > 1 ? ["ALL", ...individuals] : ["ALL"];
+          groups.forEach((grp) => {
+            const subset =
+              grp === "ALL"
+                ? rows
+                : rows.filter((r) => r.specimen_id === grp);
+            if (!subset.length) return;
+            keys.forEach((k) => {
+              const vals = subset
+                .map((r) => r[k])
+                .filter((v) => typeof v === "number" && isFinite(v));
+              if (!vals.length) return;
+              const n = vals.length;
+              const mean = vals.reduce((s, v) => s + v, 0) / n;
+              const sd =
+                n > 1
+                  ? Math.sqrt(
+                      vals.reduce((s, v) => s + (v - mean) ** 2, 0) / n,
+                    )
+                  : 0;
+              stats.push({
+                category: SUMM_LABEL[cat],
+                specimen_id: grp,
+                metric: k,
+                n,
+                mean: round4(mean),
+                sd: round4(sd),
+                min: round4(Math.min(...vals)),
+                max: round4(Math.max(...vals)),
+              });
+            });
+          });
+        });
+        summStatsRows = stats;
+
+        summRenderCards(merged, individuals, nRecordings);
+        summRenderTable(stats);
+        const paragraphs = summBuildReportParagraphs(merged, individuals, nRecordings);
+        $("summReportText").value = paragraphs.join("\n\n");
+
+        $("btnSummSaveXlsx").disabled = false;
+        $("btnSummSaveReport").disabled = false;
+        $("summStatus").textContent =
+          summFilesData.length +
+          " file(s) → " +
+          nRecordings +
+          " recording(s), " +
+          merged.peaks.length +
+          " peaks, " +
+          merged.trains.length +
+          " trains, " +
+          merged.motifs.length +
+          " motifs merged.";
+        log(
+          "Summarize: merged " + summFilesData.length + " file(s).",
+          "ok",
+        );
+      }
+
+      function summRenderCards(merged, individuals, nRecordings) {
+        const speciesN = new Set(
+          SUMM_CATS.flatMap((cat) => merged[cat].map((r) => r.species)).filter(
+            (v) => v,
+          ),
+        ).size;
+        const localityN = new Set(
+          SUMM_CATS.flatMap((cat) => merged[cat].map((r) => r.locality)).filter(
+            (v) => v,
+          ),
+        ).size;
+        const cards = [
+          { lbl: "Recordings", v: nRecordings },
+          { lbl: "Individuals", v: individuals.length },
+          { lbl: "Peaks", v: merged.peaks.length },
+          { lbl: "Trains", v: merged.trains.length },
+          { lbl: "Motifs", v: merged.motifs.length },
+        ];
+        if (speciesN) cards.push({ lbl: "Species", v: speciesN });
+        if (localityN) cards.push({ lbl: "Localities", v: localityN });
+        if (merged.motseq.length)
+          cards.push({ lbl: "Motif Seqs", v: merged.motseq.length });
+        if (merged.spectral.length)
+          cards.push({ lbl: "Spectral rows", v: merged.spectral.length });
+        const pooledMean = (cat, key, digits) => {
+          const row = summStatsRows.find(
+            (s) =>
+              s.category === SUMM_LABEL[cat] &&
+              s.specimen_id === "ALL" &&
+              s.metric === key,
+          );
+          return row ? row.mean.toFixed(digits) + " ± " + row.sd.toFixed(digits) : null;
+        };
+        const rate = pooledMean("trains", "peak_rate_pps", 2);
+        if (rate) cards.push({ lbl: "Peak rate (peaks/s)", v: rate });
+        const pf = pooledMean("spectral", "peak_freq_khz", 3);
+        if (pf) cards.push({ lbl: "Peak freq (kHz)", v: pf });
+        const bw = pooledMean("spectral", "bw_20db_khz", 3);
+        if (bw) cards.push({ lbl: "BW -20dB (kHz)", v: bw });
+
+        const el = $("summCards");
+        el.innerHTML = "";
+        el.style.cssText =
+          "display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:4px";
+        cards.forEach((c) => {
+          const d = document.createElement("div");
+          d.className = "scard";
+          d.innerHTML =
+            '<div class="sv">' + c.v + '</div><div class="sl">' + c.lbl + "</div>";
+          el.appendChild(d);
+        });
+      }
+
+      function summRenderTable(stats) {
+        const head = $("summTableHead");
+        const body = $("summTableBody");
+        const cols = ["category", "specimen_id", "metric", "n", "mean", "sd", "min", "max"];
+        const labels = {
+          category: "Category",
+          specimen_id: "Specimen ID",
+          metric: "Metric",
+          n: "N",
+          mean: "Mean",
+          sd: "SD",
+          min: "Min",
+          max: "Max",
+        };
+        head.innerHTML = "";
+        cols.forEach((c) => {
+          const th = document.createElement("th");
+          th.textContent = labels[c];
+          head.appendChild(th);
+        });
+        body.innerHTML = "";
+        if (!stats || !stats.length) return;
+        stats.forEach((row) => {
+          const tr = document.createElement("tr");
+          cols.forEach((c) => {
+            const td = document.createElement("td");
+            td.textContent =
+              row[c] !== null && row[c] !== undefined ? row[c] : "—";
+            tr.appendChild(td);
+          });
+          body.appendChild(tr);
+        });
+      }
+
+      // Cross-recording narrative — pooled headline stats first, then a
+      // one-liner per individual (only if more than one is present).
+      function summBuildReportParagraphs(merged, individuals, nRecordings) {
+        const paras = [];
+        const nInd = individuals.length;
+        paras.push(
+          "This summary pools " +
+            nRecordings +
+            " recording" +
+            (nRecordings === 1 ? "" : "s") +
+            (nInd > 1 ? " from " + nInd + " individuals" : "") +
+            ", totaling " +
+            merged.peaks.length +
+            " peaks across " +
+            merged.trains.length +
+            " trains and " +
+            merged.motifs.length +
+            " motifs.",
+        );
+
+        const statFor = (cat, key) =>
+          summStatsRows.find(
+            (s) =>
+              s.category === SUMM_LABEL[cat] &&
+              s.specimen_id === "ALL" &&
+              s.metric === key,
+          );
+        const pm = (s, d) =>
+          s ? s.mean.toFixed(d) + " ± " + s.sd.toFixed(d) : null;
+
+        const rate = statFor("trains", "peak_rate_pps");
+        const meanAmp = statFor("trains", "mean_amp");
+        const trainDur = statFor("trains", "train_dur_ms");
+        const trainGap = statFor("trains", "train_gap_ms");
+        const bits = [];
+        if (rate)
+          bits.push("a mean peak rate of " + pm(rate, 2) + " peaks/s");
+        if (trainDur)
+          bits.push("a mean train duration of " + pm(trainDur, 1) + " ms");
+        if (meanAmp)
+          bits.push("a mean amplitude of " + pm(meanAmp, 3) + " (normalized)");
+        if (trainGap)
+          bits.push("a mean gap between trains of " + pm(trainGap, 1) + " ms");
+        if (bits.length)
+          paras.push(
+            "Across all trains, recordings showed " + bits.join("; ") + ".",
+          );
+
+        if (merged.motifs.length) {
+          const mDur = statFor("motifs", "motif_dur_s");
+          const mGap = statFor("motifs", "motif_gap_s");
+          const duty = statFor("motifs", "duty_cycle_pct");
+          // Workbooks exported before the index was split carry a single
+          // "pci" column; treat it as the syllable-based one, which is what
+          // it was.
+          const pciSyl =
+            statFor("motifs", "pci_syl") || statFor("motifs", "pci");
+          const pciAgn = statFor("motifs", "pci_agn");
+          const temExc = statFor("motifs", "tem_exc_mean");
+          const dynExc = statFor("motifs", "dyn_exc_mean");
+          const mbits = [];
+          if (mDur) mbits.push("a mean duration of " + pm(mDur, 2) + " s");
+          if (mGap)
+            mbits.push(
+              "a mean gap between motifs of " + pm(mGap, 2) + " s",
+            );
+          if (duty) mbits.push("a mean duty cycle of " + pm(duty, 1) + " %");
+          if (pciSyl)
+            mbits.push(
+              "a mean syllable-based Pattern Complexity Index (PCI-syl) of " +
+                pm(pciSyl, 3),
+            );
+          if (pciAgn)
+            mbits.push(
+              "a mean behaviour-agnostic Pattern Complexity Index (PCI-agn) of " +
+                pm(pciAgn, 3),
+            );
+          if (temExc)
+            mbits.push("a mean temporal excursion of " + pm(temExc, 2));
+          if (dynExc)
+            mbits.push("a mean dynamic excursion of " + pm(dynExc, 2));
+          if (mbits.length)
+            paras.push(
+              "Across all motifs (n=" +
+                merged.motifs.length +
+                "), recordings showed " +
+                mbits.join("; ") +
+                ".",
+            );
+        }
+
+        if (merged.spectral.length) {
+          const pf = statFor("spectral", "peak_freq_khz");
+          const bw20 = statFor("spectral", "bw_20db_khz");
+          const cent = statFor("spectral", "spec_centroid_khz");
+          const sbits = [];
+          if (pf) sbits.push("a peak frequency of " + pm(pf, 3) + " kHz");
+          if (bw20)
+            sbits.push("a -20 dB bandwidth of " + pm(bw20, 3) + " kHz");
+          if (cent)
+            sbits.push("a spectral centroid of " + pm(cent, 3) + " kHz");
+          if (sbits.length)
+            paras.push(
+              "Pooled spectral measurements (n=" +
+                merged.spectral.length +
+                ") had " +
+                sbits.join("; ") +
+                ".",
+            );
+        }
+
+        if (nInd > 1) {
+          individuals.forEach((ind) => {
+            const indRows = merged.trains.filter((r) => r.specimen_id === ind);
+            if (!indRows.length) return;
+            const s = summStatsRows.find(
+              (s) =>
+                s.category === "Trains" &&
+                s.specimen_id === ind &&
+                s.metric === "peak_rate_pps",
+            );
+            if (s)
+              paras.push(
+                ind +
+                  ": " +
+                  indRows.length +
+                  " trains, mean peak rate " +
+                  s.mean.toFixed(2) +
+                  " ± " +
+                  s.sd.toFixed(2) +
+                  " peaks/s.",
+              );
+          });
+        }
+
+        return paras;
+      }
+
+      // "<species>_<locality>", all lowercase and filesystem-safe — shared by
+      // the merged workbook and the text report so both exports are tagged
+      // with what was actually pooled. Falls back to "multi_..." when the
+      // files span more than one value, or "unknown_..." when the tag was
+      // never filled in anywhere.
+      function _summFilenameStub() {
+        const speciesSet = new Set(
+          SUMM_CATS.flatMap((cat) => summMerged[cat].map((r) => r.species)).filter(
+            Boolean,
+          ),
+        );
+        const localitySet = new Set(
+          SUMM_CATS.flatMap((cat) => summMerged[cat].map((r) => r.locality)).filter(
+            Boolean,
+          ),
+        );
+        const speciesTag =
+          speciesSet.size === 1
+            ? [...speciesSet][0]
+            : speciesSet.size > 1
+              ? "multi_species"
+              : "unknown_species";
+        const localityTag =
+          localitySet.size === 1
+            ? [...localitySet][0]
+            : localitySet.size > 1
+              ? "multi_locality"
+              : "unknown_locality";
+        const safe = (s) =>
+          String(s)
+            .trim()
+            .toLowerCase()
+            .replace(/[\\/:*?"<>|]+/g, "")
+            .replace(/\s+/g, "_");
+        return safe(speciesTag) + "_" + safe(localityTag);
+      }
+
+      // YYYYMMDD_HHMM from the machine's local clock (not UTC), so the
+      // stamp matches the time the user actually saved at.
+      function _summStamp() {
+        const now = new Date();
+        const pad = (n) => String(n).padStart(2, "0");
+        return (
+          now.getFullYear() +
+          pad(now.getMonth() + 1) +
+          pad(now.getDate()) +
+          "_" +
+          pad(now.getHours()) +
+          pad(now.getMinutes())
+        );
+      }
+
+      function summSaveWorkbook() {
+        if (!summMerged) {
+          log("Run Merge & Summarize first.", "warn");
+          return;
+        }
+        const sheets = [
+          [SUMM_SHEET_NAME.peaks, summMerged.peaks],
+          [SUMM_SHEET_NAME.trains, summMerged.trains],
+          [SUMM_SHEET_NAME.motifs, summMerged.motifs],
+          [SUMM_SHEET_NAME.motseq, summMerged.motseq],
+          [SUMM_SHEET_NAME.spectral, summMerged.spectral],
+          ["Summary", summStatsRows || []],
+        ].filter(([, data]) => data && data.length);
+        if (!sheets.length) {
+          log("Nothing to save.", "warn");
+          return;
+        }
+        try {
+          const bytes = _buildXlsx(sheets);
+          const filename =
+            _summFilenameStub() + "_rthoptera_summary_" + _summStamp() + ".xlsx";
+          dlFile(
+            filename,
+            bytes,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          );
+          log("Saved merged workbook with " + sheets.length + " sheets.", "ok");
+        } catch (e) {
+          log("Merged workbook export failed: " + e.message, "err");
+        }
+      }
+
+      function summSaveReport() {
+        const text = ($("summReportText").value || "").trim();
+        if (!text) {
+          log("Run Merge & Summarize first.", "warn");
+          return;
+        }
+        const paragraphs = text.split(/\n\s*\n/).filter((p) => p.trim());
+        try {
+          const bytes = _buildDocx("Cross-Recording Summary Report", paragraphs);
+          const filename =
+            _summFilenameStub() +
+            "_rthoptera_summary_report_" +
+            _summStamp() +
+            ".docx";
+          dlFile(
+            filename,
+            bytes,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          );
+          log("Saved summary report.", "ok");
+        } catch (e) {
+          log("Report export failed: " + e.message, "err");
+        }
+      }

@@ -100,43 +100,35 @@
     ozDraw();
   }
 
-  async function ozOpenFile(fileList) {
-    const file = fileList && fileList[0];
-    if (!file) return;
-    try {
-      const ab = await file.arrayBuffer();
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const decoded = await ctx.decodeAudioData(ab.slice(0));
-      ctx.close();
-      const len = decoded.length;
-      const nch = decoded.numberOfChannels;
-      const mono = new Float32Array(len);
-      for (let c = 0; c < nch; c++) {
-        const ch = decoded.getChannelData(c);
-        for (let i = 0; i < len; i++) mono[i] += ch[i] / nch;
-      }
-      ozSetWave(mono, decoded.sampleRate, file.name.replace(/\.[^/.]+$/, ""));
-    } catch (err) {
-      alert(`Could not decode "${file.name}": ${err.message || err}`);
-    } finally {
-      $("ozFile").value = "";
-    }
-  }
+  // ── Loaded Audio picker ─────────────────────────────────────────
+  // Audio is decoded exactly once, by main.js's shared importer, into the
+  // global `audioLibrary`. This pane offers a single-select list of it —
+  // zoom only ever works on one wave at a time.
+  let ozLibSelectedId = null;
 
-  // Reuses the audio already decoded in the main Spectral Analysis view
-  // (globals `rawSamples`/`sampleRate`/`currentAudioFileName` from main.js),
-  // so users don't have to import the same file twice.
-  function ozUseLoadedAudio() {
-    if (typeof rawSamples === "undefined" || !rawSamples || !rawSamples.length) {
-      alert("No audio is loaded in Spectral Analysis yet.");
+  function ozRenderLibPicker() {
+    const el = $("ozLibPicker");
+    if (!el) return;
+    const lib = typeof audioLibrary !== "undefined" ? audioLibrary : [];
+    el.innerHTML = "";
+    if (!lib.length) {
+      el.innerHTML = '<div style="color: var(--txt2); font-size: 11px">No audio loaded yet.</div>';
       return;
     }
-    const label =
-      (typeof currentAudioFileName !== "undefined" && currentAudioFileName
-        ? currentAudioFileName
-        : "loaded_audio"
-      ).replace(/\.[^/.]+$/, "");
-    ozSetWave(Float32Array.from(rawSamples), sampleRate, label);
+    lib.forEach((entry) => {
+      const row = document.createElement("div");
+      row.style.cssText =
+        "padding:2px 4px;border-radius:3px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" +
+        (entry.id === ozLibSelectedId ? ";background:var(--accent,#2d6cdf);color:#fff" : "");
+      row.title = `${entry.name} — ${entry.dur.toFixed(3)}s @ ${entry.rate}Hz`;
+      row.textContent = entry.name;
+      row.onclick = () => {
+        ozLibSelectedId = entry.id;
+        ozSetWave(Float32Array.from(entry.samples), entry.rate, entry.name.replace(/\.[^/.]+$/, ""));
+        ozRenderLibPicker();
+      };
+      el.appendChild(row);
+    });
   }
 
   function ozResetZoom() {
@@ -1053,8 +1045,7 @@
   }
 
   // Expose to inline onclick/oninput handlers in index.html
-  window.ozOpenFile = ozOpenFile;
-  window.ozUseLoadedAudio = ozUseLoadedAudio;
+  window.ozRenderLibPicker = ozRenderLibPicker;
   window.ozResetZoom = ozResetZoom;
   window.ozDraw = ozDraw;
   window.ozExportSvg = ozExportSvg;
