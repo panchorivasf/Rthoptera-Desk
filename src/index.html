@@ -4,8 +4,6 @@
     <meta charset="UTF-8" />
     <title>Rthoptera Desk</title>
     <link rel="stylesheet" href="styles.css" />
-    <script src="assets/chart.min.js"></script>
-    <script src="assets/tensorflow.min.js"></script>
   </head>
 
   <body
@@ -30,48 +28,100 @@
         flex-wrap: wrap;
       "
     >
-      <span style="font-size: 13px; font-weight: 700; color: var(--txt3)"
-        >⟨ Rthoptera Desk ⟩</span
+      <span
+        onclick="goHome()"
+        title="Back to the home tab"
+        style="font-size: 13px; font-weight: 700; color: var(--txt3); cursor: pointer"
+        >Rthoptera Desk</span
       >
+      <span
+        id="appVersion"
+        style="
+          color: var(--txt2);
+          font-size: 10px;
+          letter-spacing: 0.3px;
+          margin-left: -3px;
+        "
+      ></span>
       <div class="sep"></div>
-      <button onclick="document.getElementById('audioFile').click()">
+      <button onclick="pickAudioFiles()">
         📂 Audio
       </button>
       <input
         type="file"
         id="audioFile"
         accept=".wav,.mp3,.flac,.ogg,.aiff,.aif"
-        style="display: none"
-      />
-      <button
-        onclick="document.getElementById('SelectionsFile').click()"
-        id="btnRaven"
-        disabled
-      >
-        📋 Import Selections
-      </button>
-      <input
-        type="file"
-        id="SelectionsFile"
-        accept=".txt,.csv"
-        style="display: none"
-      />
-      <button
-        onclick="document.getElementById('xlsxSelFile').click()"
-        id="btnXlsxSel"
-        disabled
-        title="Import the Train or Motif table from a Temporal Analysis Excel export as selections."
-      >
-        📊 Add Excel Selection Table
-      </button>
-      <input
-        type="file"
-        id="xlsxSelFile"
-        accept=".xlsx"
+        multiple
         style="display: none"
       />
       <div class="sep"></div>
       <span id="fileLabel" class="tag">no file</span>
+      <!-- Hidden until audio is loaded (see selectLibraryAudio) — meaningless
+           with nothing loaded to tag, and clutters the toolbar on the
+           landing view. -->
+      <div id="recordingMetaGroup" style="display: none; align-items: center; gap: 7px">
+        <span style="color: var(--txt2); font-size: 11px; margin-left: 4px" title="Tagged per loaded recording — carried into every exported table (Peaks/Trains/Motifs/Spectral) as its first column, and used by Summarize to count individuals correctly.">🏷 Specimen ID</span>
+        <input
+          type="text"
+          id="specimenIdInput"
+          placeholder="e.g. MALE_01"
+          oninput="setCurrentSpecimenId(this.value)"
+          style="width: 110px; font-size: 11px"
+        />
+        <span style="color: var(--txt2); font-size: 11px" title="Tagged per loaded recording — carried into every exported table as a column.">Species</span>
+        <input
+          type="text"
+          id="speciesInput"
+          placeholder="e.g. Gryllus sp."
+          oninput="setCurrentSpecies(this.value)"
+          style="width: 110px; font-size: 11px"
+        />
+        <span style="color: var(--txt2); font-size: 11px" title="Tagged per loaded recording — carried into every exported table as a column, and saved into the specimen metadata .json alongside Species and Locality.">Country</span>
+        <input
+          type="text"
+          id="countryInput"
+          placeholder="e.g. Chile"
+          oninput="setCurrentCountry(this.value)"
+          style="width: 100px; font-size: 11px"
+        />
+        <span style="color: var(--txt2); font-size: 11px" title="Tagged per loaded recording — carried into every exported table as a column.">Locality</span>
+        <input
+          type="text"
+          id="localityInput"
+          placeholder="e.g. Iguazú, AR"
+          oninput="setCurrentLocality(this.value)"
+          style="width: 120px; font-size: 11px"
+        />
+        <span style="color: var(--txt2); font-size: 11px" title="Air temperature at the time of recording, in °C. Tagged per loaded recording — carried into every exported table as the temp_c column. Stridulation rate is strongly temperature-dependent, so this is needed to compare recordings. Free text, so 22.5 or ~23 are both fine.">Temp °C</span>
+        <input
+          type="text"
+          id="tempCInput"
+          placeholder="e.g. 22.5"
+          oninput="setCurrentTempC(this.value)"
+          style="width: 62px; font-size: 11px"
+        />
+        <button
+          onclick="saveRecordingMetadata()"
+          title="Save Specimen ID/Species/Locality to a .json file, so it can be reloaded for other recordings of the same specimen."
+          style="font-size: 11px; padding: 2px 7px"
+        >
+          💾 Save Metadata
+        </button>
+        <button
+          onclick="document.getElementById('metaFile').click()"
+          title="Load Specimen ID/Species/Locality from a previously saved .json file."
+          style="font-size: 11px; padding: 2px 7px"
+        >
+          📂 Load Metadata
+        </button>
+        <input
+          type="file"
+          id="metaFile"
+          accept=".json"
+          style="display: none"
+          onchange="loadRecordingMetadata(this.files[0]); this.value = '';"
+        />
+      </div>
       <div style="flex: 1"></div>
       <span
         id="cursorInfo"
@@ -99,206 +149,11 @@
           border-right: 1px solid var(--border);
           padding: 8px;
           overflow-y: auto;
-          display: flex;
+          display: none;
           flex-direction: column;
           gap: 8px;
         "
       >
-        <div class="panel">
-          <h2>Audio Info</h2>
-          <div
-            style="
-              font-size: 12px;
-              display: flex;
-              flex-direction: column;
-              gap: 2px;
-            "
-          >
-            <div class="row">
-              <span style="color: var(--txt2); width: 68px">Duration</span
-              ><span id="infoDur">—</span>
-            </div>
-            <div class="row">
-              <span style="color: var(--txt2); width: 68px">Sample rate</span
-              ><span id="infoSr">—</span>
-            </div>
-            <div class="row">
-              <span style="color: var(--txt2); width: 68px">Nyquist</span
-              ><span id="infoNyq" style="color: var(--txt3)">—</span>
-            </div>
-            <div class="row">
-              <span style="color: var(--txt2); width: 68px">Channels</span
-              ><span id="infoCh">—</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="panel">
-          <h2>Edit Audio</h2>
-          <div style="display: flex; flex-direction: column; gap: 6px">
-            <div style="font-size: 10px; color: var(--txt2); line-height: 1.3">
-              Edits apply to the imported audio for both Temporal and Spectral
-              analysis.
-            </div>
-
-            <!-- Trim -->
-            <div style="border-top: 1px solid var(--border); padding-top: 5px">
-              <div
-                style="
-                  font-size: 11px;
-                  font-weight: 600;
-                  color: var(--txt3);
-                  margin-bottom: 3px;
-                "
-              >
-                Trim
-              </div>
-              <div class="row" style="gap: 4px">
-                <button
-                  id="btnEnterTrim"
-                  onclick="enterTrimMode()"
-                  disabled
-                  style="font-size: 11px; flex: 1"
-                  title="Drag two handles on the waveform/spectrogram to choose the region to keep, then confirm."
-                >
-                  ✂ Trim…
-                </button>
-                <button
-                  id="btnClearTrim"
-                  onclick="clearTrim()"
-                  disabled
-                  style="font-size: 11px"
-                  title="Restore the full duration."
-                >
-                  Reset
-                </button>
-              </div>
-              <div id="trimControls" style="display: none; margin-top: 4px">
-                <div
-                  id="trimReadout"
-                  style="
-                    font-size: 10px;
-                    color: var(--accent, #ffa657);
-                    margin-bottom: 4px;
-                  "
-                ></div>
-                <div class="row" style="gap: 4px">
-                  <button
-                    id="btnConfirmTrim"
-                    onclick="confirmTrim()"
-                    style="font-size: 11px; flex: 1"
-                  >
-                    ✓ Confirm Trim
-                  </button>
-                  <button
-                    id="btnCancelTrim"
-                    onclick="cancelTrim()"
-                    style="font-size: 11px"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <!-- Bandpass -->
-            <div style="border-top: 1px solid var(--border); padding-top: 5px">
-              <div
-                style="
-                  font-size: 11px;
-                  font-weight: 600;
-                  color: var(--txt3);
-                  margin-bottom: 3px;
-                "
-              >
-                Bandpass filter
-              </div>
-              <div class="row" style="gap: 4px">
-                <span style="color: var(--txt2); font-size: 11px; width: 56px"
-                  >High-pass</span
-                >
-                <input
-                  type="number"
-                  id="editHp"
-                  value="0"
-                  min="0"
-                  step="100"
-                  disabled
-                  style="width: 64px"
-                  title="High-pass cutoff in Hz (removes content below). 0 = off."
-                />
-                <span style="color: var(--txt2); font-size: 11px">Hz</span>
-              </div>
-              <div class="row" style="gap: 4px; margin-top: 3px">
-                <span style="color: var(--txt2); font-size: 11px; width: 56px"
-                  >Low-pass</span
-                >
-                <input
-                  type="number"
-                  id="editLp"
-                  value="0"
-                  min="0"
-                  step="100"
-                  disabled
-                  style="width: 64px"
-                  title="Low-pass cutoff in Hz (removes content above). Defaults to the Nyquist frequency."
-                />
-                <span style="color: var(--txt2); font-size: 11px">Hz</span>
-              </div>
-              <div class="row" style="gap: 4px; margin-top: 4px">
-                <button
-                  id="btnApplyBandpass"
-                  onclick="applyBandpassEdit()"
-                  disabled
-                  style="font-size: 11px; flex: 1"
-                >
-                  ⌁ Filter
-                </button>
-                <button
-                  id="btnClearBandpass"
-                  onclick="clearBandpass()"
-                  disabled
-                  style="font-size: 11px"
-                  title="Remove the bandpass filter."
-                >
-                  Reset
-                </button>
-              </div>
-            </div>
-
-            <div
-              id="editStatus"
-              style="
-                font-size: 10px;
-                color: var(--txt3);
-                line-height: 1.3;
-                border-top: 1px solid var(--border);
-                padding-top: 5px;
-              "
-            >
-              Load audio to enable editing.
-            </div>
-            <button
-              id="btnUndoEdit"
-              onclick="undoLastAudioEdit()"
-              disabled
-              style="font-size: 11px"
-              title="Nothing to undo."
-            >
-              ↶ Undo Edit
-            </button>
-            <button
-              id="btnSaveEditedAudio"
-              onclick="openSaveEditedAudioModal()"
-              disabled
-              style="font-size: 11px"
-              title="Save the current (edited) audio as a new entry in the Loaded Audio panel, without touching the original file."
-            >
-              💾 Save Edited Audio As…
-            </button>
-          </div>
-        </div>
-
         <div class="panel">
           <h2>Time Axis</h2>
           <div style="display: flex; flex-direction: column; gap: 5px">
@@ -622,11 +477,11 @@
         >
           <div
             class="tab active"
-            id="maintab-analyzer"
-            onclick="switchMainTab('analyzer', this)"
+            id="maintab-preprocess"
+            onclick="switchMainTab('preprocess', this)"
             style="font-size: 12px; padding: 4px 14px"
           >
-            Spectral Analysis
+            Preprocessing
           </div>
           <div
             class="tab"
@@ -638,49 +493,485 @@
           </div>
           <div
             class="tab"
-            id="maintab-plot"
-            onclick="switchMainTab('plot', this)"
+            id="maintab-analyzer"
+            onclick="switchMainTab('analyzer', this)"
             style="font-size: 12px; padding: 4px 14px"
           >
-            Multiplot
+            Spectral Analysis
           </div>
           <div
             class="tab"
-            id="maintab-oscstack"
-            onclick="switchMainTab('oscstack', this)"
+            id="maintab-plotting"
+            onclick="switchMainTab('plotting', this)"
             style="font-size: 12px; padding: 4px 14px"
           >
-            Osc. Stack
+            Plotting
           </div>
           <div
             class="tab"
-            id="maintab-osczoom"
-            onclick="switchMainTab('osczoom', this)"
+            id="maintab-summarize"
+            onclick="switchMainTab('summarize', this)"
             style="font-size: 12px; padding: 4px 14px"
           >
-            Osc. Zoom
-          </div>
-          <div
-            class="tab"
-            id="maintab-habitus"
-            onclick="switchMainTab('habitus', this)"
-            style="font-size: 12px; padding: 4px 14px"
-          >
-            Habitus
+            Summarize
           </div>
         </div>
+
+        <!-- ═══ LANDING VIEW ═══════════════════════════════════════════════════════
+             Shown before any audio is loaded; not part of the tab-switch
+             system (no maintab- button of its own). Hidden for good the
+             first time any real tab is activated (see switchMainTab). ═══ -->
+        <div
+          id="mainview-landing"
+          style="
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            overflow-y: auto;
+            gap: 20px;
+            padding: 32px 24px 40px;
+            text-align: center;
+          "
+        >
+          <img
+            src="assets/app-icon.png"
+            alt="Rthoptera"
+            style="width: 340px; height: 340px; object-fit: contain; filter: drop-shadow(0 4px 28px rgba(0,0,0,0.4))"
+          />
+          <div style="font-size: 22px; font-weight: 700; color: var(--txt3)">
+            Rthoptera Desk
+          </div>
+          <div style="font-size: 13px; color: var(--txt2); max-width: 460px; line-height: 1.5">
+            A quick guide to finding your way around — start by loading
+            audio, then work your way across the tabs.
+          </div>
+
+          <!-- ── Tab guide grid — Import spans the full first row (wide
+               card); the 5 tabs share the second row ── -->
+          <div
+            style="
+              display: grid;
+              grid-template-columns: repeat(5, minmax(190px, 1fr));
+              gap: 12px;
+              width: 100%;
+              max-width: 1300px;
+            "
+          >
+            <div class="panel" style="grid-column: 1 / -1; padding: 14px; text-align: left">
+              <div style="font-size: 13px; font-weight: 700; color: var(--txt3); margin-bottom: 4px">
+                1. Import your audio
+              </div>
+              <div style="font-size: 12px; color: var(--txt2); line-height: 1.6">
+                Use the <b>📂 Audio</b> button in the top toolbar to load one
+                or more files (<code>.wav .mp3 .flac .ogg .aiff</code>). Once
+                loaded, you can optionally bring in existing annotations with
+                <b>📋 Import Selections</b> (Raven-style text/CSV) or
+                <b>📊 Add Excel Selection Table</b> (Train/Motif tables
+                exported from Temporal Analysis). Tag the recording with a
+                <b>🏷 Specimen ID</b> (also in the toolbar) if you plan to
+                pool several recordings later in Summarize.
+              </div>
+              <button
+                onclick="pickAudioFiles()"
+                class="pri"
+                style="font-size: 12px; padding: 6px 16px; margin-top: 10px"
+              >
+                📂 Load Audio
+              </button>
+            </div>
+
+            <div class="panel" style="padding: 14px; text-align: left">
+              <div style="font-size: 13px; font-weight: 700; color: var(--txt3); margin-bottom: 4px">
+                2. Preprocessing
+              </div>
+              <div style="font-size: 12px; color: var(--txt2); line-height: 1.6">
+                Trim, filter, resample and clean up a recording before
+                analysis. Batch actions apply to whatever's checked in the
+                Loaded Audio list, and edits can be saved back out.
+              </div>
+            </div>
+
+            <div class="panel" style="padding: 14px; text-align: left">
+              <div style="font-size: 13px; font-weight: 700; color: var(--txt3); margin-bottom: 4px">
+                3. Temporal Analysis
+              </div>
+              <div style="font-size: 12px; color: var(--txt2); line-height: 1.6">
+                Detect peaks/pulses from the envelope and organize them into
+                Trains and Motifs. Results tabs (Peak / Train / Motif /
+                MotifSeq / Summary) can be exported together as one Excel
+                workbook.
+              </div>
+            </div>
+
+            <div class="panel" style="padding: 14px; text-align: left">
+              <div style="font-size: 13px; font-weight: 700; color: var(--txt3); margin-bottom: 4px">
+                4. Spectral Analysis
+              </div>
+              <div style="font-size: 12px; color: var(--txt2); line-height: 1.6">
+                Inspect the waveform and spectrogram, drag selections or send
+                detections over from Temporal Analysis, then run
+                <b>🔬 Spectral Metrics</b> to measure and export frequency
+                features.
+              </div>
+            </div>
+
+            <div class="panel" style="padding: 14px; text-align: left">
+              <div style="font-size: 13px; font-weight: 700; color: var(--txt3); margin-bottom: 4px">
+                5. Plotting
+              </div>
+              <div style="font-size: 12px; color: var(--txt2); line-height: 1.6">
+                Render publication-ready figures, with sub-tabs for
+                <b>Multiplot</b> (waveform/spectrogram combos),
+                <b>Osc. Stack</b>, <b>Osc. Zoom</b> and <b>Habitus</b> plots.
+                Presets let you save/recall your layout settings.
+              </div>
+            </div>
+
+            <div class="panel" style="padding: 14px; text-align: left">
+              <div style="font-size: 13px; font-weight: 700; color: var(--txt3); margin-bottom: 4px">
+                6. Summarize
+              </div>
+              <div style="font-size: 12px; color: var(--txt2); line-height: 1.6">
+                No audio needed here — load several Temporal/Spectral
+                Analysis .xlsx exports (one animal or several), merge them
+                into one workbook, and get pooled/per-individual stats plus
+                a draft text report.
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- /mainview-landing -->
+
+        <!-- ═══ PREPROCESSING VIEW ═════════════════════════════════════════════════ -->
+        <div
+          id="mainview-preprocess"
+          style="
+            flex: 1;
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+            min-height: 0;
+          "
+        >
+          <div style="flex: 1; display: flex; overflow: hidden; min-height: 0; width: 100%">
+            <div
+              style="
+                width: 260px;
+                flex-shrink: 0;
+                overflow-y: auto;
+                border-right: 1px solid var(--border);
+                padding: 8px;
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                background: var(--bg2);
+              "
+            >
+              <div class="panel">
+                <h2>Audio Info</h2>
+                <div
+                  style="
+                    font-size: 12px;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 2px;
+                  "
+                >
+                  <div class="row">
+                    <span style="color: var(--txt2); width: 68px">Duration</span
+                    ><span id="infoDur">—</span>
+                  </div>
+                  <div class="row">
+                    <span style="color: var(--txt2); width: 68px">Sample rate</span
+                    ><span id="infoSr">—</span>
+                  </div>
+                  <div class="row">
+                    <span style="color: var(--txt2); width: 68px">Nyquist</span
+                    ><span id="infoNyq" style="color: var(--txt3)">—</span>
+                  </div>
+                  <div class="row">
+                    <span style="color: var(--txt2); width: 68px">Channels</span
+                    ><span id="infoCh">—</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <h2>Edit Audio</h2>
+                <div style="display: flex; flex-direction: column; gap: 6px">
+                  <div style="font-size: 10px; color: var(--txt2); line-height: 1.3">
+                    Edits apply to the active recording for both Temporal and
+                    Spectral analysis. Click "Trim…" then drag the two
+                    handles on the waveform/spectrogram below to choose the
+                    region to keep.
+                  </div>
+
+                  <!-- Trim -->
+                  <div style="border-top: 1px solid var(--border); padding-top: 5px">
+                    <div
+                      style="
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: var(--txt3);
+                        margin-bottom: 3px;
+                      "
+                    >
+                      Trim
+                    </div>
+                    <div class="row" style="gap: 4px">
+                      <button
+                        id="btnEnterTrim"
+                        onclick="enterTrimMode()"
+                        disabled
+                        style="font-size: 11px; flex: 1"
+                        title="Drag two handles on the waveform/spectrogram (Spectral Analysis tab) to choose the region to keep, then confirm."
+                      >
+                        ✂ Trim…
+                      </button>
+                      <button
+                        id="btnClearTrim"
+                        onclick="clearTrim()"
+                        disabled
+                        style="font-size: 11px"
+                        title="Restore the full duration."
+                      >
+                        Reset
+                      </button>
+                    </div>
+                    <div id="trimControls" style="display: none; margin-top: 4px">
+                      <div
+                        id="trimReadout"
+                        style="
+                          font-size: 10px;
+                          color: var(--accent, #ffa657);
+                          margin-bottom: 4px;
+                        "
+                      ></div>
+                      <div style="font-size: 10px; color: var(--txt2); line-height: 1.3; margin-bottom: 4px">
+                        Drag out a region on the waveform/spectrogram below
+                        to select it, drag the middle of a selection to move
+                        it, or drag either edge to resize.
+                      </div>
+                      <div class="row" style="gap: 4px; margin-bottom: 4px">
+                        <span style="color: var(--txt2); font-size: 11px">Duration</span>
+                        <input
+                          type="number"
+                          id="trimDurationInput"
+                          min="0.001"
+                          step="0.1"
+                          style="width: 70px; font-size: 11px"
+                          title="Type a duration (s) — resizes the selection from its current start."
+                          onchange="setTrimDuration(this.value)"
+                        />
+                        <span style="color: var(--txt2); font-size: 11px">s</span>
+                      </div>
+                      <div class="row" style="gap: 4px">
+                        <button
+                          id="btnConfirmTrim"
+                          onclick="confirmTrim()"
+                          style="font-size: 11px; flex: 1"
+                        >
+                          ✓ Confirm Trim
+                        </button>
+                        <button
+                          id="btnCancelTrim"
+                          onclick="cancelTrim()"
+                          style="font-size: 11px"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      <button
+                        id="btnSaveActiveSelection"
+                        onclick="saveActiveTrimSelection()"
+                        style="font-size: 11px; width: 100%; margin-top: 4px"
+                        title="Save the current selection as its own .wav (original name + _1, _2, …) without confirming/applying the trim."
+                      >
+                        💾 Save Active Selection
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Bandpass -->
+                  <div style="border-top: 1px solid var(--border); padding-top: 5px">
+                    <div
+                      style="
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: var(--txt3);
+                        margin-bottom: 3px;
+                      "
+                    >
+                      Bandpass filter
+                    </div>
+                    <div class="row" style="gap: 4px">
+                      <span style="color: var(--txt2); font-size: 11px; width: 56px"
+                        >High-pass</span
+                      >
+                      <input
+                        type="number"
+                        id="editHp"
+                        value="0"
+                        min="0"
+                        step="100"
+                        disabled
+                        style="width: 64px"
+                        title="High-pass cutoff in Hz (removes content below). 0 = off."
+                      />
+                      <span style="color: var(--txt2); font-size: 11px">Hz</span>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 3px">
+                      <span style="color: var(--txt2); font-size: 11px; width: 56px"
+                        >Low-pass</span
+                      >
+                      <input
+                        type="number"
+                        id="editLp"
+                        value="0"
+                        min="0"
+                        step="100"
+                        disabled
+                        style="width: 64px"
+                        title="Low-pass cutoff in Hz (removes content above). Defaults to the Nyquist frequency."
+                      />
+                      <span style="color: var(--txt2); font-size: 11px">Hz</span>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <button
+                        id="btnApplyBandpass"
+                        onclick="applyBandpassEdit()"
+                        disabled
+                        style="font-size: 11px; flex: 1"
+                      >
+                        ⌁ Filter
+                      </button>
+                      <button
+                        id="btnClearBandpass"
+                        onclick="clearBandpass()"
+                        disabled
+                        style="font-size: 11px"
+                        title="Remove the bandpass filter."
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+
+                  <div
+                    id="editStatus"
+                    style="
+                      font-size: 10px;
+                      color: var(--txt3);
+                      line-height: 1.3;
+                      border-top: 1px solid var(--border);
+                      padding-top: 5px;
+                    "
+                  >
+                    Load audio to enable editing.
+                  </div>
+                  <button
+                    id="btnUndoEdit"
+                    onclick="undoLastAudioEdit()"
+                    disabled
+                    style="font-size: 11px"
+                    title="Nothing to undo."
+                  >
+                    ↶ Undo Edit
+                  </button>
+                  <button
+                    id="btnSaveEditedAudio"
+                    onclick="openSaveEditedAudioModal()"
+                    disabled
+                    style="font-size: 11px"
+                    title="Save the current (edited) audio as a new entry in the Loaded Audio panel, without touching the original file."
+                  >
+                    💾 Save Edited Audio As…
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Batch preprocessing: acts on whatever's checked in the
+                 Loaded Audio panel at the bottom of the window. -->
+            <div style="flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; min-height: 0">
+              <!-- The shared waveform/spectrogram viewer (see analyzerViewerSlot
+                   in the Spectral Analysis view) gets moved in here by
+                   switchMainTab whenever this tab is active, so filters/
+                   normalization/trim can be previewed without leaving
+                   Preprocessing. Empty + collapsed until then. -->
+              <div id="preprocessViewerSlot" style="flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--border); border-radius: var(--rad); overflow: hidden"></div>
+              <div class="panel">
+                <h2>Batch Edit</h2>
+                <div style="display: flex; flex-direction: column; gap: 8px; font-size: 11px; color: var(--txt2); line-height: 1.4">
+                  Check the recordings to edit in the Loaded Audio panel at
+                  the bottom of the window, then apply here. These act on
+                  the checked entries directly and in place (irreversible —
+                  re-import to undo); separate from the single-file edit
+                  chain on the left, which only ever touches the active
+                  recording.
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px">
+                  <span style="font-size: 10px; color: var(--txt2)">Batch:</span>
+                  <button onclick="batchSelectAllLibrary(true)" style="font-size: 10px; padding: 2px 6px">All</button>
+                  <button onclick="batchSelectAllLibrary(false)" style="font-size: 10px; padding: 2px 6px">None</button>
+                  <span id="batchSelCount" style="font-size: 10px; color: var(--txt3)"></span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px">
+                  <span style="color: var(--txt2); font-size: 10px">HP</span>
+                  <input type="number" id="batchHp" value="0" min="0" step="100" style="width: 56px; font-size: 10px" title="High-pass cutoff in Hz. 0 = off." />
+                  <span style="color: var(--txt2); font-size: 10px">LP</span>
+                  <input type="number" id="batchLp" value="0" min="0" step="100" style="width: 56px; font-size: 10px" title="Low-pass cutoff in Hz. 0 = Nyquist (off)." />
+                  <button onclick="applyBatchBandpass()" id="btnBatchBandpass" class="pri" style="font-size: 10px; padding: 2px 8px" disabled>
+                    ⌁ Filter selected
+                  </button>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px">
+                  <span style="color: var(--txt2); font-size: 10px">Target</span>
+                  <input type="number" id="batchNormDb" value="0" max="0" step="0.5" style="width: 56px; font-size: 10px" title="Target peak level in dBFS (0 = full scale)." />
+                  <span style="color: var(--txt2); font-size: 10px">dBFS</span>
+                  <button onclick="applyBatchNormalize()" id="btnBatchNormalize" class="pri" style="font-size: 10px; padding: 2px 8px" disabled>
+                    📶 Normalize selected
+                  </button>
+                </div>
+                <div style="margin-top: 8px">
+                  <button onclick="saveSelectedLibraryFiles()" id="btnBatchSave" style="font-size: 11px" disabled>
+                    💾 Save edited files…
+                  </button>
+                </div>
+                <div style="font-size: 10px; color: var(--txt2); line-height: 1.3; margin-top: 8px">
+                  "Save edited files" writes each checked entry to a folder
+                  you pick (defaults to wherever the last import came from)
+                  as &lt;original name&gt;_&lt;edit suffix&gt;.wav — e.g. a
+                  1kHz high-pass + normalize becomes
+                  "call_1hpf_n0.wav".
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- /mainview-preprocess -->
 
         <!-- ═══ ANALYZER VIEW ══════════════════════════════════════════════════════ -->
         <div
           id="mainview-analyzer"
           style="
             flex: 1;
-            display: flex;
+            display: none;
             flex-direction: column;
             overflow: hidden;
             min-height: 0;
           "
         >
+          <!-- ═══ SHARED WAVEFORM/SPECTROGRAM VIEWER ════════════════════════════════
+               This whole block (waveform, spectrogram, minimap, transport)
+               is a single DOM subtree that gets physically reparented
+               between here and #preprocessViewerSlot (Preprocessing) by
+               switchMainTab — so Preprocessing can show/trim/preview a
+               recording without duplicating any canvas/IDs/render logic.
+               #analyzerViewerSlot is its permanent "home" anchor. ═══ -->
+          <div id="analyzerViewerSlot" style="display: flex; flex-direction: column; min-height: 0; flex-shrink: 0">
+          <div id="waveSpecViewer" style="display: flex; flex-direction: column; min-height: 0">
           <!-- ═══ WAVEFORM PANEL ═══════════════════════════════════════════════════ -->
           <div
             id="wavePanel"
@@ -911,89 +1202,147 @@
               "
               >0.000 s</span
             >
-            <div class="sep"></div>
-            <span style="color: var(--txt2); font-size: 11px">Floor %:</span>
+            <!-- Detection/annotation/tool controls — only meaningful in
+                 Spectral Analysis; hidden (display:none) whenever the
+                 shared viewer is parked in Preprocessing. display:contents
+                 keeps these as direct flex items of the transport bar. -->
+            <div id="analyzerOnlyControls" style="display: contents">
+              <div class="sep"></div>
+              <span style="color: var(--txt2); font-size: 11px">Floor %:</span>
+              <input
+                type="number"
+                id="threshPct2"
+                value="5"
+                min="0.1"
+                max="50"
+                step="0.1"
+                style="width: 50px"
+                oninput="syncThresh(this.value)"
+              />
+              <span style="color: var(--txt2); font-size: 11px"
+                >Min dur (ms):</span
+              >
+              <input
+                type="number"
+                id="minDurMs"
+                value="5"
+                min="0.5"
+                max="2000"
+                step="0.5"
+                style="width: 52px"
+              />
+              <span style="color: var(--txt2); font-size: 11px"
+                >Min gap (ms):</span
+              >
+              <input
+                type="number"
+                id="minGapMs"
+                value="5"
+                min="0"
+                max="2000"
+                step="0.5"
+                style="width: 52px"
+              />
+              <span style="color: var(--txt2); font-size: 11px">ML thresh:</span>
+              <input
+                type="number"
+                id="detThresh"
+                value="0.5"
+                min="0.05"
+                max="0.99"
+                step="0.01"
+                style="width: 50px"
+              />
+              <div class="sep"></div>
+              <span style="color: var(--txt2); font-size: 11px">Tool:</span>
+              <button
+                id="toolSelect"
+                onclick="setTool('select')"
+                class="atool"
+                title="Select/Seek (S)"
+              >
+                ↖ Select
+              </button>
+              <button
+                id="toolAnnot"
+                onclick="setTool('annotate')"
+                title="Draw annotation (A)"
+              >
+                ✏ Annotate
+              </button>
+              <button
+                id="toolPan"
+                onclick="setTool('pan')"
+                title="Pan/scroll (H)"
+              >
+                ✋ Pan
+              </button>
+              <button
+                onclick="exportAnnotations()"
+                title="Export Selection table"
+              >
+                ⬇ Annotations
+              </button>
+              <button
+                onclick="clearAllAnnotations()"
+                style="font-size: 11px"
+                title="Clear all selections, detections, and measurements from the spectrogram"
+              >
+                🗑 Clear Spectrogram
+              </button>
+            </div>
+          </div>
+          </div>
+          <!-- /waveSpecViewer -->
+          </div>
+          <!-- /analyzerViewerSlot -->
+
+          <!-- ── Selection import (Spectral Analysis only) ──────────────────
+               Deliberately outside #analyzerViewerSlot: that subtree is
+               physically reparented into Preprocessing by switchMainTab, and
+               these belong to this tab. -->
+          <div
+            class="row"
+            style="
+              gap: 6px;
+              padding: 5px 7px 0;
+              align-items: center;
+              flex-wrap: wrap;
+            "
+          >
+            <span style="font-size: 10px; color: var(--txt2)"
+              >Import selections:</span
+            >
+            <button
+              onclick="document.getElementById('SelectionsFile').click()"
+              id="btnRaven"
+              disabled
+              style="font-size: 10px; padding: 2px 8px"
+              title="Import selections from a Raven selection table (.txt/.csv)."
+            >
+              📋 Import Selections
+            </button>
             <input
-              type="number"
-              id="threshPct2"
-              value="5"
-              min="0.1"
-              max="50"
-              step="0.1"
-              style="width: 50px"
-              oninput="syncThresh(this.value)"
+              type="file"
+              id="SelectionsFile"
+              accept=".txt,.csv"
+              style="display: none"
             />
-            <span style="color: var(--txt2); font-size: 11px"
-              >Min dur (ms):</span
+            <button
+              onclick="document.getElementById('xlsxSelFile').click()"
+              id="btnXlsxSel"
+              disabled
+              style="font-size: 10px; padding: 2px 8px"
+              title="Import the Train or Motif table from a Temporal Analysis Excel export as selections."
             >
+              📊 Add Excel Selection Table
+            </button>
             <input
-              type="number"
-              id="minDurMs"
-              value="5"
-              min="0.5"
-              max="2000"
-              step="0.5"
-              style="width: 52px"
+              type="file"
+              id="xlsxSelFile"
+              accept=".xlsx"
+              style="display: none"
             />
-            <span style="color: var(--txt2); font-size: 11px"
-              >Min gap (ms):</span
-            >
-            <input
-              type="number"
-              id="minGapMs"
-              value="5"
-              min="0"
-              max="2000"
-              step="0.5"
-              style="width: 52px"
-            />
-            <span style="color: var(--txt2); font-size: 11px">ML thresh:</span>
-            <input
-              type="number"
-              id="detThresh"
-              value="0.5"
-              min="0.05"
-              max="0.99"
-              step="0.01"
-              style="width: 50px"
-            />
-            <div class="sep"></div>
-            <span style="color: var(--txt2); font-size: 11px">Tool:</span>
-            <button
-              id="toolSelect"
-              onclick="setTool('select')"
-              class="atool"
-              title="Select/Seek (S)"
-            >
-              ↖ Select
-            </button>
-            <button
-              id="toolAnnot"
-              onclick="setTool('annotate')"
-              title="Draw annotation (A)"
-            >
-              ✏ Annotate
-            </button>
-            <button
-              id="toolPan"
-              onclick="setTool('pan')"
-              title="Pan/scroll (H)"
-            >
-              ✋ Pan
-            </button>
-            <button
-              onclick="exportAnnotations()"
-              title="Export Selection table"
-            >
-              ⬇ Annotations
-            </button>
-            <button
-              onclick="clearAllAnnotations()"
-              style="font-size: 11px"
-              title="Clear all selections, detections, and measurements from the spectrogram"
-            >
-              🗑 Clear Spectrogram
-            </button>
           </div>
 
           <!-- ═══ BOTTOM TABS ══════════════════════════════════════════════════════ -->
@@ -1178,11 +1527,12 @@
                     <input
                       type="number"
                       id="pkSmooth"
-                      value="1"
+                      value="0.5"
                       min="0.5"
                       max="50"
                       step="0.5"
                       style="width: 78px"
+                      onchange="pkRefreshEnvelope()"
                     />
                   </div>
                   <div class="row">
@@ -1193,7 +1543,7 @@
                     <input
                       type="number"
                       id="pkWin"
-                      value="5"
+                      value="0.1"
                       min="0.1"
                       max="200"
                       step="0.1"
@@ -1209,7 +1559,7 @@
                       type="number"
                       id="pkThresh"
                       value="0.5"
-                      min="0.001"
+                      min="0"
                       max="20"
                       step="0.1"
                       style="width: 78px"
@@ -1223,8 +1573,8 @@
                     <input
                       type="number"
                       id="pkDetThr"
-                      value="5"
-                      min="0.001"
+                      value="0.5"
+                      min="0"
                       max="90"
                       step="0.1"
                       style="width: 78px"
@@ -1242,8 +1592,27 @@
                       type="number"
                       id="pkLinkThr"
                       value=""
-                      min="0.001"
+                      min="0"
                       max="90"
+                      step="0.1"
+                      placeholder="off"
+                      style="width: 78px"
+                    />
+                  </div>
+                  <div
+                    class="row"
+                    title="After detection, removes near-baseline 'peaks' that pass the prominence check on their own tiny local dip but aren't real signal. A peak is dropped only if it BOTH sits within this much of the recording's floor AND is more than this much below the real peaks on either side — so a low bump between two pulses goes, while the quiet onset/offset peaks of a real train stay. Runs of several bumps at the same low level are judged as one unit against the taller peaks flanking the whole run. Leave blank to disable."
+                  >
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 110px"
+                      >False peak Δ (%)</span
+                    >
+                    <input
+                      type="number"
+                      id="pkFalseDiff"
+                      value="15"
+                      min="0"
+                      max="50"
                       step="0.1"
                       placeholder="off"
                       style="width: 78px"
@@ -1264,7 +1633,7 @@
                     <input
                       type="number"
                       id="pkMaxGap"
-                      value="40"
+                      value="3"
                       min="1"
                       max="500"
                       step="1"
@@ -1325,48 +1694,52 @@
                 </div>
               </div>
 
-              <!-- Arch Detection -->
+              <!-- Arch Detection — subdivides trains the gap rule left joined,
+                   cutting at the valley between two amplitude arches. -->
               <div class="panel" style="min-width: 180px">
                 <h2>Arch Detection</h2>
                 <div style="display: flex; flex-direction: column; gap: 4px">
-                  <label class="chk" style="font-size: 11px">
-                    <input type="checkbox" id="pkArchEnable" /> Enable arch
-                    criterion
+                  <label
+                    class="chk"
+                    style="font-size: 11px"
+                    title="For species whose trains run back to back, where the silence between trains is no longer than the spacing between peaks inside one, so Max peak gap cannot separate them. Splits at the valley between two amplitude arches instead. Runs AFTER the gap rule and only subdivides what it produced — it never merges trains the gap rule separated."
+                  >
+                    <input type="checkbox" id="pkArchEnable" /> Split on arches
                   </label>
-                  <div class="row">
+                  <div
+                    class="row"
+                    title="How far a valley must fall below the crests on either side, as a percentage of those crests. Relative, so quiet and loud trains are judged alike. Lower = more splits."
+                  >
                     <span
                       style="color: var(--txt2); font-size: 11px; width: 110px"
-                      >Arch hard split</span
-                    >
-                    <input type="checkbox" id="pkArchHard" />
-                  </div>
-                  <div class="row">
-                    <span
-                      style="color: var(--txt2); font-size: 11px; width: 110px"
-                      >Slope window (k)</span
+                      >Valley depth (%)</span
                     >
                     <input
                       type="number"
-                      id="pkArchK"
-                      value="3"
-                      min="2"
-                      max="8"
+                      id="pkArchDepth"
+                      value="40"
+                      min="5"
+                      max="95"
                       step="1"
                       style="width: 54px"
                     />
                   </div>
-                  <div class="row">
+                  <div
+                    class="row"
+                    title="Refuses any arch cut that would leave a train shorter than this — shallow amplitude modulation inside one train can look like a valley. Leave blank to derive it from the recording: half the median duration of the trains the unmistakable valleys produce."
+                  >
                     <span
                       style="color: var(--txt2); font-size: 11px; width: 110px"
-                      >Drop fraction (%)</span
+                      >Min train (ms)</span
                     >
                     <input
                       type="number"
-                      id="pkArchDrop"
-                      value="30"
-                      min="5"
-                      max="80"
-                      step="0.1"
+                      id="pkArchMinDur"
+                      value=""
+                      min="0"
+                      max="5000"
+                      step="1"
+                      placeholder="auto"
                       style="width: 54px"
                     />
                   </div>
@@ -1412,65 +1785,263 @@
                   </div>
                 </div>
               </div>
+
+              <!-- Spectral Parameters -->
+              <div class="panel" style="min-width: 180px">
+                <h2>Spectral Parameters</h2>
+                <div style="display: flex; flex-direction: column; gap: 6px">
+                  <div
+                    style="
+                      color: var(--txt2);
+                      font-size: 10px;
+                      line-height: 1.35;
+                      max-width: 200px;
+                    "
+                  >
+                    Frequency resolution of the spectral measurements. Nothing
+                    here affects peak detection or grouping. Hold these constant
+                    to compare recordings — stated in Hz, they mean the same
+                    thing at any sample rate.
+                  </div>
+                  <div
+                    class="row"
+                    title="Target frequency resolution for PEAK spectra, in Hz. Resolution is 1/window, so 1500 Hz means a 0.67 ms window — but stating it in Hz keeps it identical across recordings with different sample rates, which a duration in milliseconds does not. The signal is still capped at half the distance to the neighbouring peak, so where pulses are tighter than this asks for, the row reports the coarser resolution it actually achieved in spec_res_hz. Keep this constant across a study."
+                  >
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 110px"
+                      >Peak freq. res (Hz)</span
+                    >
+                    <input
+                      type="number"
+                      id="pkSpecResPeak"
+                      value="1500"
+                      min="1"
+                      max="20000"
+                      step="1"
+                      style="width: 78px"
+                    />
+                  </div>
+                  <div
+                    class="row"
+                    title="Target frequency resolution for TRAIN spectra, in Hz. 50 Hz means a 20 ms window. A train longer than that is Welch-averaged over overlapping frames at this resolution; a shorter train reports the coarser resolution it could actually achieve. The motif columns ending in _tmean are the average of these train rows. Keep it constant across a study."
+                  >
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 110px"
+                      >Train freq. res (Hz)</span
+                    >
+                    <input
+                      type="number"
+                      id="pkSpecResTrain"
+                      value="50"
+                      min="1"
+                      max="20000"
+                      step="1"
+                      style="width: 78px"
+                    />
+                  </div>
+                  <div
+                    class="row"
+                    title="Target frequency resolution for MOTIF spectra, in Hz. 10 Hz means a 100 ms window, long enough to resolve structure the train window cannot. This measures the whole motif span, so its frames also cross the silence between trains — on a low duty cycle that raises spec_entropy and spec_flatness. The motif row also carries _tmean columns, the average of its train rows, which contain no silence; compare the two. Keep this constant across a study."
+                  >
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 110px"
+                      >Motif freq. res (Hz)</span
+                    >
+                    <input
+                      type="number"
+                      id="pkSpecResMotif"
+                      value="10"
+                      min="1"
+                      max="20000"
+                      step="1"
+                      style="width: 78px"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <!-- Parameter Presets -->
+              <div class="panel" style="min-width: 215px; max-width: 260px">
+                <h2>Parameter Presets</h2>
+                <div style="display: flex; flex-direction: column; gap: 4px">
+                  <select
+                    id="pkPresetSelect"
+                    onchange="pkPresetLoad()"
+                    style="font-size: 11px; width: 100%"
+                    title="Saved Temporal Analysis parameter sets (stored on this machine)."
+                  >
+                    <option value="">&mdash; select preset &mdash;</option>
+                    <option value="1">Preset 1</option>
+                    <option value="2">Preset 2</option>
+                    <option value="3">Preset 3</option>
+                    <option value="4">Preset 4</option>
+                    <option value="5">Preset 5</option>
+                    <option value="6">Preset 6</option>
+                    <option value="7">Preset 7</option>
+                    <option value="8">Preset 8</option>
+                    <option value="9">Preset 9</option>
+                    <option value="10">Preset 10</option>
+                  </select>
+                  <div class="row" style="gap: 4px; flex-wrap: wrap">
+                    <button
+                      onclick="pkPresetSave()"
+                      style="font-size: 10px; padding: 2px 8px; flex: 1"
+                      title="Save the current parameters into the selected slot."
+                    >
+                      &#128190; Save
+                    </button>
+                    <button
+                      onclick="pkPresetLoad()"
+                      style="font-size: 10px; padding: 2px 8px; flex: 1"
+                      title="Load the selected preset&apos;s parameters."
+                    >
+                      &#128193; Load
+                    </button>
+                    <button
+                      onclick="pkPresetDelete()"
+                      style="font-size: 10px; padding: 2px 8px; flex: 1"
+                      title="Delete the selected preset slot."
+                    >
+                      &#128465; Delete
+                    </button>
+                  </div>
+                  <div class="row" style="gap: 4px; flex-wrap: wrap">
+                    <button
+                      onclick="pkPresetExportFile()"
+                      style="font-size: 10px; padding: 2px 8px; flex: 1"
+                      title="Save the current parameters to a .json file. Opens a file browser so you can choose the folder and edit the name. Unlike the 10 slots, a file can be copied to another computer or kept beside the recordings it belongs to."
+                    >
+                      &#11015; Export file&hellip;
+                    </button>
+                    <button
+                      onclick="document.getElementById('pkPresetFile').click()"
+                      style="font-size: 10px; padding: 2px 8px; flex: 1"
+                      title="Load parameters from a .json preset file. The values go into the panels; use Save afterwards to also keep them in a slot."
+                    >
+                      &#11014; Import file&hellip;
+                    </button>
+                  </div>
+                  <input
+                    type="file"
+                    id="pkPresetFile"
+                    accept=".json"
+                    style="display: none"
+                    onchange="pkPresetImportFile(this.files[0]); this.value = '';"
+                  />
+                  <span
+                    id="pkPresetStatus"
+                    style="
+                      font-size: 10px;
+                      color: var(--txt3);
+                      display: block;
+                      overflow-wrap: anywhere;
+                    "
+                  ></span>
+                </div>
+              </div>
+
+              <!-- Detect & Apply -->
+              <div class="panel" style="min-width: 205px">
+                <h2>Detect &amp; Apply</h2>
+                <div style="display: flex; flex-direction: column; gap: 4px">
+                  <button
+                    onclick="pkDetect()"
+                    id="btnPkDetect"
+                    disabled
+                    class="pri"
+                    style="width: 100%"
+                  >
+                    &#128269; Detect Peaks
+                  </button>
+                  <button
+                    onclick="pkApplyDetectionsToSpectral()"
+                    id="btnPkApplySpectral"
+                    disabled
+                    style="font-size: 11px; padding: 4px 8px; width: 100%"
+                    title="Convert detected units into Spectral Analysis selections."
+                  >
+                    &#9654; Apply to Spectral Analysis
+                  </button>
+                  <label
+                    style="
+                      display: flex;
+                      align-items: center;
+                      gap: 4px;
+                      font-size: 10px;
+                      color: var(--txt2);
+                    "
+                    title="Choose whether detected units become train or motif selections."
+                  >
+                    Apply as:
+                    <select
+                      id="pkApplySelectionType"
+                      style="font-size: 11px; flex: 1"
+                    >
+                      <option value="train" selected>Train selections</option>
+                      <option value="motif">Motif selections</option>
+                    </select>
+                  </label>
+                  <button
+                    id="btnPkImportPeaks"
+                    onclick="document.getElementById('pkPeaksFile').click()"
+                    style="font-size: 10px; padding: 2px 8px; width: 100%"
+                    title="Load a Peaks table from a Temporal Analysis Excel export, restoring the peaks and the train boundaries exactly as they were saved, including any you edited by hand. Needs the matching audio loaded. Does not re-run detection."
+                  >
+                    &#128229; Import detected Peaks
+                  </button>
+                  <input
+                    type="file"
+                    id="pkPeaksFile"
+                    accept=".xlsx"
+                    style="display: none"
+                    onchange="pkImportPeaksFile(this.files[0]); this.value = '';"
+                  />
+                </div>
+              </div>
+
+              <!-- Learn from Edits -->
+              <div class="panel" style="min-width: 205px; max-width: 260px">
+                <h2>Learn from Edits</h2>
+                <div style="display: flex; flex-direction: column; gap: 4px">
+                  <button
+                    id="btnPkFit"
+                    onclick="pkFitGrouping()"
+                    style="font-size: 10px; padding: 2px 8px; width: 100%"
+                    title="Correct a few trains by hand, select their peaks (shift-drag), then press this. Searches the train-grouping parameters for the combination that best reproduces the boundaries you set. Peak DETECTION is only fitted if you tick the box below. Nothing changes until you press Apply."
+                  >
+                    &#127919; Fit to selection
+                  </button>
+                  <label
+                    class="chk"
+                    style="font-size: 10px; color: var(--txt2)"
+                    title="Also fit the peak-detection parameters (peak window, peak/detection/onset thresholds, false peak delta) to the peaks you kept, added and deleted by hand. Smoothing is never fitted. Slower, and Apply then re-runs detection over the whole recording, which replaces manual peak edits as well as boundary edits."
+                  >
+                    <input type="checkbox" id="pkFitDetect" /> incl. peak
+                    detection
+                  </label>
+                  <button
+                    id="btnPkFitApply"
+                    onclick="pkFitApply()"
+                    disabled
+                    style="font-size: 10px; padding: 2px 8px; width: 100%"
+                    title="Write the fitted parameters into the panels and re-apply them over the whole recording. This replaces manual boundary edits, including the ones just trained on."
+                  >
+                    &#10004; Apply
+                  </button>
+                  <span
+                    id="pkFitStatus"
+                    style="
+                      font-size: 10px;
+                      color: var(--txt3);
+                      display: block;
+                      overflow-wrap: anywhere;
+                    "
+                  ></span>
+                </div>
+              </div>
             </div>
 
-            <!-- ── Parameter presets ── -->
-            <div
-              class="row"
-              style="
-                flex-wrap: wrap;
-                gap: 6px;
-                margin-bottom: 4px;
-                align-items: center;
-              "
-            >
-              <span style="font-size: 10px; color: var(--txt2)">Presets:</span>
-              <select
-                id="pkPresetSelect"
-                onchange="pkPresetLoad()"
-                style="font-size: 11px; width: 150px"
-                title="Saved Temporal Analysis parameter sets (stored in this browser)."
-              >
-                <option value="">— select preset —</option>
-                <option value="1">Preset 1</option>
-                <option value="2">Preset 2</option>
-                <option value="3">Preset 3</option>
-                <option value="4">Preset 4</option>
-                <option value="5">Preset 5</option>
-                <option value="6">Preset 6</option>
-                <option value="7">Preset 7</option>
-                <option value="8">Preset 8</option>
-                <option value="9">Preset 9</option>
-                <option value="10">Preset 10</option>
-              </select>
-              <button
-                onclick="pkPresetSave()"
-                style="font-size: 10px; padding: 2px 8px"
-                title="Save the current Temporal Analysis parameters into the selected slot."
-              >
-                💾 Save
-              </button>
-              <button
-                onclick="pkPresetLoad()"
-                style="font-size: 10px; padding: 2px 8px"
-                title="Load the selected preset's parameters."
-              >
-                📂 Load
-              </button>
-              <button
-                onclick="pkPresetDelete()"
-                style="font-size: 10px; padding: 2px 8px"
-                title="Delete the selected preset slot."
-              >
-                🗑 Delete
-              </button>
-              <span
-                id="pkPresetStatus"
-                style="font-size: 10px; color: var(--txt3); margin-left: 4px"
-              ></span>
-            </div>
-
-            <!-- ── Controls ── -->
+            <!-- ── Run + status ── -->
             <div
               class="row"
               style="
@@ -1486,64 +2057,30 @@
                 disabled
                 class="suc"
               >
-                ✓ Confirm &amp; Compute Metrics
+                &#10003; Confirm &amp; Compute Metrics
               </button>
               <button onclick="pkClear()" style="font-size: 11px">
-                🗑 Clear
+                &#128465; Clear
               </button>
               <span id="pkStatus" style="font-size: 12px; color: var(--txt2)"
                 >Load audio first</span
               >
-              <span style="flex: 1"></span>
-              <label
-                style="
-                  display: inline-flex;
-                  align-items: center;
-                  gap: 4px;
-                  font-size: 10px;
-                  color: var(--txt2);
-                "
-                title="Choose whether detected units become train or motif selections."
-              >
-                Apply as:
-                <select
-                  id="pkApplySelectionType"
-                  style="font-size: 11px; width: 112px"
-                >
-                  <option value="train" selected>Train selections</option>
-                  <option value="motif">Motif selections</option>
-                </select>
-              </label>
-              <button
-                onclick="pkApplyDetectionsToSpectral()"
-                id="btnPkApplySpectral"
-                disabled
-                style="font-size: 11px; padding: 6px 10px"
-                title="Convert detected units into Spectral Analysis selections."
-              >
-                ▶ Apply to Spectral Analysis
-              </button>
-              <button
-                onclick="pkDetect()"
-                id="btnPkDetect"
-                disabled
-                class="pri"
-              >
-                🔍 Detect Peaks
-              </button>
             </div>
 
-            <!-- ── Edit-mode controls ── -->
+            <!-- ── Editing tools, grouped into boxes ── -->
             <div
-              class="row"
               style="
+                display: flex;
                 flex-wrap: wrap;
                 gap: 6px;
+                padding: 0 0 6px 0;
+                border-bottom: 1px solid var(--border);
                 margin-bottom: 6px;
-                align-items: center;
               "
             >
-              <span style="font-size: 10px; color: var(--txt2)">Edit:</span>
+              <div class="panel" style="min-width: 260px">
+                <h2>Edit Mode</h2>
+                <div class="row" style="gap: 4px; flex-wrap: wrap">
               <button
                 id="btnPkModeSelect"
                 onclick="pkSetMode('select')"
@@ -1562,32 +2099,45 @@
                 ➕ Add Peak
               </button>
               <button
+                id="btnPkUndo"
+                onclick="pkUndo()"
+                disabled
+                style="font-size: 10px; padding: 2px 8px"
+                title="Nothing to undo (Ctrl+Z)"
+              >
+                ↶ Undo
+              </button>
+              <button
                 onclick="pkClearOverrides()"
                 style="font-size: 10px; padding: 2px 8px"
                 title="Re-run the detected segmentation, discarding manual boundary edits (added/removed peaks are kept)."
               >
                 ↩ Reset boundaries
               </button>
+              <button
+                id="btnPkFilterFalse"
+                onclick="pkFilterFalsePeaks()"
+                disabled
+                style="font-size: 10px; padding: 2px 8px"
+                title="Re-apply the False peak Δ filter to the current peaks (e.g. after manually adding one, or after changing the Δ value)."
+              >
+                🧹 Remove False Peaks
+              </button>
               <span
                 id="pkEditHint"
                 style="font-size: 10px; color: var(--txt3); margin-left: 4px"
                 >Select mode · click selects a peak · shift-drag to box-select
                 (or shift-click) · use the panel for actions · Del to delete
-                selection</span
+                selection · Ctrl+Z to undo</span
               >
-            </div>
-            <div
-              class="row"
-              style="
-                flex-wrap: wrap;
-                gap: 6px;
-                margin-bottom: 6px;
-                align-items: center;
-              "
-            >
-              <span style="font-size: 10px; color: var(--txt2)"
-                >Peak actions:</span
-              >
+            
+                </div>
+              </div>
+
+              <div class="panel" style="flex: 1; min-width: 320px">
+                <h2>Peak Actions</h2>
+                <div class="row" style="gap: 4px; flex-wrap: wrap">
+
               <button
                 id="btnPkAssignLeft"
                 onclick="pkAssignSelection('left')"
@@ -1679,6 +2229,9 @@
               >
                 ○ Clear selection
               </button>
+            
+                </div>
+              </div>
             </div>
 
             <!-- ── Zoom controls ── -->
@@ -1932,6 +2485,53 @@
           <!-- /tab-peaks -->
         </div>
         <!-- /mainview-peaks -->
+
+        <!-- ═══ PLOTTING SUB-TABS ══════════════════════════════════════════════════ -->
+        <div
+          id="plotSubtabBar"
+          style="
+            flex-shrink: 0;
+            display: none;
+            align-items: flex-end;
+            gap: 2px;
+            padding: 4px 7px 0;
+            background: var(--bg2);
+            border-bottom: 1px solid var(--border);
+          "
+        >
+          <div
+            class="tab active"
+            id="plotsubtab-plot"
+            onclick="switchPlotSubtab('plot', this)"
+            style="font-size: 11px; padding: 3px 12px"
+          >
+            Multiplot
+          </div>
+          <div
+            class="tab"
+            id="plotsubtab-oscstack"
+            onclick="switchPlotSubtab('oscstack', this)"
+            style="font-size: 11px; padding: 3px 12px"
+          >
+            Osc. Stack
+          </div>
+          <div
+            class="tab"
+            id="plotsubtab-osczoom"
+            onclick="switchPlotSubtab('osczoom', this)"
+            style="font-size: 11px; padding: 3px 12px"
+          >
+            Osc. Zoom
+          </div>
+          <div
+            class="tab"
+            id="plotsubtab-habitus"
+            onclick="switchPlotSubtab('habitus', this)"
+            style="font-size: 11px; padding: 3px 12px"
+          >
+            Habitus
+          </div>
+        </div>
 
         <div
           id="mainview-plot"
@@ -2801,12 +3401,23 @@
               "
             >
               <div class="panel">
+                <h2>Loaded Audio</h2>
+                <div style="display: flex; flex-direction: column; gap: 6px">
+                  <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
+                    Use the 📂 Audio button in the top bar to import files
+                    (you can select several at once) — they land in the
+                    Loaded Audio panel and here, ready to add as traces.
+                  </div>
+                  <div id="oscLibPicker" style="display: flex; flex-direction: column; gap: 2px; font-size: 11px; max-height: 160px; overflow-y: auto;">
+                    <div style="color: var(--txt2); font-size: 11px">No audio loaded yet.</div>
+                  </div>
+                  <button onclick="oscAddFromLibrary()" class="pri" style="font-size: 11px">➕ Add selected</button>
+                </div>
+              </div>
+
+              <div class="panel">
                 <h2>Waves</h2>
                 <div style="display: flex; flex-direction: column; gap: 6px">
-                  <button onclick="document.getElementById('oscFiles').click()" class="pri" style="font-size: 11px">
-                    📂 Add audio files…
-                  </button>
-                  <input type="file" id="oscFiles" accept=".wav,.mp3,.flac,.ogg,.aiff,.aif" multiple style="display: none" onchange="oscAddFiles(this.files)" />
                   <div id="oscWaveList" style="display: flex; flex-direction: column; gap: 2px; font-size: 11px;">
                     <div style="color: var(--txt2); font-size: 11px">No waves loaded.</div>
                   </div>
@@ -2956,11 +3567,13 @@
               <div class="panel">
                 <h2>Wave</h2>
                 <div style="display: flex; flex-direction: column; gap: 6px">
-                  <button onclick="document.getElementById('ozFile').click()" class="pri" style="font-size: 11px">
-                    📂 Open audio file…
-                  </button>
-                  <input type="file" id="ozFile" accept=".wav,.mp3,.flac,.ogg,.aiff,.aif" style="display: none" onchange="ozOpenFile(this.files)" />
-                  <button onclick="ozUseLoadedAudio()" id="btnOzUseLoaded" style="font-size: 11px">↩ Use loaded audio</button>
+                  <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
+                    Use the 📂 Audio button in the top bar to import files.
+                    Pick one below to zoom into.
+                  </div>
+                  <div id="ozLibPicker" style="display: flex; flex-direction: column; gap: 2px; font-size: 11px; max-height: 160px; overflow-y: auto;">
+                    <div style="color: var(--txt2); font-size: 11px">No audio loaded yet.</div>
+                  </div>
                   <div id="ozWaveInfo" style="font-size: 11px; color: var(--txt2)">No wave loaded.</div>
                 </div>
               </div>
@@ -3108,13 +3721,13 @@
               <div class="panel">
                 <h2>Recordings</h2>
                 <div style="display: flex; flex-direction: column; gap: 6px">
-                  <button onclick="document.getElementById('habFiles').click()" class="pri" style="font-size: 11px">
-                    📂 Add audio files…
-                  </button>
-                  <input type="file" id="habFiles" accept=".wav,.mp3,.flac,.ogg,.aiff,.aif" multiple style="display: none" onchange="habAddFiles(this.files)" />
-                  <button onclick="habUseLoadedAudio()" style="font-size: 11px">➕ Add currently loaded audio</button>
+                  <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
+                    Check the recordings to average in the Loaded Audio
+                    panel at the bottom of the window — no separate
+                    add step, whatever's checked there is what gets drawn.
+                  </div>
                   <div id="habWaveList" style="display: flex; flex-direction: column; gap: 2px; font-size: 11px;">
-                    <div style="color: var(--txt2); font-size: 11px">No waves loaded.</div>
+                    <div style="color: var(--txt2); font-size: 11px">No audio checked yet.</div>
                   </div>
                 </div>
               </div>
@@ -3169,6 +3782,9 @@
                     <span style="color: var(--txt2); font-size: 11px; width: 90px">Min. Amp (dB)</span>
                     <input type="number" id="habYMin" value="-50" style="width: 64px" />
                   </div>
+                  <label class="chk" style="font-size: 11px">
+                    <input type="checkbox" id="habNormalize" /> Normalize each recording (peak) before averaging
+                  </label>
                 </div>
               </div>
 
@@ -3190,13 +3806,15 @@
                     <span style="color: var(--txt2); font-size: 11px">Line color</span>
                     <input type="color" id="habLineColor" value="#000000" style="width: 24px; height: 20px; border: 1px solid var(--border2); border-radius: 3px; padding: 1px; background: var(--bg3); cursor: pointer" />
                   </div>
+                  <div id="habLineSwatches" class="row" style="gap: 3px"></div>
                   <div class="row" style="justify-content: space-between">
                     <span style="color: var(--txt2); font-size: 11px">Band color</span>
                     <input type="color" id="habBandColor" value="#000000" style="width: 24px; height: 20px; border: 1px solid var(--border2); border-radius: 3px; padding: 1px; background: var(--bg3); cursor: pointer" />
                   </div>
+                  <div id="habBandSwatches" class="row" style="gap: 3px"></div>
                   <div class="row">
-                    <span style="color: var(--txt2); font-size: 11px; width: 90px">Band opacity</span>
-                    <input type="range" id="habBandAlpha" value="0.3" min="0" max="1" step="0.05" style="flex: 1" />
+                    <span style="color: var(--txt2); font-size: 11px; width: 90px">Band opacity (%)</span>
+                    <input type="number" id="habBandAlpha" value="75" min="0" max="100" step="1" style="width: 64px" />
                   </div>
                 </div>
               </div>
@@ -3216,6 +3834,9 @@
                     <span style="color: var(--txt2); font-size: 11px">Label B color</span>
                     <input type="color" id="habLabelColorB" value="#000000" oninput="habUpdateLetterColor('B', this.value)" style="width: 24px; height: 20px; border: 1px solid var(--border2); border-radius: 3px; padding: 1px; background: var(--bg3); cursor: pointer" />
                   </div>
+                  <label class="chk" style="font-size: 11px">
+                    <input type="checkbox" id="habSnapLetters" /> Snap A/B together when dragging
+                  </label>
                 </div>
               </div>
 
@@ -3238,6 +3859,134 @@
           </div>
         </div>
         <!-- /mainview-habitus -->
+
+        <!-- ═══ SUMMARIZE VIEW ═════════════════════════════════════════════════════
+             Cross-recording module: load several Temporal/Spectral Analysis
+             .xlsx exports (one specimen or several), merge them into one
+             workbook (one sheet per metric, Specimen ID as the first column
+             of every row), compute pooled/per-specimen summary stats, and
+             draft a plain-language text report from that pooled data. Works
+             entirely off the imported files — no audio needs to be loaded. ═══ -->
+        <div
+          id="mainview-summarize"
+          style="
+            flex: 1;
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+            min-height: 0;
+          "
+        >
+          <div style="flex: 1; display: flex; overflow: hidden; min-height: 0; width: 100%">
+            <!-- Side panel: file list -->
+            <div
+              style="
+                width: 340px;
+                flex-shrink: 0;
+                overflow-y: auto;
+                border-right: 1px solid var(--border);
+                padding: 8px;
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                background: var(--bg2);
+              "
+            >
+              <div class="panel">
+                <h2>Source files</h2>
+                <div style="display: flex; flex-direction: column; gap: 6px">
+                  <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
+                    Add the Temporal Analysis and/or Spectral Analysis .xlsx
+                    exports for each recording. The Specimen ID tagged when
+                    exporting (top toolbar) is read automatically; if it's
+                    missing or wrong, fix it below — that's what groups
+                    recordings by animal in the summary.
+                  </div>
+                  <button onclick="document.getElementById('summFiles').click()" class="pri" style="font-size: 12px">
+                    📂 Add Excel Files
+                  </button>
+                  <input
+                    type="file"
+                    id="summFiles"
+                    accept=".xlsx"
+                    multiple
+                    style="display: none"
+                    onchange="summAddFiles(this.files); this.value = '';"
+                  />
+                  <div id="summFileList" style="display: flex; flex-direction: column; gap: 4px; font-size: 11px;">
+                    <div style="color: var(--txt2); font-size: 11px">No files added yet.</div>
+                  </div>
+                  <button onclick="summClearFiles()" id="btnSummClear" disabled style="font-size: 11px">
+                    🗑 Clear all
+                  </button>
+                </div>
+              </div>
+
+              <div class="panel">
+                <h2>Merge & Summarize</h2>
+                <div style="display: flex; flex-direction: column; gap: 6px">
+                  <button onclick="summRun()" id="btnSummRun" class="suc" disabled style="font-size: 12px">
+                    🧬 Merge &amp; Summarize
+                  </button>
+                  <div id="summStatus" style="color: var(--txt2); font-size: 11px"></div>
+                  <button onclick="summSaveWorkbook()" id="btnSummSaveXlsx" disabled style="font-size: 11px">
+                    💾 Save Merged Workbook
+                  </button>
+                  <button onclick="summSaveReport()" id="btnSummSaveReport" disabled style="font-size: 11px">
+                    📄 Save Text Report (DOCX)
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Results -->
+            <div style="flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px">
+              <div class="panel">
+                <h2>Pooled summary</h2>
+                <div id="summCards" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-bottom: 4px">
+                  <div style="color: var(--txt2); font-size: 11px">
+                    Add files and click Merge &amp; Summarize to see pooled
+                    counts and per-metric mean ± SD here.
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel" style="flex: 1; display: flex; flex-direction: column; min-height: 0">
+                <h2>Summary table (by specimen)</h2>
+                <div style="overflow: auto; flex: 1; min-height: 0">
+                  <table class="dtable" id="summTable">
+                    <thead>
+                      <tr id="summTableHead"></tr>
+                    </thead>
+                    <tbody id="summTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="panel">
+                <h2>Text report</h2>
+                <textarea
+                  id="summReportText"
+                  style="
+                    width: 100%;
+                    min-height: 140px;
+                    resize: vertical;
+                    font-size: 12px;
+                    font-family: inherit;
+                    background: var(--bg3);
+                    color: var(--txt);
+                    border: 1px solid var(--border2);
+                    border-radius: 4px;
+                    padding: 8px;
+                    box-sizing: border-box;
+                  "
+                  placeholder="The drafted report appears here after Merge & Summarize — edit freely before saving."
+                ></textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- /mainview-summarize -->
       </div>
       <!-- /mainCol -->
     </div>
@@ -3314,6 +4063,11 @@
           Import an audio file to see it here.
         </div>
       </div>
+
+      <div style="font-size: 10px; color: var(--txt2); line-height: 1.3">
+        Check entries here to select which ones the Habitus/Osc. panes work
+        on, and to batch-edit them from the Preprocessing tab.
+      </div>
     </div>
 
     <!-- ═══ SAVE EDITED AUDIO MODAL ═══════════════════════════════════════════ -->
@@ -3335,7 +4089,7 @@
         <div class="modal-body">
           <div style="font-size: 11px; color: var(--txt2); margin-bottom: 6px">
             The suffix reflects the edits currently applied (e.g. a 1 kHz
-            high-pass + a trim becomes "_1khzhpf_trimmed"). Edit it freely.
+            high-pass + a trim becomes "_1hpf_trimmed"). Edit it freely.
             The original file is left untouched either way.
           </div>
           <input
@@ -3404,6 +4158,17 @@
           <button onclick="closeMetricsExplainer()" style="font-size: 11px">
             Close
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Busy overlay — shown while a long operation blocks the UI thread. -->
+    <div id="busyOverlay" class="busy-overlay">
+      <div class="busy-box">
+        <div class="busy-spin"></div>
+        <div id="busyLabel" class="busy-label">Working…</div>
+        <div id="busyTrack" class="busy-track indet">
+          <div id="busyBar" class="busy-bar"></div>
         </div>
       </div>
     </div>

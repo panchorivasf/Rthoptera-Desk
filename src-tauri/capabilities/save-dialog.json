@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "save-dialog",
-  "description": "Allow the main window to use the dialog save prompt and write files selected by the user.",
+  "description": "Allow the main window to use the dialog open/save prompts and read/write files selected by the user.",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -17,6 +17,14 @@
     },
     {
       "identifier": "fs:allow-write-file",
+      "allow": [
+        {
+          "path": "**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-read-file",
       "allow": [
         {
           "path": "**"

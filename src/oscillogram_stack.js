@@ -52,43 +52,56 @@
   }
 
   // ── Decoding ─────────────────────────────────────────────────────
-  async function oscAddFiles(fileList) {
-    const files = Array.from(fileList || []);
-    if (!files.length) return;
-
-    for (const file of files) {
-      try {
-        const ab = await file.arrayBuffer();
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const decoded = await ctx.decodeAudioData(ab.slice(0));
-        ctx.close();
-
-        // Mono-mix by averaging channels, matching how the rest of the app
-        // treats multi-channel audio.
-        const len = decoded.length;
-        const nch = decoded.numberOfChannels;
-        const mono = new Float32Array(len);
-        for (let c = 0; c < nch; c++) {
-          const ch = decoded.getChannelData(c);
-          for (let i = 0; i < len; i++) mono[i] += ch[i] / nch;
-        }
-
-        const label = file.name.replace(/\.[^/.]+$/, "");
-        const id = oscNextId++;
-        oscWaves.push({
-          id,
-          label,
-          samples: mono,
-          rate: decoded.sampleRate,
-          dur: len / decoded.sampleRate,
-        });
-        oscAnno.set(id, newAnnoSet(label));
-      } catch (err) {
-        alert(`Could not decode "${file.name}": ${err.message || err}`);
-      }
+  // ── Loaded Audio picker ─────────────────────────────────────────
+  // Audio is decoded exactly once, by main.js's shared importer, into the
+  // global `audioLibrary`. This pane just offers a checklist of it.
+  function oscRenderLibPicker() {
+    const el = $("oscLibPicker");
+    if (!el) return;
+    const lib = typeof audioLibrary !== "undefined" ? audioLibrary : [];
+    const prevChecked = new Set(
+      Array.from(el.querySelectorAll('input[type="checkbox"]:checked')).map((c) => c.value),
+    );
+    el.innerHTML = "";
+    if (!lib.length) {
+      el.innerHTML = '<div style="color: var(--txt2); font-size: 11px">No audio loaded yet.</div>';
+      return;
     }
+    lib.forEach((entry) => {
+      const row = document.createElement("label");
+      row.style.cssText = "display:flex;align-items:center;gap:5px;cursor:pointer";
+      row.innerHTML = `
+        <input type="checkbox" value="${entry.id}" ${prevChecked.has(String(entry.id)) ? "checked" : ""} />
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${entry.name} — ${entry.dur.toFixed(3)}s @ ${entry.rate}Hz">${entry.name}</span>
+      `;
+      el.appendChild(row);
+    });
+  }
 
-    $("oscFiles").value = "";
+  function oscAddFromLibrary() {
+    const el = $("oscLibPicker");
+    if (!el) return;
+    const lib = typeof audioLibrary !== "undefined" ? audioLibrary : [];
+    const checked = Array.from(el.querySelectorAll('input[type="checkbox"]:checked')).map((c) =>
+      parseInt(c.value, 10),
+    );
+    if (!checked.length) {
+      alert("Check at least one loaded recording first.");
+      return;
+    }
+    checked.forEach((libId) => {
+      const entry = lib.find((e) => e.id === libId);
+      if (!entry) return;
+      const id = oscNextId++;
+      oscWaves.push({
+        id,
+        label: entry.name.replace(/\.[^/.]+$/, ""),
+        samples: Float32Array.from(entry.samples),
+        rate: entry.rate,
+        dur: entry.dur,
+      });
+      oscAnno.set(id, newAnnoSet(entry.name));
+    });
     oscRenderWaveList();
     oscOnBufferChange();
   }
@@ -861,7 +874,8 @@
   }
 
   // Expose to inline onclick/oninput handlers in index.html
-  window.oscAddFiles = oscAddFiles;
+  window.oscRenderLibPicker = oscRenderLibPicker;
+  window.oscAddFromLibrary = oscAddFromLibrary;
   window.oscOnBufferChange = oscOnBufferChange;
   window.oscTouchDur = oscTouchDur;
   window.oscDraw = oscDraw;

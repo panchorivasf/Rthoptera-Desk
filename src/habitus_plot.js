@@ -21,9 +21,6 @@
   const SVG_NS = "http://www.w3.org/2000/svg";
   const UNIT = 100; // svg user-units per inch
 
-  let habWaves = []; // { id, label, samples: Float32Array, rate, dur }
-  let habNextId = 1;
-
   // Photo state: natural size + a data URL (so exported SVG is standalone),
   // plus its current pan offset within the fixed frame (svg user units).
   let habImg = null; // { dataUrl, w, h }
@@ -37,6 +34,33 @@
 
   let habSvgEl = null;
   let habCurrentGeom = null; // geometry from the last draw, needed to clamp drag
+  let habLetterRefs = {}; // key ("A"/"B") -> { el, pos } — rebuilt every draw, used by snap-drag
+
+  // Okabe–Ito colorblind-safe palette (minus black/yellow, which read
+  // poorly against a white figure background) — a standard, citable
+  // choice for publication figures.
+  const HAB_SWATCHES = ["#E69F00", "#56B4E9", "#009E73", "#0072B2", "#D55E00"];
+
+  function buildSwatchRow(containerId, inputId, onPick) {
+    const el = $(containerId);
+    if (!el) return;
+    el.innerHTML = "";
+    HAB_SWATCHES.forEach((c) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.title = c;
+      b.style.cssText =
+        `width:18px;height:18px;padding:0;border-radius:3px;border:1px solid var(--border2);background:${c};cursor:pointer`;
+      b.onclick = () => {
+        $(inputId).value = c;
+        if (onPick) onPick(c);
+      };
+      el.appendChild(b);
+    });
+  }
+
+  buildSwatchRow("habLineSwatches", "habLineColor");
+  buildSwatchRow("habBandSwatches", "habBandColor");
 
   // ── Window functions (mirrors seewave's wn options) ─────────────
   function windowCoeffs(type, n) {
@@ -79,95 +103,47 @@
     return w;
   }
 
-  // ── File loading ─────────────────────────────────────────────────
-  async function habAddFiles(fileList) {
-    const files = Array.from(fileList || []);
-    if (!files.length) return;
-
-    for (const file of files) {
-      try {
-        const ab = await file.arrayBuffer();
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const decoded = await ctx.decodeAudioData(ab.slice(0));
-        ctx.close();
-
-        const len = decoded.length;
-        const nch = decoded.numberOfChannels;
-        const mono = new Float32Array(len);
-        for (let c = 0; c < nch; c++) {
-          const ch = decoded.getChannelData(c);
-          for (let i = 0; i < len; i++) mono[i] += ch[i] / nch;
-        }
-
-        habWaves.push({
-          id: habNextId++,
-          label: file.name.replace(/\.[^/.]+$/, ""),
-          samples: mono,
-          rate: decoded.sampleRate,
-          dur: len / decoded.sampleRate,
-        });
-      } catch (err) {
-        alert(`Could not decode "${file.name}": ${err.message || err}`);
-      }
-    }
-
-    $("habFiles").value = "";
-    habRenderWaveList();
+  // ── Recording selection ─────────────────────────────────────────
+  // No separate "add" step: Habitus draws from whatever's checked in the
+  // Loaded Audio panel's own batch-select checkboxes (`audioLibBatchSelected`,
+  // main.js) — the same checkboxes used for batch filter/normalize/save.
+  // Audio is decoded exactly once, by main.js's shared importer, into the
+  // global `audioLibrary` — that importer already does the native-rate
+  // decode fix (this module used to have its own single-pass
+  // decodeAudioData call, which is what caused the 24kHz-cutoff bug: it
+  // silently resampled to the device's default rate).
+  function habSelectedEntries() {
+    const lib = typeof audioLibrary !== "undefined" ? audioLibrary : [];
+    const sel = typeof audioLibBatchSelected !== "undefined" ? audioLibBatchSelected : new Set();
+    return lib.filter((e) => sel.has(e.id));
   }
 
-  // Pull in whatever's currently loaded in Spectral Analysis, as one
-  // more entry in the list (mirrors ozUseLoadedAudio).
-  function habUseLoadedAudio() {
-    if (typeof rawSamples === "undefined" || !rawSamples || !rawSamples.length) {
-      alert("No audio is loaded in Spectral Analysis yet.");
-      return;
-    }
-    const label =
-      (typeof currentAudioFileName !== "undefined" && currentAudioFileName
-        ? currentAudioFileName
-        : "loaded_audio"
-      ).replace(/\.[^/.]+$/, "");
-    habWaves.push({
-      id: habNextId++,
-      label,
-      samples: Float32Array.from(rawSamples),
-      rate: sampleRate,
-      dur: rawSamples.length / sampleRate,
-    });
-    habRenderWaveList();
-  }
-
-  function habRemoveWave(id) {
-    habWaves = habWaves.filter((w) => w.id !== id);
-    habRenderWaveList();
-  }
-
-  function habRenderWaveList() {
+  // Re-renders the read-only "what's currently checked" list. Called both
+  // on tab-switch and (via main.js's updateBatchEditStatus) on every
+  // checkbox click, so it never goes stale.
+  function habRenderLibPicker() {
     const el = $("habWaveList");
-    const hasEnough = habWaves.length >= 2;
     const b = $("btnHabDraw");
-    if (b) b.disabled = !hasEnough;
+    if (!el) return;
+    const entries = habSelectedEntries();
+    if (b) b.disabled = entries.length < 2;
 
     el.innerHTML = "";
-    if (!habWaves.length) {
-      el.innerHTML = '<div style="color: var(--txt2); font-size: 11px">No waves loaded.</div>';
+    if (!entries.length) {
+      el.innerHTML = '<div style="color: var(--txt2); font-size: 11px">No audio checked yet.</div>';
       return;
     }
-    habWaves.forEach((w) => {
+    entries.forEach((entry) => {
       const row = document.createElement("div");
-      row.style.cssText =
-        "display:flex;align-items:center;gap:4px;padding:2px 0;border-bottom:1px solid var(--border)";
-      row.innerHTML = `
-        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${w.label} — ${w.dur.toFixed(3)}s @ ${w.rate}Hz">${w.label}</span>
-        <button style="font-size:10px;padding:1px 5px" data-act="rm">✕</button>
-      `;
-      row.querySelector('[data-act="rm"]').onclick = () => habRemoveWave(w.id);
+      row.style.cssText = "padding:2px 0;border-bottom:1px solid var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+      row.title = `${entry.name} — ${entry.dur.toFixed(3)}s @ ${entry.rate}Hz`;
+      row.textContent = entry.name;
       el.appendChild(row);
     });
-    if (habWaves.length < 2) {
+    if (entries.length < 2) {
       const note = document.createElement("div");
       note.style.cssText = "color: var(--txt2); font-size: 10px; margin-top: 4px";
-      note.textContent = "Add at least one more recording — the band needs ≥2 to compute a spread.";
+      note.textContent = "Check at least one more recording — the band needs ≥2 to compute a spread.";
       el.appendChild(note);
     }
   }
@@ -197,11 +173,20 @@
     if (habSvgEl) habDraw();
   }
 
+  function peakAbs(samples) {
+    let p = 0;
+    for (let i = 0; i < samples.length; i++) {
+      const v = Math.abs(samples[i]);
+      if (v > p) p = v;
+    }
+    return p || 1;
+  }
+
   // ── Spectrum computation ─────────────────────────────────────────
   // Returns { freqs: Float64Array (kHz), amp: Float64Array } with amp
   // already converted to the requested display scale.
   function computeMeanSpectrum(wave, opts) {
-    const { wl, ovlpPct, wn, scale, fmin, fmax } = opts;
+    const { wl, ovlpPct, wn, scale, fmin, fmax, normalize } = opts;
     const samples = wave.samples;
     const rate = wave.rate;
     const hop = Math.max(1, Math.round(wl * (1 - ovlpPct / 100)));
@@ -211,6 +196,11 @@
     const nBinsFull = fftN >> 1;
     const nyq = rate / 2;
 
+    // Peak-normalize the recording (to full scale) before analysis, so
+    // recordings captured at different gain levels contribute equally to
+    // the averaged contour/band instead of the louder one dominating.
+    const gain = normalize ? 1 / peakAbs(samples) : 1;
+
     const nFrames = Math.max(1, Math.floor((samples.length - wl) / hop) + 1);
     const meanPower = new Float64Array(nBinsFull);
 
@@ -219,7 +209,7 @@
       const re = new Float32Array(fftN),
         im = new Float32Array(fftN);
       for (let i = 0; i < wl && off + i < samples.length; i++)
-        re[i] = samples[off + i] * win[i];
+        re[i] = samples[off + i] * win[i] * gain;
       fft(re, im, fftN);
       for (let b = 0; b < nBinsFull; b++) {
         meanPower[b] += re[b] * re[b] + im[b] * im[b];
@@ -286,14 +276,15 @@
 
   // ── Draw ─────────────────────────────────────────────────────────
   function habDraw() {
-    if (habWaves.length < 2) {
-      alert("Load at least two recordings first.");
+    const waves = habSelectedEntries();
+    if (waves.length < 2) {
+      alert("Check at least two recordings in the Loaded Audio panel first.");
       return;
     }
-    const rates = new Set(habWaves.map((w) => w.rate));
+    const rates = new Set(waves.map((w) => w.rate));
     if (rates.size > 1) {
       alert(
-        "All selected recordings must share the same sample rate to be averaged together.\n" +
+        "All checked recordings must share the same sample rate to be averaged together.\n" +
           "Rates found: " + Array.from(rates).join(", "),
       );
       return;
@@ -303,19 +294,20 @@
     const ovlpPct = parseFloat($("habOvlp").value) || 75;
     const wn = $("habWn").value || "hanning";
     const scale = $("habScale").value || "linear";
+    const normalize = $("habNormalize").checked;
     const fmin = Math.max(0, parseFloat($("habFmin").value) || 0);
-    const fmax = parseFloat($("habFmax").value) || habWaves[0].rate / 2 / 1000;
+    const fmax = parseFloat($("habFmax").value) || waves[0].rate / 2 / 1000;
     const yMin = parseFloat($("habYMin").value);
     const central = $("habCentral").value || "mean";
     const bandMult = parseFloat($("habBandMult").value) || 1;
     const lineColor = $("habLineColor").value || "#000000";
     const bandColor = $("habBandColor").value || "#000000";
-    const bandAlpha = parseFloat($("habBandAlpha").value);
+    const bandAlpha = Math.max(0, Math.min(100, parseFloat($("habBandAlpha").value) || 0)) / 100;
     const labelColorA = $("habLabelColorA").value || "#000000";
     const labelColorB = $("habLabelColorB").value || "#000000";
 
-    const opts = { wl, ovlpPct, wn, scale, fmin, fmax };
-    const specs = habWaves.map((w) => computeMeanSpectrum(w, opts));
+    const opts = { wl, ovlpPct, wn, scale, fmin, fmax, normalize };
+    const specs = waves.map((w) => computeMeanSpectrum(w, opts));
 
     const freqs = specs[0].freqs;
     const n = freqs.length;
@@ -369,7 +361,14 @@
 
     const ampLo = d.scale === "linear" ? 0 : d.yMin;
     const ampHi = d.scale === "linear" ? 1 : 0;
-    const AX = (v) => plotX + ((v - ampLo) / (ampHi - ampLo)) * plotW;
+    // Clamp before mapping — the central line isn't pre-clamped like the
+    // band edges are (a single file's dB spectrum can dip far below yMin
+    // at near-silent bins), so without this the line/band could be drawn
+    // past the axis instead of stopping at it.
+    const AX = (v) => {
+      const cv = Math.max(ampLo, Math.min(ampHi, v));
+      return plotX + ((cv - ampLo) / (ampHi - ampLo)) * plotW;
+    };
     const FY = (f) => plotY + plotH - ((f - d.fmin) / (d.fmax - d.fmin)) * plotH;
 
     let bandPath = "";
@@ -469,9 +468,11 @@
         svgEl("rect", { x: frameX + 1.5, y: frameY + 1.5, width: frameW - 3, height: frameH - 3, fill: "none", stroke: "#000", "stroke-width": 3 }),
       );
 
-      // Draggable/colorable letters
-      addLetter(svg, "A", specW * 0.86, H * 0.1, d.labelColorA);
-      addLetter(svg, "B", specW + imgW * 0.92, H * 0.1, d.labelColorB);
+      // Draggable/colorable letters — anchored a bit further into the
+      // top-right corner of each panel by default.
+      habLetterRefs = {};
+      addLetter(svg, "A", specW * 0.92, H * 0.06, d.labelColorA);
+      addLetter(svg, "B", specW + imgW * 0.965, H * 0.06, d.labelColorB);
     }
 
     svg.appendChild(
@@ -495,26 +496,39 @@
     });
     t.textContent = key;
     svg.appendChild(t);
-    bindLetterDrag(t, pos, svg);
+    habLetterRefs[key] = { el: t, pos };
+    bindLetterDrag(t, pos, svg, key);
   }
 
-  // ── Drag: A/B letters (free move, no clamping) ──────────────────
-  function bindLetterDrag(el, pos, svg) {
-    let dragging = false, start = null, base = null;
+  // ── Drag: A/B letters (free move, no clamping). When "Snap A/B
+  // together" is checked, dragging one carries the other by the same
+  // delta, so their relative alignment holds while you reposition both.
+  function bindLetterDrag(el, pos, svg, key) {
+    let dragging = false, start = null, base = null, otherBase = null;
     el.addEventListener("pointerdown", (ev) => {
       ev.stopPropagation();
       dragging = true;
       start = { x: ev.clientX, y: ev.clientY };
       base = { dx: pos.dx, dy: pos.dy };
+      const other = habLetterRefs[key === "A" ? "B" : "A"];
+      otherBase = other ? { dx: other.pos.dx, dy: other.pos.dy } : null;
       el.setPointerCapture(ev.pointerId);
     });
     el.addEventListener("pointermove", (ev) => {
       if (!dragging) return;
       const p0 = clientToSvg(svg, start.x, start.y);
       const p1 = clientToSvg(svg, ev.clientX, ev.clientY);
-      pos.dx = base.dx + (p1.x - p0.x);
-      pos.dy = base.dy + (p1.y - p0.y);
+      const dx = p1.x - p0.x, dy = p1.y - p0.y;
+      pos.dx = base.dx + dx;
+      pos.dy = base.dy + dy;
       el.setAttribute("transform", `translate(${pos.dx} ${pos.dy})`);
+
+      if ($("habSnapLetters").checked && otherBase) {
+        const other = habLetterRefs[key === "A" ? "B" : "A"];
+        other.pos.dx = otherBase.dx + dx;
+        other.pos.dy = otherBase.dy + dy;
+        other.el.setAttribute("transform", `translate(${other.pos.dx} ${other.pos.dy})`);
+      }
     });
     el.addEventListener("pointerup", (ev) => {
       dragging = false;
@@ -654,8 +668,7 @@
   }
 
   // Expose to inline onclick/oninput handlers in index.html
-  window.habAddFiles = habAddFiles;
-  window.habUseLoadedAudio = habUseLoadedAudio;
+  window.habRenderLibPicker = habRenderLibPicker;
   window.habOnImageFile = habOnImageFile;
   window.habResetImagePosition = habResetImagePosition;
   window.habDraw = habDraw;
