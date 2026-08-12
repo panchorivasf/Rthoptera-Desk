@@ -146,6 +146,23 @@
       note.textContent = "Check at least one more recording — the band needs ≥2 to compute a spread.";
       el.appendChild(note);
     }
+    // Mixed sample rates are fine — spectra are matched by frequency — but
+    // the usable band stops at the lowest Nyquist, so say so up front rather
+    // than letting the plot quietly end early.
+    const rates = Array.from(new Set(entries.map((e) => e.rate))).sort(
+      (a, b) => a - b,
+    );
+    if (rates.length > 1) {
+      const note = document.createElement("div");
+      note.style.cssText =
+        "color: var(--txt2); font-size: 10px; margin-top: 4px; line-height: 1.3";
+      note.textContent =
+        `Mixed sample rates (${rates.join(", ")} Hz). Spectra are matched by ` +
+        `frequency; the averaged curve stops at ` +
+        `${(rates[0] / 2 / 1000).toFixed(1)} kHz — the Nyquist limit of the ` +
+        `lowest rate. The frequency axis still spans whatever Max. Freq you set.`;
+      el.appendChild(note);
+    }
   }
 
   // ── Image loading (as a data URL, so the exported SVG is standalone) ─
@@ -160,6 +177,11 @@
         habImg = { dataUrl, w: probe.naturalWidth, h: probe.naturalHeight };
         habImgPan = null; // recompute default pan on next draw
         $("habImgStatus").textContent = `${file.name} (${probe.naturalWidth}×${probe.naturalHeight})`;
+        // Redraw immediately if a figure is already on screen. The photo panel
+        // only exists inside the drawn SVG, so without this the picture stays
+        // invisible until the user happens to press Draw again — which reads
+        // as "I selected a picture and nothing happened".
+        if (habSvgEl) habDraw();
       };
       probe.onerror = () => alert(`Could not load image "${file.name}"`);
       probe.src = dataUrl;
@@ -183,10 +205,15 @@
   }
 
   // ── Spectrum computation ─────────────────────────────────────────
-  // Returns { freqs: Float64Array (kHz), amp: Float64Array } with amp
-  // already converted to the requested display scale.
+  // Returns { freqs: Float64Array (kHz), power: Float64Array, winSum } — the
+  // RAW mean power spectrum on this recording's own frequency grid, which
+  // depends on its sample rate. Converting to the display scale is
+  // deliberately NOT done here: recordings are first resampled onto one
+  // shared frequency grid (see resampleSpectrum), and only then scaled, so
+  // that a "normalise to the peak" happens over the same band for every
+  // recording rather than over each one's private range.
   function computeMeanSpectrum(wave, opts) {
-    const { wl, ovlpPct, wn, scale, fmin, fmax, normalize } = opts;
+    const { wl, ovlpPct, wn, normalize } = opts;
     const samples = wave.samples;
     const rate = wave.rate;
     const hop = Math.max(1, Math.round(wl * (1 - ovlpPct / 100)));
@@ -217,36 +244,65 @@
     }
     for (let b = 0; b < nBinsFull; b++) meanPower[b] /= nFrames;
 
-    const bLo = Math.max(0, Math.floor(((fmin * 1000) / nyq) * nBinsFull));
-    const bHi = Math.min(nBinsFull - 1, Math.ceil(((fmax * 1000) / nyq) * nBinsFull));
-    const nOut = Math.max(1, bHi - bLo + 1);
-    const freqs = new Float64Array(nOut);
-    const amp = new Float64Array(nOut);
-    for (let i = 0; i < nOut; i++) {
-      const b = bLo + i;
-      freqs[i] = (b * nyq) / nBinsFull / 1000; // kHz
-      amp[i] = meanPower[b];
+    // Full spectrum on this recording's own grid: bin b sits at
+    // b * (nyq / nBinsFull) Hz, so the same bin index means a DIFFERENT
+    // frequency for every sample rate. That is why callers must resample
+    // onto a shared grid before combining recordings.
+    const freqs = new Float64Array(nBinsFull);
+    const power = new Float64Array(nBinsFull);
+    for (let b = 0; b < nBinsFull; b++) {
+      freqs[b] = (b * nyq) / nBinsFull / 1000; // kHz
+      power[b] = meanPower[b];
     }
+    return { freqs, power, winSum };
+  }
 
+  // Linear interpolation of a spectrum onto an arbitrary ascending frequency
+  // grid (kHz). Points beyond the recording's Nyquist clamp to the last bin,
+  // but callers cap the grid at the lowest Nyquist in the set so that never
+  // has to happen with real data.
+  function resampleSpectrum(freqs, power, grid) {
+    const out = new Float64Array(grid.length);
+    const n = freqs.length;
+    if (!n) return out;
+    const df = n > 1 ? freqs[1] - freqs[0] : 1; // uniform by construction
+    for (let i = 0; i < grid.length; i++) {
+      const f = grid[i];
+      if (f <= freqs[0]) { out[i] = power[0]; continue; }
+      if (f >= freqs[n - 1]) { out[i] = power[n - 1]; continue; }
+      const pos = f / df;
+      const b0 = Math.floor(pos);
+      const fr = pos - b0;
+      out[i] = power[b0] * (1 - fr) + power[b0 + 1] * fr;
+    }
+    return out;
+  }
+
+  // Converts a raw power spectrum to the requested display scale. Runs on the
+  // SHARED grid so every recording is normalised over the same band.
+  function toDisplayScale(power, scale, winSum) {
+    const n = power.length;
+    const amp = new Float64Array(n);
     if (scale === "linear") {
       let mx = 0;
-      for (let i = 0; i < nOut; i++) if (amp[i] > mx) mx = amp[i];
+      for (let i = 0; i < n; i++) if (power[i] > mx) mx = power[i];
       if (mx < 1e-30) mx = 1;
-      for (let i = 0; i < nOut; i++) amp[i] = amp[i] / mx;
+      for (let i = 0; i < n; i++) amp[i] = power[i] / mx;
     } else if (scale === "dB") {
       let mx = 0;
-      for (let i = 0; i < nOut; i++) if (amp[i] > mx) mx = amp[i];
+      for (let i = 0; i < n; i++) if (power[i] > mx) mx = power[i];
       if (mx < 1e-30) mx = 1e-30;
-      for (let i = 0; i < nOut; i++) amp[i] = 10 * Math.log10((amp[i] + 1e-30) / mx);
+      for (let i = 0; i < n; i++)
+        amp[i] = 10 * Math.log10((power[i] + 1e-30) / mx);
     } else {
       // dBFS: calibrate against a full-scale sinusoid under this window,
       // since decoded samples are already float in [-1, 1] (no original
       // bit depth to look up, unlike the R version).
-      const ref = ((winSum / 2) * (winSum / 2)) || 1;
-      for (let i = 0; i < nOut; i++) amp[i] = 10 * Math.log10((amp[i] + 1e-30) / ref);
+      const ref = (winSum / 2) * (winSum / 2) || 1;
+      for (let i = 0; i < n; i++)
+        amp[i] = 10 * Math.log10((power[i] + 1e-30) / ref);
     }
-
-    return { freqs, amp };
+    return amp;
   }
 
   // ── SVG helpers ──────────────────────────────────────────────────
@@ -274,6 +330,28 @@
     return ticks;
   }
 
+  // Frequency ticks at a user-chosen spacing: multiples of `step` that fall
+  // inside [lo, hi] (so ticks land on round numbers like 5, 10, 15 … rather
+  // than on the range endpoints). A step of 0/blank means "auto".
+  function stepTicks(lo, hi, step) {
+    if (!(step > 0) || hi <= lo) return niceTicks(lo, hi, 6);
+    const eps = step * 1e-9;
+    const first = Math.ceil((lo - eps) / step);
+    const ticks = [];
+    // Index-based so repeated addition can't drift on steps like 0.1.
+    for (let k = first; k * step <= hi + eps; k++) ticks.push(k * step);
+    return ticks.length ? ticks : niceTicks(lo, hi, 6);
+  }
+
+  // Decimals needed to print a tick without lying about the step
+  // (step 0.25 must show 0.25, not 0.3).
+  function stepDecimals(step) {
+    if (!(step > 0)) return null;
+    const s = String(step);
+    const dot = s.indexOf(".");
+    return dot < 0 ? 0 : Math.min(4, s.length - dot - 1);
+  }
+
   // ── Draw ─────────────────────────────────────────────────────────
   function habDraw() {
     const waves = habSelectedEntries();
@@ -281,14 +359,12 @@
       alert("Check at least two recordings in the Loaded Audio panel first.");
       return;
     }
-    const rates = new Set(waves.map((w) => w.rate));
-    if (rates.size > 1) {
-      alert(
-        "All checked recordings must share the same sample rate to be averaged together.\n" +
-          "Rates found: " + Array.from(rates).join(", "),
-      );
-      return;
-    }
+    // Mixed sample rates are supported: each recording is analysed on its own
+    // frequency grid and then resampled onto one shared grid below. What they
+    // cannot share is a band no recording covers, so the top of the range is
+    // capped at the LOWEST Nyquist in the set.
+    const nyqKhz = waves.map((w) => w.rate / 2 / 1000);
+    const nyqKhzMin = Math.min(...nyqKhz);
 
     const wl = parseInt($("habWl").value) || 1024;
     const ovlpPct = parseFloat($("habOvlp").value) || 75;
@@ -296,7 +372,10 @@
     const scale = $("habScale").value || "linear";
     const normalize = $("habNormalize").checked;
     const fmin = Math.max(0, parseFloat($("habFmin").value) || 0);
-    const fmax = parseFloat($("habFmax").value) || waves[0].rate / 2 / 1000;
+    // Default to the lowest Nyquist, not the first recording's — with mixed
+    // rates the first one is an arbitrary pick and may not be the limiting one.
+    const fmaxReq = parseFloat($("habFmax").value) || nyqKhzMin;
+    const fstep = Math.max(0, parseFloat($("habFStep").value) || 0);
     const yMin = parseFloat($("habYMin").value);
     const central = $("habCentral").value || "mean";
     const bandMult = parseFloat($("habBandMult").value) || 1;
@@ -306,15 +385,66 @@
     const labelColorA = $("habLabelColorA").value || "#000000";
     const labelColorB = $("habLabelColorB").value || "#000000";
 
-    const opts = { wl, ovlpPct, wn, scale, fmin, fmax, normalize };
+    // ── Shared frequency grid ────────────────────────────────────────
+    // Everything below is indexed by FREQUENCY, not by FFT bin. Bin i means a
+    // different frequency at every sample rate, so combining recordings by
+    // bin index silently averaged unrelated frequencies — and, once the
+    // spectra had different lengths, read past the end of the shorter ones
+    // and filled the contour with NaN, which drew nothing at all.
+    // Two different limits, deliberately kept apart:
+    //   fmax     — the axis range, exactly what the user asked for.
+    //   fmaxData — where real data stops, i.e. the lowest Nyquist in the set.
+    // Capping the AXIS at fmaxData was wrong: asking for 0–48 kHz with a
+    // 44.1 kHz recording in the set silently redrew the axis as 0–22 and the
+    // figure looked zoomed in. The axis now honours the request and the
+    // contour simply ends where the data does, which also makes the missing
+    // band visible instead of hiding it.
+    const fmax = fmaxReq;
+    const fmaxData = Math.min(fmaxReq, nyqKhzMin);
+    if (!(fmaxData > fmin)) {
+      alert(
+        `No data in the requested band.\n\nMin. Freq is ${fmin} kHz, but the ` +
+          `checked recordings only carry information up to ` +
+          `${fmaxData.toFixed(2)} kHz — the Nyquist limit of the lowest sample ` +
+          `rate in the set (${Math.min(...waves.map((w) => w.rate))} Hz).\n\n` +
+          `Lower Min. Freq, or uncheck the lower-rate recordings.`,
+      );
+      return;
+    }
+
+    const opts = { wl, ovlpPct, wn, normalize };
     const specs = waves.map((w) => computeMeanSpectrum(w, opts));
 
-    const freqs = specs[0].freqs;
-    const n = freqs.length;
+    // Resolution of the shared grid: the finest native bin spacing in the
+    // set, so the best-resolved recording is not thrown away. With one FFT
+    // size, that is the LOWEST sample rate (same bin count over a narrower
+    // band). Bounded so a pathological setting cannot allocate wildly.
+    const finestKhz = Math.min(
+      ...specs.map((s) => (s.freqs.length > 1 ? s.freqs[1] - s.freqs[0] : 1)),
+    );
+    const nGrid = Math.max(
+      256,
+      Math.min(8192, Math.ceil((fmaxData - fmin) / Math.max(finestKhz, 1e-9)) + 1),
+    );
+    const freqs = new Float64Array(nGrid);
+    for (let i = 0; i < nGrid; i++)
+      freqs[i] = fmin + ((fmaxData - fmin) * i) / (nGrid - 1);
+
+    // Resample every recording onto that grid, THEN convert to the display
+    // scale, so each is normalised over the same band.
+    const amps = specs.map((s) =>
+      toDisplayScale(
+        resampleSpectrum(s.freqs, s.power, freqs),
+        scale,
+        s.winSum,
+      ),
+    );
+
+    const n = nGrid;
     const central_ = new Float64Array(n);
     const sd = new Float64Array(n);
     for (let i = 0; i < n; i++) {
-      const vals = specs.map((s) => s.amp[i]);
+      const vals = amps.map((a) => a[i]);
       if (central === "median") {
         const sorted = vals.slice().sort((a, b) => a - b);
         const m = sorted.length;
@@ -338,7 +468,7 @@
 
     renderSvg({
       freqs, central: central_, lower, upper,
-      fmin, fmax, scale, yMin,
+      fmin, fmax, fstep, scale, yMin,
       lineColor, bandColor, bandAlpha, labelColorA, labelColorB,
     });
   }
@@ -356,7 +486,14 @@
 
     // ── Spectrum panel (frequency vertical, amplitude horizontal —
     // the coord_flip() from the R version) ──────────────────────
-    const ML = 46, MT = 14, MB = 34, MR = 10;
+    // Tick labels and axis titles, in svg user units (UNIT = 100 per inch).
+    const FS_TICK = 16, FS_AXIS = 18;
+    // Margins are sized for that type: the left one has to hold a rotated
+    // axis title plus the widest tick label without the two colliding, and
+    // the bottom one a row of tick labels plus a title below them. They were
+    // cut for 10/11pt text, so raising the type without raising these clips
+    // the labels at the figure edge.
+    const ML = 84, MT = 14, MB = 58, MR = 10;
     const plotX = ML, plotY = MT, plotW = specW - ML - MR, plotH = H - MT - MB;
 
     const ampLo = d.scale === "linear" ? 0 : d.yMin;
@@ -397,17 +534,18 @@
       svgEl("rect", { x: plotX, y: plotY, width: plotW, height: plotH, fill: "none", stroke: "#000", "stroke-width": 1 }),
     );
 
-    const freqTicks = niceTicks(d.fmin, d.fmax, 6);
+    const freqTicks = stepTicks(d.fmin, d.fmax, d.fstep);
+    const freqDec = stepDecimals(d.fstep);
     freqTicks.forEach((f) => {
       const y = FY(f);
       svg.appendChild(svgEl("line", { x1: plotX - 4, y1: y, x2: plotX, y2: y, stroke: "#000" }));
-      const t = svgEl("text", { x: plotX - 6, y, "text-anchor": "end", "dominant-baseline": "middle", "font-size": 10 });
-      t.textContent = f.toFixed(f % 1 === 0 ? 0 : 1);
+      const t = svgEl("text", { x: plotX - 6, y, "text-anchor": "end", "dominant-baseline": "middle", "font-size": FS_TICK });
+      t.textContent = f.toFixed(freqDec !== null ? freqDec : f % 1 === 0 ? 0 : 1);
       svg.appendChild(t);
     });
     const axLabel = svgEl("text", {
-      x: 12, y: plotY + plotH / 2, "text-anchor": "middle", "font-size": 11,
-      transform: `rotate(-90 12 ${plotY + plotH / 2})`,
+      x: 16, y: plotY + plotH / 2, "text-anchor": "middle", "font-size": FS_AXIS,
+      transform: `rotate(-90 16 ${plotY + plotH / 2})`,
     });
     axLabel.textContent = "Frequency (kHz)";
     svg.appendChild(axLabel);
@@ -416,11 +554,11 @@
     ampTicks.forEach((a) => {
       const x = AX(a);
       svg.appendChild(svgEl("line", { x1: x, y1: plotY + plotH, x2: x, y2: plotY + plotH + 4, stroke: "#000" }));
-      const t = svgEl("text", { x, y: plotY + plotH + 15, "text-anchor": "middle", "font-size": 10 });
+      const t = svgEl("text", { x, y: plotY + plotH + 20, "text-anchor": "middle", "font-size": FS_TICK });
       t.textContent = String(Math.round(a * 100) / 100);
       svg.appendChild(t);
     });
-    const ampLabel = svgEl("text", { x: plotX + plotW / 2, y: plotY + plotH + 28, "text-anchor": "middle", "font-size": 11 });
+    const ampLabel = svgEl("text", { x: plotX + plotW / 2, y: plotY + plotH + 46, "text-anchor": "middle", "font-size": FS_AXIS });
     ampLabel.textContent = "Amplitude";
     svg.appendChild(ampLabel);
 

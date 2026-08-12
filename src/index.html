@@ -530,15 +530,20 @@
             align-items: center;
             overflow-y: auto;
             gap: 20px;
-            padding: 32px 24px 40px;
+            /* Top padding clears the logo's glow (see .logo-glow in
+               styles.css): the halo reaches ~50px past the icon's edge, and
+               with only 32px here its top was cut off by the pane edge. */
+            padding: 64px 24px 40px;
             text-align: center;
           "
         >
-          <img
-            src="assets/app-icon.png"
-            alt="Rthoptera"
-            style="width: 340px; height: 340px; object-fit: contain; filter: drop-shadow(0 4px 28px rgba(0,0,0,0.4))"
-          />
+          <div class="logo-glow">
+            <img
+              src="assets/app-icon.png"
+              alt="Rthoptera"
+              style="width: 340px; height: 340px; object-fit: contain; filter: drop-shadow(0 4px 28px rgba(0,0,0,0.4)); display: block"
+            />
+          </div>
           <div style="font-size: 22px; font-weight: 700; color: var(--txt3)">
             Rthoptera Desk
           </div>
@@ -707,6 +712,21 @@
                     region to keep.
                   </div>
 
+                  <!-- Time selection (no mode to enter — just drag) -->
+                  <div style="border-top: 1px solid var(--border); padding-top: 5px">
+                    <div style="font-size: 11px; font-weight: 600; color: var(--txt3); margin-bottom: 3px">
+                      Time selection
+                    </div>
+                    <div style="font-size: 10px; color: var(--txt2); line-height: 1.3; margin-bottom: 4px">
+                      Click the waveform to place the playhead; drag to select
+                      a stretch of time. |&lt; and &gt;| step through its edges.
+                    </div>
+                    <div class="row" style="gap: 4px">
+                      <span id="ppSelReadout" style="font-size: 10px; color: var(--txt3); flex: 1">No selection</span>
+                      <button id="btnClearPpSel" onclick="clearPpSel()" disabled style="font-size: 10px; padding: 2px 7px" title="Clear the time selection (a plain click on the waveform does this too).">Clear</button>
+                    </div>
+                  </div>
+
                   <!-- Trim -->
                   <div style="border-top: 1px solid var(--border); padding-top: 5px">
                     <div
@@ -858,6 +878,52 @@
                     </div>
                   </div>
 
+                  <!-- Frequency drop (pitch shift, duration preserved) -->
+                  <div style="border-top: 1px solid var(--border); padding-top: 5px">
+                    <div style="font-size: 11px; font-weight: 600; color: var(--txt3); margin-bottom: 3px">
+                      Frequency drop
+                    </div>
+                    <div style="font-size: 10px; color: var(--txt2); line-height: 1.3; margin-bottom: 4px">
+                      Scales every frequency down by this percentage while
+                      keeping the duration the same — 25% moves a 40 kHz peak
+                      to 30 kHz over the same 3 s.
+                    </div>
+                    <div class="row" style="gap: 4px">
+                      <span style="color: var(--txt2); font-size: 11px; width: 56px">Drop</span>
+                      <input
+                        type="number"
+                        id="editFreqDrop"
+                        value="50"
+                        min="1"
+                        max="99"
+                        step="1"
+                        disabled
+                        style="width: 64px"
+                        title="Percentage to lower every frequency by. 50% halves them; 0 and 100 are not valid."
+                      />
+                      <span style="color: var(--txt2); font-size: 11px">%</span>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <button
+                        id="btnApplyFreqDrop"
+                        onclick="applyFreqDropEdit()"
+                        disabled
+                        style="font-size: 11px; flex: 1"
+                      >
+                        ↓ Drop
+                      </button>
+                      <button
+                        id="btnClearFreqDrop"
+                        onclick="clearFreqDrop()"
+                        disabled
+                        style="font-size: 11px"
+                        title="Remove the frequency drop."
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+
                   <div
                     id="editStatus"
                     style="
@@ -934,6 +1000,14 @@
                     📶 Normalize selected
                   </button>
                 </div>
+                <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px">
+                  <span style="color: var(--txt2); font-size: 10px">Freq. drop</span>
+                  <input type="number" id="batchFreqDrop" value="50" min="1" max="99" step="1" style="width: 56px; font-size: 10px" title="Scale every frequency down by this percentage, keeping each recording's duration unchanged." />
+                  <span style="color: var(--txt2); font-size: 10px">%</span>
+                  <button onclick="applyBatchFreqDrop()" id="btnBatchFreqDrop" class="pri" style="font-size: 10px; padding: 2px 8px" disabled>
+                    ↓ Drop selected
+                  </button>
+                </div>
                 <div style="margin-top: 8px">
                   <button onclick="saveSelectedLibraryFiles()" id="btnBatchSave" style="font-size: 11px" disabled>
                     💾 Save edited files…
@@ -959,7 +1033,7 @@
             flex: 1;
             display: none;
             flex-direction: column;
-            overflow: hidden;
+            overflow-y: auto;
             min-height: 0;
           "
         >
@@ -1191,6 +1265,57 @@
               ▶ Play
             </button>
             <button onclick="stopPb()" id="btnStop" disabled>■ Stop</button>
+            <!-- Playback extras — deliberately OUTSIDE analyzerOnlyControls
+                 so they stay available in Preprocessing, where the shared
+                 viewer is reparented. -->
+            <button
+              onclick="jumpEdge(-1)"
+              id="btnPrevEdge"
+              disabled
+              title="Jump to the previous selection edge (trim handles, or annotation bounds)"
+              style="font-family: monospace"
+            >
+              |&lt;
+            </button>
+            <button
+              onclick="jumpEdge(1)"
+              id="btnNextEdge"
+              disabled
+              title="Jump to the next selection edge (trim handles, or annotation bounds)"
+              style="font-family: monospace"
+            >
+              &gt;|
+            </button>
+            <span style="color: var(--txt2); font-size: 11px">Speed</span>
+            <input
+              type="number"
+              id="playSpeed"
+              value="100"
+              min="5"
+              max="400"
+              step="5"
+              style="width: 58px"
+              title="Playback speed as a percentage of real time. Slowing down also lowers the pitch, which brings ultrasonic song into hearing range."
+              onchange="onPlaySpeedChange()"
+            />
+            <span style="color: var(--txt2); font-size: 11px">%</span>
+            <span
+              style="color: var(--txt2); font-size: 11px"
+              title="Lower every frequency by this percentage for LISTENING only — the stored audio, measurements, exports and plots are untouched. Unlike Speed, this keeps the tempo: 0 = off."
+              >Freq drop</span
+            >
+            <input
+              type="number"
+              id="playFreqDrop"
+              value="0"
+              min="0"
+              max="99"
+              step="5"
+              style="width: 58px"
+              title="Lower every frequency by this percentage for LISTENING only — the stored audio, measurements, exports and plots are untouched. Unlike Speed, this keeps the tempo: 0 = off."
+              onchange="onPlayDropChange()"
+            />
+            <span style="color: var(--txt2); font-size: 11px">%</span>
             <span style="color: var(--txt2); font-size: 11px">t =</span>
             <span
               id="timeDisp"
@@ -1258,7 +1383,6 @@
               <button
                 id="toolSelect"
                 onclick="setTool('select')"
-                class="atool"
                 title="Select/Seek (S)"
               >
                 ↖ Select
@@ -1266,6 +1390,7 @@
               <button
                 id="toolAnnot"
                 onclick="setTool('annotate')"
+                class="atool"
                 title="Draw annotation (A)"
               >
                 ✏ Annotate
@@ -1276,6 +1401,21 @@
                 title="Pan/scroll (H)"
               >
                 ✋ Pan
+              </button>
+              <label
+                class="chk"
+                style="font-size: 11px; white-space: nowrap"
+                title="Ignore the vertical drag: annotations cover the whole frequency axis, so you only aim at the time axis."
+                ><input type="checkbox" id="annotTemporal" onchange="render()" />
+                Temporal only</label
+              >
+              <button
+                id="btnAnnotUndo"
+                onclick="undoAnnot()"
+                disabled
+                title="Nothing to undo (Ctrl+Z)"
+              >
+                ↶ Undo
               </button>
               <button
                 onclick="exportAnnotations()"
@@ -1308,6 +1448,7 @@
               padding: 5px 7px 0;
               align-items: center;
               flex-wrap: wrap;
+              flex-shrink: 0;
             "
           >
             <span style="font-size: 10px; color: var(--txt2)"
@@ -1345,15 +1486,17 @@
             />
           </div>
 
-          <!-- ═══ BOTTOM TABS ══════════════════════════════════════════════════════ -->
+          <!-- ═══ BOTTOM TABS ══════════════════════════════════════════════════════
+               flex-shrink:0 with natural height, NOT flex:1 — the whole
+               #mainview-analyzer pane scrolls (as Temporal Analysis does), so
+               this section no longer has to survive on whatever vertical
+               space the waveform/spectrogram viewer leaves over. -->
           <div
             style="
-              flex: 1;
-              overflow: hidden;
+              flex-shrink: 0;
               padding: 7px;
               display: flex;
               flex-direction: column;
-              min-height: 0;
             "
           >
             <div class="tabs">
@@ -1362,11 +1505,7 @@
               </div>
             </div>
 
-            <div
-              id="tab-detect"
-              class="tc active"
-              style="flex: 1; overflow: auto; min-height: 0"
-            >
+            <div id="tab-detect" class="tc active">
               <div
                 style="
                   display: flex;
@@ -1463,6 +1602,8 @@
                   overflow: auto;
                   border: 1px solid var(--border);
                   border-radius: var(--rad);
+                  max-height: 420px;
+                  resize: vertical;
                 "
               >
                 <table class="dtable" id="measTable">
@@ -2614,6 +2755,28 @@
                 >
                   🗑
                 </button>
+                <span style="color: var(--txt2); font-size: 10px">file</span>
+                <button
+                  onclick="exportPresetFile()"
+                  style="font-size: 11px; padding: 3px 8px"
+                  title="Write the current plot settings to a .json file you can keep beside your recordings or share."
+                >
+                  📤 Export…
+                </button>
+                <button
+                  onclick="document.getElementById('presetFile').click()"
+                  style="font-size: 11px; padding: 3px 8px"
+                  title="Load plot settings from a .json preset file into the toolbar."
+                >
+                  📥 Import…
+                </button>
+                <input
+                  type="file"
+                  id="presetFile"
+                  accept=".json,application/json"
+                  style="display: none"
+                  onchange="importPresetFile(this.files)"
+                />
                 <span
                   id="presetStatus"
                   style="font-size: 10px; color: var(--txt3); min-width: 90px"
@@ -3333,7 +3496,7 @@
                       <input
                         type="number"
                         id="plotLegendSize"
-                        value="11"
+                        value="18"
                         min="6"
                         max="30"
                         step="0.5"
@@ -3352,7 +3515,7 @@
                       <input
                         type="number"
                         id="plotTickSize"
-                        value="9"
+                        value="16"
                         min="5"
                         max="28"
                         step="0.5"
@@ -3600,6 +3763,25 @@
                       <option value="axes">Time axis</option>
                     </select>
                   </div>
+                  <div class="row" title="Length of the scale bar on the selected panel(s). Each panel keeps its own length, since zoom panels span very different durations. Leave a panel on Auto for a bar about 20% of that panel's width.">
+                    <span style="color: var(--txt2); font-size: 11px; width: 110px">Scale bar length</span>
+                    <input type="number" id="ozScalebarLen" value="10" min="0" step="1" style="width: 56px" />
+                    <select id="ozScalebarUnit" style="font-size: 11px; width: 48px">
+                      <option value="ms" selected>ms</option>
+                      <option value="s">s</option>
+                    </select>
+                  </div>
+                  <div class="row" style="gap: 6px">
+                    <button onclick="ozApplyScalebarLength()" style="font-size: 11px; flex: 1" title="Apply this length to the selected scale bar(s).">Set</button>
+                    <button onclick="ozAutoScalebarLength()" style="font-size: 11px; flex: 1" title="Return the selected scale bar(s) to the automatic length.">Auto</button>
+                    <label class="chk" style="font-size: 11px; white-space: nowrap" title="Apply to every panel instead of only the selected scale bars.">
+                      <input type="checkbox" id="ozScalebarAll" /> All panels
+                    </label>
+                  </div>
+                  <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
+                    Click a scale bar in the figure to select it, then Set. A
+                    length longer than its panel is capped at the panel's span.
+                  </div>
                   <label class="chk" style="font-size: 11px">
                     <input type="checkbox" id="ozRescalePanels" /> Rescale each panel to its own peak
                   </label>
@@ -3615,11 +3797,11 @@
                 <div style="display: flex; flex-direction: column; gap: 5px">
                   <div class="row" style="justify-content: space-between">
                     <span style="color: var(--txt2); font-size: 11px">Trace color</span>
-                    <input type="color" id="ozTraceColor" value="#16150f" style="width: 24px; height: 20px; border: 1px solid var(--border2); border-radius: 3px; padding: 1px; background: var(--bg3); cursor: pointer" />
+                    <input type="color" id="ozTraceColor" value="#000000" style="width: 24px; height: 20px; border: 1px solid var(--border2); border-radius: 3px; padding: 1px; background: var(--bg3); cursor: pointer" />
                   </div>
                   <div class="row">
                     <span style="color: var(--txt2); font-size: 11px; width: 100px">Trace width</span>
-                    <input type="number" id="ozTraceWidth" value="0.7" min="0.1" max="5" step="0.1" style="width: 64px" />
+                    <input type="number" id="ozTraceWidth" value="0.8" min="0.1" max="5" step="0.1" style="width: 64px" />
                   </div>
                   <label class="chk" style="font-size: 11px">
                     <input type="checkbox" id="ozShowLabels" checked /> Show panel labels
@@ -3654,11 +3836,11 @@
                   </div>
                   <div class="row">
                     <span style="color: var(--txt2); font-size: 11px; width: 60px">Size</span>
-                    <input type="number" id="ozFontSize" value="12" min="4" max="72" step="0.5" style="width: 64px" />
+                    <input type="number" id="ozFontSize" value="18" min="4" max="72" step="0.5" style="width: 64px" />
                   </div>
                   <div class="row">
                     <span style="color: var(--txt2); font-size: 11px; width: 60px">Thickness</span>
-                    <input type="number" id="ozStrokeWidth" value="1" min="0" max="5" step="0.1" style="width: 64px" />
+                    <input type="number" id="ozStrokeWidth" value="0.5" min="0" max="5" step="0.1" style="width: 64px" />
                   </div>
                   <div class="row" style="justify-content: space-between">
                     <span style="color: var(--txt2); font-size: 11px">Color</span>
@@ -3671,6 +3853,23 @@
                   <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
                     "Thickness"/"Color" also restyle a selected scale bar's
                     line or a selected zoom bracket.
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <h2>Preset</h2>
+                <div style="display: flex; flex-direction: column; gap: 5px">
+                  <div class="row" style="gap: 6px">
+                    <button onclick="ozExportPreset()" style="font-size: 11px; flex: 1" title="Write the current Osc. Zoom settings to a .json file you can reuse or share.">📤 Export…</button>
+                    <button onclick="document.getElementById('ozPresetFile').click()" style="font-size: 11px; flex: 1" title="Load Osc. Zoom settings from a .json preset file.">📥 Import…</button>
+                  </div>
+                  <input type="file" id="ozPresetFile" accept=".json,application/json" style="display: none" onchange="ozImportPreset(this.files)" />
+                  <span id="ozPresetStatus" style="font-size: 10px; color: var(--txt3)"></span>
+                  <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
+                    Saves the settings in this sidebar only — panel ranges,
+                    label text and dragged positions belong to the recording,
+                    not the preset.
                   </div>
                 </div>
               </div>
@@ -3777,6 +3976,10 @@
                   <div class="row">
                     <span style="color: var(--txt2); font-size: 11px; width: 90px">Max. Freq (kHz)</span>
                     <input type="number" id="habFmax" value="48" min="1" step="1" style="width: 64px" />
+                  </div>
+                  <div class="row">
+                    <span style="color: var(--txt2); font-size: 11px; width: 90px">Freq. step (kHz)</span>
+                    <input type="number" id="habFStep" value="0" min="0" step="1" style="width: 64px" title="Spacing between frequency axis ticks/labels. 0 = automatic (6 ticks)." />
                   </div>
                   <div class="row" id="habYMinRow" style="display: none">
                     <span style="color: var(--txt2); font-size: 11px; width: 90px">Min. Amp (dB)</span>
@@ -3929,11 +4132,48 @@
                     🧬 Merge &amp; Summarize
                   </button>
                   <div id="summStatus" style="color: var(--txt2); font-size: 11px"></div>
+                  <div style="border-top: 1px solid var(--border); padding-top: 6px; margin-top: 2px">
+                    <label class="chk" style="font-size: 11px">
+                      <input type="checkbox" id="summRegressOn" /> Temperature regression
+                    </label>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <span style="color: var(--txt2); font-size: 11px">Regress to</span>
+                      <input type="number" id="summRegressTemp" value="25" min="-20" max="60" step="0.5" style="width: 58px; font-size: 11px" title="Express every measurement at this temperature, using a least-squares fit of each metric against the temperatures actually recorded." />
+                      <span style="color: var(--txt2); font-size: 11px">°C</span>
+                    </div>
+                    <div id="summTempNote" style="color: var(--txt2); font-size: 10px; line-height: 1.3; margin-top: 4px"></div>
+                  </div>
                   <button onclick="summSaveWorkbook()" id="btnSummSaveXlsx" disabled style="font-size: 11px">
                     💾 Save Merged Workbook
                   </button>
                   <button onclick="summSaveReport()" id="btnSummSaveReport" disabled style="font-size: 11px">
                     📄 Save Text Report (DOCX)
+                  </button>
+                </div>
+              </div>
+
+              <!-- Structure selections: summarize a named subset of
+                   structures (the first train of every echeme, the odd
+                   "opening" strokes, …) beside the pooled totals. -->
+              <div class="panel">
+                <h2>Structure selections</h2>
+                <div style="display: flex; flex-direction: column; gap: 6px">
+                  <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
+                    Summarize a named subset of structures separately — the
+                    first train of every echeme, the odd-numbered (opening)
+                    strokes, the last train, and so on. Positions are counted
+                    inside each parent structure, per recording. Each
+                    selection gets its own rows in the summary table, its own
+                    sheets in the workbook, and its own paragraph in the
+                    report.
+                  </div>
+                  <div id="summSelList" style="display: flex; flex-direction: column; gap: 4px">
+                    <div style="color: var(--txt2); font-size: 11px">
+                      No selections yet — everything is summarized together.
+                    </div>
+                  </div>
+                  <button onclick="summAddSelection()" style="font-size: 11px">
+                    ➕ Add selection
                   </button>
                 </div>
               </div>
@@ -3980,6 +4220,7 @@
                     padding: 8px;
                     box-sizing: border-box;
                   "
+                  oninput="summReportEdited = true"
                   placeholder="The drafted report appears here after Merge & Summarize — edit freely before saving."
                 ></textarea>
               </div>
@@ -4016,6 +4257,28 @@
           >Loaded Audio</span
         >
         <span id="audioLibCount" style="font-size: 10px; color: var(--txt3)"></span>
+        <button
+          onclick="batchSelectAllLibrary(true)"
+          id="btnAudioLibSelAll"
+          style="font-size: 10px; padding: 2px 7px"
+          title="Check every loaded recording"
+          disabled
+        >
+          Select all
+        </button>
+        <button
+          onclick="batchSelectAllLibrary(false)"
+          id="btnAudioLibSelNone"
+          style="font-size: 10px; padding: 2px 7px"
+          title="Uncheck every loaded recording"
+          disabled
+        >
+          Clear selection
+        </button>
+        <span
+          id="audioLibSelCount"
+          style="font-size: 10px; color: var(--txt3)"
+        ></span>
         <div style="flex: 1"></div>
         <div
           id="audioLibSettingsRow"
