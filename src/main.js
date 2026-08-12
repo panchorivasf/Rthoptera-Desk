@@ -11938,11 +11938,12 @@
         return (m ? base.slice(0, m.index) : base).toLowerCase();
       }
 
-      // Columns that are identifiers/labels, not measurements — they must
-      // never be averaged. Covers the metadata tags (specimen_id/species/
+      // Columns that must never be averaged, regressed or used to predict a
+      // temperature. Covers the metadata tags (specimen_id/species/
       // locality/source_file), every *_id column (motif_id/train_id/
       // peak_id/seq_id — these are categorical row numbers, not counts),
-      // and the plain running-index columns ("selection", "n").
+      // the plain running-index columns ("selection", "n"), and the columns
+      // that record WHERE something sits rather than what it sounds like.
       function _summIsCategoricalKey(k) {
         const kl = k.toLowerCase();
         if (
@@ -11960,7 +11961,25 @@
           // Averaging them would report the mean ordinal of the selection,
           // which says nothing about the animal.
           kl === "sel_position" ||
-          kl === "sel_group_n"
+          kl === "sel_group_n" ||
+          // Position in the recording, not a property of the song. Averaging
+          // these reports when the recorder happened to be started: roll ten
+          // seconds earlier and every one of them shifts while the song is
+          // identical. Excluded from the temperature fits for the same
+          // reason — a lead-in time that drifts across a warming afternoon
+          // correlates with temperature without being caused by it, and
+          // would otherwise qualify as a thermometer.
+          //
+          // They stay in the per-level tables, which is where they earn
+          // their place: locating a row back in the audio, and rebuilding
+          // annotations from a saved table on import (_importXlsxSelections
+          // reads train_start/train_end, and sheet classification keys off
+          // their presence).
+          kl === "peak_time" ||
+          kl === "train_start" ||
+          kl === "train_end" ||
+          kl === "motif_start" ||
+          kl === "motif_end"
         )
           return true;
         if (/_id$/.test(kl)) return true;
@@ -12917,17 +12936,55 @@
       }
 
       // ── Publication-ready strings (Excel formulas, not baked text) ──────
-      // Columns of the Summary and per-selection stats sheets: A selection,
-      // B category, C specimen_id, D metric, E n, F mean, G sd, H min, I max.
-      // The two extra columns below are live formulas referencing F–I, so
-      // editing a value updates the string. Column letters are absolute ($F)
-      // and rows relative, which is what makes them survive being filled down
-      // or copied sideways.
+      // The Summary and per-selection stats sheets carry their mean/sd/min/max
+      // under exactly those names, so the shared builder below can find them.
+      // The two extra columns are live formulas, not frozen text, so editing a
+      // value updates the string.
       function _summWithFormulaCols(stats) {
-        return stats.map((r, i) => {
+        return _withFormulaCols(stats, ["mean", "sd", "min", "max"]);
+      }
+
+      // Spreadsheet column letter for a key, from its position in the row
+      // object — the same order _buildXlsx writes the header in.
+      function _colLetterOf(row, key) {
+        let n = Object.keys(row).indexOf(key) + 1;
+        if (n <= 0) return null;
+        let s = "";
+        while (n > 0) {
+          s = String.fromCharCode(65 + ((n - 1) % 26)) + s;
+          n = Math.floor((n - 1) / 26);
+        }
+        return s;
+      }
+
+      // Same pair of columns for the temperature sheet, whose adjusted
+      // mean/sd/min/max sit in different columns. Addressed by KEY, not by
+      // letter: letters are positions, so inserting a column anywhere to
+      // their left silently repointed these formulas at whatever slid into
+      // D–G. Resolving the letter from the key at write time means the sheet
+      // can gain columns without the formulas quietly going wrong.
+      function _withFormulaCols(rows, [mKey, sKey, loKey, hiKey]) {
+        if (!rows.length) return rows;
+        const mCol = _colLetterOf(rows[0], mKey),
+          sCol = _colLetterOf(rows[0], sKey),
+          loCol = _colLetterOf(rows[0], loKey),
+          hiCol = _colLetterOf(rows[0], hiKey);
+        // A renamed key would otherwise produce "TEXT($null2,...)" in every
+        // cell; better to ship the sheet without the two convenience columns.
+        if (!mCol || !sCol || !loCol || !hiCol) {
+          log(
+            "Could not locate the mean/sd/min/max columns for the LaTeX and " +
+              "Word columns; they have been left out of this sheet.",
+            "warn",
+          );
+          return rows;
+        }
+        return rows.map((r, i) => {
           const row = i + 2; // +1 for the header, +1 because Excel is 1-based
+          // Column letters absolute ($F) and rows relative, which is what
+          // makes these survive being filled down or copied sideways.
           const t = (col) => `TEXT($${col}${row},"0.00")`;
-          const tail = `" ["&${t("H")}&"-"&${t("I")}&"]"`;
+          const tail = `" ["&${t(loCol)}&"-"&${t(hiCol)}&"]"`;
           return Object.assign({}, r, {
             // \pm in LaTeX; UNICHAR(177) is the ± glyph for Word.
             // The _xlfn. prefix is REQUIRED in the stored XML for functions
@@ -12936,21 +12993,6 @@
             // treats it as an unknown defined name, and tags it with the
             // implicit-intersection "@" — which then fails to compute. Excel
             // hides the prefix, so the formula bar still reads UNICHAR(177).
-            latex: { __xlFormula: `${t("F")}&"$\\pm$"&${t("G")}&${tail}` },
-            word: { __xlFormula: `${t("F")}&_xlfn.UNICHAR(177)&${t("G")}&${tail}` },
-          });
-        });
-      }
-
-      // Same pair of columns for the temperature sheet, whose adjusted
-      // mean/sd/min/max sit in different columns — passed in by letter so the
-      // two callers cannot drift apart silently.
-      function _withFormulaCols(rows, [mCol, sCol, loCol, hiCol]) {
-        return rows.map((r, i) => {
-          const row = i + 2;
-          const t = (col) => `TEXT($${col}${row},"0.00")`;
-          const tail = `" ["&${t(loCol)}&"-"&${t(hiCol)}&"]"`;
-          return Object.assign({}, r, {
             latex: { __xlFormula: `${t(mCol)}&"$\\pm$"&${t(sCol)}&${tail}` },
             word: { __xlFormula: `${t(mCol)}&_xlfn.UNICHAR(177)&${t(sCol)}&${tail}` },
           });
@@ -13389,6 +13431,47 @@
       //     adjusted = observed + slope × (target − observed_temperature)
       // which removes the thermal component while leaving the residual
       // (individual) variation intact.
+      // One observation per recording, not per row.
+      //
+      // Temperature is a property of the RECORDING: every train in a file
+      // carries that file's single reading. Fitting on raw rows counts one
+      // measurement many times over — fifty trains from one recording are
+      // fifty copies of one observation, not fifty observations — and lets a
+      // long recording outweigh a short one purely on row count.
+      //
+      // It skews the two gates in opposite directions at once. n is inflated,
+      // so the significance test in _tempCalibUsable passes almost anything
+      // (500 rows from 10 recordings is judged against the critical |r| for
+      // n=500). Meanwhile r² is deflated, because the denominator carries the
+      // train-to-train scatter within each recording that temperature cannot
+      // explain, so real thermal responses can fail TEMP_CALIB_MIN_R2.
+      //
+      // Collapsing to a mean per recording makes n the number of recordings,
+      // which is what both gates already assume they are being handed.
+      function _summByRecording(rows, k) {
+        const groups = new Map();
+        rows.forEach((r) => {
+          const t = parseFloat(r.temp_c);
+          const v = r[k];
+          if (!isFinite(t) || typeof v !== "number" || !isFinite(v)) return;
+          const key = _summRecKey(r);
+          // The first reading wins; a recording carries one temperature, so
+          // later rows repeat it rather than adding information.
+          if (!groups.has(key)) groups.set(key, { t, vals: [] });
+          groups.get(key).vals.push(v);
+        });
+        const out = [];
+        groups.forEach((g, key) =>
+          out.push({
+            rec: key,
+            t: g.t,
+            v: g.vals.reduce((a, b) => a + b, 0) / g.vals.length,
+            nRows: g.vals.length,
+          }),
+        );
+        return out;
+      }
+
       function _summFitTemp(pairs) {
         const n = pairs.length;
         if (n < 3) return null; // a slope through two points is not a fit
@@ -13440,8 +13523,15 @@
               if (isFinite(t) && typeof v === "number" && isFinite(v))
                 obs.push({ t, v, row: r });
             });
-            const fit = _summFitTemp(obs.map(({ t, v }) => ({ t, v })));
+            // The SLOPE comes from one mean per recording; the ADJUSTMENT is
+            // then applied to every row. Estimating the line and applying it
+            // are different jobs: the line describes how the species responds
+            // to temperature across recordings, while each row still needs
+            // shifting individually.
+            const byRec = _summByRecording(rows, k);
+            const fit = _summFitTemp(byRec.map(({ t, v }) => ({ t, v })));
             if (!fit) return;
+            const nRowsTotal = byRec.reduce((s, r) => s + r.nRows, 0);
             const adjVals = [];
             obs.forEach((o) => {
               const adj = o.v + fit.slope * (targetT - o.t);
@@ -13469,7 +13559,13 @@
             model.push({
               category: SUMM_LABEL[cat],
               metric: k,
-              n: fit.n,
+              // The fit's sample size is the number of RECORDINGS, spelled
+              // out because it is the number the r² and the significance
+              // gate should be read against. n_rows_total says how much
+              // audio stands behind those means — 10 recordings is 10
+              // observations whether each holds 5 trains or 500.
+              n_recordings: fit.n,
+              n_rows_total: nRowsTotal,
               adj_mean: round4(amean),
               adj_sd: round4(asd),
               adj_min: round4(Math.min(...adjVals)),
@@ -13542,17 +13638,25 @@
             }),
           );
           keys.forEach((k) => {
-            const pairs = [];
-            rows.forEach((r) => {
-              const t = parseFloat(r.temp_c);
-              const v = r[k];
-              if (isFinite(t) && typeof v === "number" && isFinite(v))
-                // t = the predictor (metric value), v = what we predict (temp)
-                pairs.push({ t: v, v: t });
-            });
+            // One point per recording, and note the swap: here the metric is
+            // the predictor and temperature is what we predict.
+            //
+            // Calibrating per recording also keeps the fit in the same units
+            // as the prediction below, which feeds the line a per-recording
+            // MEAN. Calibrating on raw rows meant fit.tMin/tMax were row-level
+            // extremes while the value tested against them was a mean, so the
+            // extrapolation check compared a mean to a spread it could never
+            // reach and almost never fired.
+            const byRec = _summByRecording(rows, k);
+            const pairs = byRec.map(({ t, v }) => ({ t: v, v: t }));
             const fit = _summFitTemp(pairs);
             if (fit && _tempCalibUsable(fit.r2, fit.n))
-              calib.push({ cat, metric: k, fit });
+              calib.push({
+                cat,
+                metric: k,
+                fit,
+                nRowsTotal: byRec.reduce((s, r) => s + r.nRows, 0),
+              });
           });
         });
         if (!calib.length) return { estimates: [], detail: [], nCalib: 0 };
@@ -13580,7 +13684,7 @@
         const detail = [];
         groups.forEach((g) => {
           const votes = [];
-          calib.forEach(({ cat, metric, fit }) => {
+          calib.forEach(({ cat, metric, fit, nRowsTotal }) => {
             const rows = g.byCat[cat];
             if (!rows || !rows.length) return;
             const vals = rows
@@ -13604,7 +13708,12 @@
               r2: round4(fit.r2),
               calib_value_min: round4(fit.tMin),
               calib_value_max: round4(fit.tMax),
-              calib_n: fit.n,
+              // Recordings the calibration line was fitted through, and the
+              // rows behind them. calib_value_min/max are now the range of
+              // recording MEANS, the same quantity value_used is, so the
+              // extrapolation flag compares like with like.
+              calib_n_recordings: fit.n,
+              calib_n_rows: nRowsTotal,
               extrapolated: outside ? "YES" : "",
             });
           });
@@ -13734,7 +13843,7 @@
             // D adj_mean, E adj_sd, F adj_min, G adj_max — hence D..G here.
             sheets.push([
               "Temp_Regression",
-              _withFormulaCols(model, ["D", "E", "F", "G"]),
+              _withFormulaCols(model, ["adj_mean", "adj_sd", "adj_min", "adj_max"]),
             ]);
             sheets.push(["Temp_Adjusted", adjusted]);
           }
@@ -13759,7 +13868,7 @@
             const stem = _summSelSheetStem(res.sel.name);
             sheets.push([
               stem + "_TempReg",
-              _withFormulaCols(r.model, ["D", "E", "F", "G"]),
+              _withFormulaCols(r.model, ["adj_mean", "adj_sd", "adj_min", "adj_max"]),
             ]);
             sheets.push([stem + "_TempAdj", r.adjusted]);
           });
