@@ -1,133 +1,161 @@
-# Rthoptera Desk 0.2.0
+# Rthoptera Desk 0.3.0
 
-A large update to the temporal and spectral analysis modules. **Some exported
-column names have changed** — see *Breaking changes* below before running old
-analysis scripts against new exports.
+Temperature regression for the summary tables, user-defined structure
+selections, listening aids for ultrasonic song, undo for spectral
+annotations, and fixes to the habitus PSD plot that affected any set of
+recordings with mixed sample rates.
 
-## Breaking changes
+No exported column names changed in this release.
 
-Existing spreadsheets are unaffected, but scripts that read columns by name
-will need updating.
+## Temperature regression
 
-| Old column | New column | Note |
-|---|---|---|
-| `pci` | `pci_syl` | Values are identical; only the name changed |
-| `pci_mean`, `pci_sd` | `pci_syl_mean`, `pci_syl_sd` | Plus new `pci_agn_mean`, `pci_agn_sd` |
-| `props_ent`, `props_cv` | `props_ent_syl`, `props_cv_syl` | Plus the `_agn` pair |
-| `spec_win_ms` | `spec_signal_ms`, `spec_res_hz`, `spec_bin_hz` | See *Spectral resolution* |
+Insect song rates scale strongly with temperature, so measurements taken on
+different days are not directly comparable. The summary tab can now express
+every measurement at one chosen temperature.
 
-Spectral analysis windows are now set as a **frequency resolution in Hz**
-instead of a duration in milliseconds. Presets saved with the old
-millisecond fields are converted automatically when loaded.
+For each metric, `value ~ temperature` is fitted by ordinary least squares
+across all observations that carry a `temp_c`, and each observation is then
+adjusted:
 
-## Pattern Complexity Index — now two variants
+```
+adjusted = observed + slope × (target − observed_temperature)
+```
 
-The PCI is computed twice on every motif, so the two can be compared directly:
+The target temperature is set in the toolbar (default 25 °C). Fitting needs
+at least three recordings with temperatures — a slope through two points is
+not a fit, and the panel says so rather than producing one.
 
-- **PCI-syl** (`pci_syl`) — the original index. Divides the motif at train
-  boundaries (train duration, gap, train duration, …).
-- **PCI-agn** (`pci_agn`) — new. Divides the motif at every peak, using only
-  inter-peak intervals and no train information at all.
+The fit direction is deliberate: the quantity being adjusted is the one
+regressed, not temperature. Inverting a `temperature ~ value` line divides by
+the slope, which explodes for weakly thermal metrics.
 
-PCI-syl inherits whatever grouping parameters produced the trains; PCI-agn
-cannot. If the two turn out to be strongly correlated across a dataset, the
-train segmentation is adding assumptions rather than information.
+Adjusted tables carry `target_temp_c`, `slope_per_C`, `intercept` and `r2`
+alongside the adjusted values, so the strength of each fit is visible and a
+weak one can be discarded. Recordings missing a temperature are named in the
+panel instead of being silently dropped.
 
-PCI-syl reproduces the previous `pci` values exactly.
+## Structure selections
 
-## Spectral resolution set in Hz, per level
+The summary tab now takes user-defined selections — filters over the merged
+rows, each producing its own statistics block, exported to its own sheet.
+Selections can filter by position within a parent structure, so "the first
+train of every motif" or "peaks 2–4" become comparable groups.
 
-Windows were previously specified in milliseconds, which gives a *different*
-frequency resolution at different sample rates — a 2 ms request produced
-344.53 Hz bins at 44.1 kHz but 375 Hz at 48 kHz. Resolution is now requested
-directly in Hz and is sample-rate independent.
+Selections survive a reset and can be edited and re-summarised; notes written
+against a selection are never overwritten by a later edit. Statistics for the
+unselected pool are labelled in the same `selection` column, so "everything"
+behaves like a selection downstream.
 
-A new **Spectral Parameters** panel holds three settings:
+## New peak-frequency spread columns
 
-| Level | Default |
-|---|---|
-| Peak frequency resolution | 1500 Hz |
-| Train frequency resolution | 50 Hz |
-| Motif frequency resolution | 10 Hz |
+Four columns describe how a structure's peak frequency is distributed across
+its own peaks, rather than reporting a single carrier:
 
-Three columns replace `spec_win_ms` and say plainly what happened:
-`spec_signal_ms` (real audio per transform), `spec_res_hz` (the resolution
-actually achieved — the column to check is constant when comparing
-recordings), and `spec_bin_hz` (bin spacing after zero-padding, i.e.
-interpolation density, not resolution).
+`peak_freq_pmean_khz`, `peak_freq_psd_khz`, `peak_freq_pmin_khz` and
+`peak_freq_pmax_khz`.
 
-Where peaks sit closer together than the requested resolution needs, the
-frame is limited by its neighbours and the row honestly reports the coarser
-resolution it achieved. Confirm now warns when this happens and names the
-setting at which all peaks would share one frequency axis.
+A species whose train sweeps in frequency and one that holds a steady carrier
+can report the same `peak_freq_khz`; only these columns separate them. The
+`p` marks "aggregated over peak rows", parallel to the `_tmean` suffix
+meaning "aggregated over train rows".
 
-## Motif-level spectra
+## Listening to ultrasonic song
 
-Motif rows now carry the spectrum twice:
+Two independent playback controls, both affecting **listening only** — stored
+audio, measurements, exports and plots are untouched.
 
-- `spec_*` — one transform over the whole motif span at the motif resolution.
-- `spec_*_tmean` — the mean of the motif's train rows.
+- **Speed %** — plays back at a fraction of real time. Slowing down lowers
+  the pitch as a side effect, which is often enough to bring a song into
+  hearing range.
+- **Drop %** — lowers every frequency by a percentage while *keeping the
+  tempo*. A 25% drop moves a 40 kHz peak to 30 kHz over the same 3 seconds.
 
-The first resolves structure the shorter train window cannot; the second
-contains no inter-train silence. Disagreement between them is informative.
+The drop is a phase vocoder with identity phase locking (only spectral peaks
+advance phase independently; their neighbours follow), then resampling.
+Locking the peaks avoids the smearing a textbook vocoder produces when bins
+belonging to one partial drift apart.
 
-## Statistics report
+The same frequency drop is also available as a **destructive edit** in
+Preprocessing, and as a **batch operation** across every loaded recording,
+for when the shifted audio itself is what you want to keep.
 
-The **Export Text Report** button now produces a full temporal report instead
-of only the spectral-detection summary. Every statistic is given as
-`mean ± SD [min–max]`, under headings for Peaks, Trains and Motifs, covering
-peak period, peaks per train, train rate, trains per motif, train duration,
-train period, train gaps, dynamic and temporal excursion, motif duration,
-period and duty cycle, motif peak frequency, −20 dB and −10 dB bandwidth, and
-both PCI variants. The previous spectral-detection paragraphs are kept and
-appended when those measurements exist.
+## Undo for spectral annotations
 
-The reported peak period is now measured **within trains only**. The
-`peak_period_ms` column is built from the flattened peak list, so the last
-peak of every train carries the inter-train interval; averaging it directly
-mixed pulse periods with train gaps.
+Ctrl+Z in Spectral Analysis, mirroring the existing peak-editing undo in
+Temporal Analysis. Every action that changes the annotation set snapshots
+first, including the annotation numbering — undo a freshly drawn #7 and the
+counter goes back to 7.
 
-## New columns
+Snapshots are dropped when the underlying audio is edited or trimmed, rather
+than restoring annotations onto audio they no longer describe.
 
-- `country` and `temp_c` — tagged per recording in the toolbar and written to
-  every exported table. Temperature is free text so `22.5`, `~23` or blank all
-  work. Country is also stored in the specimen metadata `.json`; temperature
-  is not, since it varies between recordings of the same specimen.
-- `train_period_ms` and `motif_period_s` — forward-looking, onset to next
-  onset, blank on the last element.
-- `source_file` — the originating audio file, on every export, for
-  traceability.
-- `freq_spread` — standard deviation of peak carrier frequency across a
-  train's peaks.
+Two other annotation changes:
+
+- **Temporal only** mode ignores the vertical extent of the drag. Annotations
+  span the whole frequency axis anyway, so this leaves only the time axis to
+  aim at.
+- **Jump to selection edge** (previous / next) steps the playhead through
+  selection boundaries — trim handles in Preprocessing, annotation bounds in
+  Spectral Analysis — landing on 0 or the file duration past the last edge.
+
+## Habitus PSD plot — mixed sample rates
+
+Combining recordings with different sample rates produced wrong results, and
+this affected any set that was not uniform.
+
+Spectra were being combined **by FFT bin index**, but bin *i* sits at a
+different frequency for every sample rate, so unrelated frequencies were
+averaged together. Each recording is now analysed on its own frequency grid
+and resampled onto a shared one before averaging or normalising.
+
+Two further fixes in the same area:
+
+- The frequency axis defaulted to the **first** recording's Nyquist. With a
+  44.1 kHz recording anywhere in the set, the axis silently redrew as 0–22 kHz
+  and the figure looked zoomed in. It now defaults to the *lowest* Nyquist in
+  the set.
+- Requesting a range above the available data (0–48 kHz on 44.1 kHz audio)
+  filled the contour with NaN and drew nothing. The axis and the data limit
+  are now kept apart: the axis honours the request, and the contour simply
+  ends where real data stops — which also makes the missing band visible
+  rather than hiding it.
+
+A note in the panel states the usable band up front when sample rates are
+mixed.
+
+## Oscillogram Zoom — scale bars and presets
+
+- **Scale bar length** can be set explicitly per panel, in ms or s. Each panel
+  keeps its own length, since zoom panels span very different durations;
+  leave a panel on Auto for a bar about 20% of its width. Click a bar to
+  target it, or apply to every panel at once.
+- **Trace colour, trace width, font size and stroke width** are exposed in the
+  sidebar.
+- **Presets** export and import the sidebar settings as `.json` — panel
+  ranges and type settings, but not the figure's content, since a preset is
+  not tied to one recording. Files without the marker are still tried; only a
+  present-and-wrong kind is refused.
+
+Temporal Analysis parameter presets gained the same file export/import.
 
 ## Other changes
 
-- The app version is shown in the toolbar, read from the build itself.
-- Switching the active recording now clears the previous recording's
-  selections, detections, measurements, peaks, trains, motifs, undo history
-  and fitted parameters, which previously carried over and could be exported
-  under the wrong file name.
-- Closing the last audio file clears the dashboard.
-- Progress indicators during peak detection, spectrogram rendering, metric
-  computation, spreadsheet export and batch audio saving.
-- Undo (Ctrl+Z) for peak editing.
-- "Fit to selection" learns detection *and* grouping parameters from a few
-  hand-corrected trains; envelope smoothing stays user-defined and is never
-  fitted.
-- Parameter presets can be saved to and loaded from a file through the normal
-  file dialog.
-- Detected peaks can be imported back from a saved Excel table.
-- The envelope is drawn as soon as a file loads, rather than waiting for
-  Detect Peaks.
-- The Temporal Analysis tab is reorganised into labelled parameter panels.
-- Shorter, consistent export filename suffixes (`n0`, `2hpf`, `temp`, `spec`,
-  `det`, `meas`, `peak`, `train`, `motif`, `summ`, `raven`, `meta`).
-- False-peak filtering now detects *runs* of low-amplitude peaks between
-  larger ones, and no longer drops legitimate quiet peaks that split a train.
-- Trains can be split on the amplitude arc, cutting at the middle of the
-  valley between arcs.
-- Fixed: missing values in `peak_period_ms`; peak spectra whose frame could
-  overrun a neighbouring pulse; the parameter panel jumping to a second row
-  after Apply; the envelope distorting on window resize.
-- Removed unused TensorFlow.js and Chart.js bundles, reducing the frontend
-  from 4.8 MB to under 1 MB.
+- Habitus plot: frequency tick spacing can be set explicitly (`0` keeps the
+  automatic 6 ticks). Tick labels print enough decimals not to lie about the
+  step — a step of 0.25 shows `0.25`, not `0.3`.
+- Habitus and Oscillogram Zoom type sizes were raised, and the margins that
+  hold rotated axis titles and tick labels were resized to match, which
+  previously clipped at larger sizes.
+- Oscillogram Stack scale-bar labels now default to 18 pt instead of 9 pt,
+  which was unreadable at figure scale.
+- Audio library: **Select all** and **Select none** buttons.
+- Preprocessing has its own time selection, separate from the trim selection —
+  it costs nothing to make and is cleared by a plain click on the waveform.
+- A destructive frequency drop is always applied *after* the bandpass,
+  whatever order the edits were made in — it moves every frequency, so
+  running it first would leave the HP/LP cutoffs pointing at the wrong part
+  of the signal.
+- Fixed: a drag in Preprocessing silently creating annotations because the
+  tool state carried over from another tab; the playback buffer being reused
+  after the underlying samples changed; annotations and the time selection
+  surviving an audio edit and pointing at the wrong sound.
