@@ -28,16 +28,23 @@
   let ozLettersOn = false;
   let ozSvgEl = null;
 
+  // Text-label defaults. strokeWidth paints a stroke in the fill colour
+  // (see styleAnnotationEl), so it reads as weight rather than an outline —
+  // 0.5 is a light thickening, which is what figure labels want.
+  const OZ_LABEL_SIZE = 18;
+  const OZ_LABEL_THICKNESS = 0.5;
+  const OZ_SCALEBAR_THICKNESS = 2;
+
   function defaultSlot(text, overrides) {
     return Object.assign(
       {
         text,
         dx: 0,
         dy: 0,
-        fontSize: 12,
+        fontSize: OZ_LABEL_SIZE,
         fontFamily: "Arial,sans-serif",
         italic: false,
-        strokeWidth: 0,
+        strokeWidth: OZ_LABEL_THICKNESS,
         color: null, // null = use the slot's contextual default color
       },
       overrides || {},
@@ -46,10 +53,22 @@
 
   function newPanelAnno(topText) {
     return {
-      top: defaultSlot(topText, { fontSize: 12, italic: true }),
-      below: defaultSlot("", { fontSize: 11 }),
-      temp: defaultSlot("", { fontSize: 11 }),
-      scalebar: defaultSlot("", { fontSize: 9, strokeWidth: 1.2, color: "#000" }),
+      top: defaultSlot(topText, { italic: true }),
+      below: defaultSlot(""),
+      temp: defaultSlot(""),
+      // lenSec: explicit bar length in seconds, or null for the automatic
+      // ~20%-of-panel width. Per panel rather than global because zoom
+      // panels differ by orders of magnitude — the top one spans the whole
+      // recording while the deepest may span a few milliseconds.
+      //
+      // Thicker than the text labels: here strokeWidth is the drawn weight
+      // of the bar's LINE, not a text weight, so it needs to read as a rule
+      // on the figure.
+      scalebar: defaultSlot("", {
+        strokeWidth: OZ_SCALEBAR_THICKNESS,
+        color: "#000",
+        lenSec: null,
+      }),
     };
   }
 
@@ -576,7 +595,7 @@
   function ozAddAnnotation() {
     if (!ozSamples) return;
     const n = ozFreeAnnos.length;
-    const slot = defaultSlot("Text", { fontSize: 13 });
+    const slot = defaultSlot("Text");
     slot.id = ozNextFreeId++;
     slot.baseX = 30 + ((n * 18) % 200);
     slot.baseY = 24 + ((n * 18) % 120);
@@ -632,6 +651,53 @@
     ozDraw();
   }
 
+  // ── Scale bar length ──────────────────────────────────────────────
+  // Targets the scale bars of whichever panels are selected (click a bar to
+  // select it; shift-click adds), or every panel when "All panels" is on.
+  function ozScalebarTargets() {
+    const bars = ozPanels.map((p) => p.anno.scalebar);
+    const all = $("ozScalebarAll");
+    if (all && all.checked) return bars;
+    return bars.filter((s) => selectedSlots.has(s));
+  }
+
+  function ozApplyScalebarLength() {
+    if (!ozSamples) return;
+    if ($("ozDisplay").value !== "scalebar") {
+      alert('Set "Time reference" to Scale bar first.');
+      return;
+    }
+    const targets = ozScalebarTargets();
+    if (!targets.length) {
+      alert(
+        'Click a scale bar in the figure to select it first, or check "All panels".',
+      );
+      return;
+    }
+    const v = parseFloat($("ozScalebarLen").value);
+    if (!isFinite(v) || v <= 0) {
+      alert("Enter a scale bar length greater than 0.");
+      return;
+    }
+    const sec = $("ozScalebarUnit").value === "ms" ? v / 1000 : v;
+    targets.forEach((s) => (s.lenSec = sec));
+    ozDraw();
+  }
+
+  // Back to the automatic ~20%-of-panel width.
+  function ozAutoScalebarLength() {
+    if (!ozSamples) return;
+    const targets = ozScalebarTargets();
+    if (!targets.length) {
+      alert(
+        'Click a scale bar in the figure to select it first, or check "All panels".',
+      );
+      return;
+    }
+    targets.forEach((s) => (s.lenSec = null));
+    ozDraw();
+  }
+
   // ── Drawing ───────────────────────────────────────────────────────
   function ozDraw() {
     if (!ozSamples) return;
@@ -641,7 +707,7 @@
     const display = $("ozDisplay").value;
     const rescalePanels = $("ozRescalePanels").checked;
     const traceColor = $("ozTraceColor").value;
-    const traceWidth = parseFloat($("ozTraceWidth").value) || 0.7;
+    const traceWidth = parseFloat($("ozTraceWidth").value) || 0.8;
     const rowHeight = parseFloat($("ozRowHeight").value) || 150;
     const showLabels = $("ozShowLabels").checked;
 
@@ -813,11 +879,18 @@
       // Time reference: self-sizing scale bar, or a tick axis.
       const panelDur = t1 - t0;
       if (display === "scalebar") {
-        const step = niceStep(panelDur * 0.2);
+        const sbSlot = panel.anno.scalebar;
+        // An explicit length wins over the automatic one, but is capped at
+        // the panel's own span — a bar longer than the panel cannot be drawn
+        // to scale, and the label is written from the value actually used so
+        // it never states a length the bar does not have.
+        const step =
+          sbSlot.lenSec > 0
+            ? Math.min(sbSlot.lenSec, panelDur)
+            : niceStep(panelDur * 0.2);
         const barW = (step / panelDur) * traceW;
         const barY = traceY1 - 6;
         const barX = xOff + 24; // nudged right, clear of the left margin
-        const sbSlot = panel.anno.scalebar;
         const sbG = svgEl("g", {});
         const lineEl = svgEl("line", { x1: barX, x2: barX + barW, y1: barY, y2: barY });
         const lblEl = svgEl("text", { x: barX, y: barY - 3 });
@@ -832,7 +905,7 @@
             lineEl.setAttribute("stroke", col);
             lineEl.setAttribute("stroke-width", slot.strokeWidth || 1.2);
             lblEl.setAttribute("fill", col);
-            lblEl.setAttribute("font-size", slot.fontSize || 9);
+            lblEl.setAttribute("font-size", slot.fontSize || OZ_LABEL_SIZE);
             lblEl.setAttribute("font-family", slot.fontFamily || "Arial,sans-serif");
             lblEl.textContent = fmtSeconds(step);
           },
@@ -857,7 +930,7 @@
           const lbl = svgEl("text", {
             x,
             y: axisY + 6,
-            "font-size": 8,
+            "font-size": 16,
             "text-anchor": "middle",
             fill: "#000",
             "pointer-events": "none",
@@ -900,7 +973,7 @@
       }
 
       if (ozLettersOn) {
-        if (!panel.letterSlot) panel.letterSlot = defaultSlot("", { fontSize: 18 });
+        if (!panel.letterSlot) panel.letterSlot = defaultSlot("");
         const letterChar = String.fromCharCode(65 + idx);
         const letterEl = svgEl("text", { x: 4, y: traceY0 + 14 });
         g.appendChild(letterEl);
@@ -986,6 +1059,180 @@
     }
   }
 
+  // ── Presets (.json) ───────────────────────────────────────────────
+  // The sidebar settings only, not the figure's content: panel ranges,
+  // label text and dragged positions belong to one recording, whereas a
+  // preset is meant to be reused across recordings so a series of figures
+  // comes out with matching geometry and type.
+  const OZ_PRESET_FIELDS = [
+    "ozLevels",
+    "ozRowHeight",
+    "ozContextPad",
+    "ozDisplay",
+    "ozScalebarLen",
+    "ozScalebarUnit",
+    "ozScalebarAll",
+    "ozRescalePanels",
+    "ozTraceColor",
+    "ozTraceWidth",
+    "ozShowLabels",
+    "ozFontFamily",
+    "ozFontSize",
+    "ozStrokeWidth",
+    "ozLabelColor",
+    "ozApplyAllLabels",
+  ];
+  const OZ_PRESET_KIND = "rthoptera.osczoom.preset";
+  const OZ_PRESET_VERSION = 1;
+
+  function ozPresetStatus(msg, isErr) {
+    const el = $("ozPresetStatus");
+    if (el) {
+      el.textContent = msg;
+      el.style.color = isErr ? "var(--red)" : "var(--txt3)";
+    }
+    if (typeof log === "function") log(msg, isErr ? "err" : "ok");
+  }
+
+  function ozCapturePreset() {
+    const data = {};
+    OZ_PRESET_FIELDS.forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+      data[id] = el.type === "checkbox" ? el.checked : el.value;
+    });
+    return data;
+  }
+
+  // Values are validated against the live control rather than trusted: a
+  // preset from another version, or hand-edited, can name a field that no
+  // longer exists or carry a value no longer offered by a dropdown, and
+  // assigning those silently blanks the control instead of failing loudly.
+  function ozSanitizePreset(data) {
+    const known = new Set(OZ_PRESET_FIELDS);
+    const clean = {};
+    const invalid = [];
+    const clamped = [];
+    let unknown = 0;
+
+    Object.keys(data).forEach((k) => {
+      if (!k.startsWith("_") && !known.has(k)) unknown++;
+    });
+
+    OZ_PRESET_FIELDS.forEach((id) => {
+      if (!(id in data)) return;
+      const el = $(id);
+      if (!el) return;
+      const v = data[id];
+      if (el.type === "checkbox") {
+        if (typeof v !== "boolean") return invalid.push(id);
+        clean[id] = v;
+      } else if (el.tagName === "SELECT") {
+        const want = String(v);
+        if (!Array.from(el.options).some((o) => o.value === want))
+          return invalid.push(id);
+        clean[id] = want;
+      } else if (el.type === "number") {
+        const num = parseFloat(v);
+        if (!isFinite(num)) return invalid.push(id);
+        const lo = el.min === "" ? -Infinity : parseFloat(el.min);
+        const hi = el.max === "" ? Infinity : parseFloat(el.max);
+        const fixed = Math.min(
+          isFinite(hi) ? hi : Infinity,
+          Math.max(isFinite(lo) ? lo : -Infinity, num),
+        );
+        if (fixed !== num) clamped.push(id);
+        clean[id] = String(fixed);
+      } else if (el.type === "color") {
+        if (typeof v !== "string" || !/^#[0-9a-f]{6}$/i.test(v.trim()))
+          return invalid.push(id);
+        clean[id] = v.trim().toLowerCase();
+      } else {
+        if (v === null || typeof v === "object") return invalid.push(id);
+        clean[id] = String(v);
+      }
+    });
+    return { clean, invalid, clamped, unknown };
+  }
+
+  function ozApplyPreset(clean) {
+    Object.keys(clean).forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+      if (el.type === "checkbox") el.checked = clean[id];
+      else el.value = clean[id];
+    });
+  }
+
+  async function ozExportPreset() {
+    const payload = {
+      _kind: OZ_PRESET_KIND,
+      _version: OZ_PRESET_VERSION,
+      _app: "Rthoptera Desktop",
+      _savedAt: new Date().toISOString(),
+      ...ozCapturePreset(),
+    };
+    const text = JSON.stringify(payload, null, 2);
+    const name = "rthoptera_osczoom_preset.json";
+    // dlFile (main.js) handles the desktop save dialog and the browser
+    // fallback; exactName keeps it from being renamed after the loaded
+    // audio, since a preset is not tied to one recording.
+    if (typeof dlFile === "function") {
+      await dlFile(name, text, "application/json", { exactName: true });
+      return;
+    }
+    const blob = new Blob([text], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function ozImportPreset(fileList) {
+    const file = fileList && fileList[0];
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      if (!data || typeof data !== "object" || Array.isArray(data)) {
+        ozPresetStatus("Not a preset file (expected a JSON object).", true);
+        return;
+      }
+      // Only a present-and-wrong kind is refused; files without the marker
+      // are still tried and fall out below if they carry nothing usable.
+      if (data._kind && data._kind !== OZ_PRESET_KIND) {
+        ozPresetStatus(`Not an Osc. Zoom preset (file says "${data._kind}").`, true);
+        return;
+      }
+      const { clean, invalid, clamped, unknown } = ozSanitizePreset(data);
+      const n = Object.keys(clean).length;
+      if (!n) {
+        ozPresetStatus("No recognizable Osc. Zoom settings in that file.", true);
+        return;
+      }
+      ozApplyPreset(clean);
+      if (ozSamples) ozDraw();
+      const notes = [];
+      if (unknown) notes.push(`${unknown} unknown setting(s) ignored`);
+      if (invalid.length)
+        notes.push(`${invalid.length} skipped (${invalid.join(", ")})`);
+      if (clamped.length)
+        notes.push(`${clamped.length} clamped (${clamped.join(", ")})`);
+      ozPresetStatus(
+        `✔ Loaded ${n} setting(s)` + (notes.length ? "; " + notes.join("; ") : ""),
+      );
+    } catch (e) {
+      ozPresetStatus("Could not read preset: " + e.message, true);
+    } finally {
+      // Let the same file be re-picked (change fires only on a new value).
+      const inp = $("ozPresetFile");
+      if (inp) inp.value = "";
+    }
+  }
+
   async function ozExportPng() {
     if (!ozSvgEl) return;
     const svgText = ozSerializeSvg();
@@ -1054,4 +1301,8 @@
   window.ozAddAnnotation = ozAddAnnotation;
   window.ozAddSymbol = ozAddSymbol;
   window.ozApplyStyle = ozApplyStyle;
+  window.ozApplyScalebarLength = ozApplyScalebarLength;
+  window.ozAutoScalebarLength = ozAutoScalebarLength;
+  window.ozExportPreset = ozExportPreset;
+  window.ozImportPreset = ozImportPreset;
 })();

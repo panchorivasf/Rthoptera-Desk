@@ -47,7 +47,7 @@
       top: defaultSlot(topText, { fontSize: 12, italic: true }),
       below: defaultSlot("", { fontSize: 11 }),
       temp: defaultSlot("", { fontSize: 11 }),
-      scalebar: defaultSlot("", { fontSize: 9, strokeWidth: 1.2, color: "#000" }),
+      scalebar: defaultSlot("", { fontSize: 18, strokeWidth: 1.2, color: "#000" }),
     };
   }
 
@@ -675,7 +675,7 @@
             lineEl.setAttribute("stroke", col);
             lineEl.setAttribute("stroke-width", slot.strokeWidth || 1.2);
             lblEl.setAttribute("fill", col);
-            lblEl.setAttribute("font-size", slot.fontSize || 9);
+            lblEl.setAttribute("font-size", slot.fontSize || 18);
             lblEl.setAttribute("font-family", slot.fontFamily || "Arial,sans-serif");
             lblEl.textContent = `${scalebar} s`;
           },

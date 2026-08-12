@@ -585,3 +585,69 @@
         color: var(--txt3);
         background: transparent;
       }
+      /* ── Landing logo: pulsating glow ──────────────────────────────────
+         A halo behind the app icon, sized in % of the wrapper so it tracks
+         the logo if its dimensions ever change. The icon itself is an opaque
+         teal disc, so the glow only ever shows as a ring spilling past its
+         edge — hence the gradient's transparent centre, which keeps the
+         brightest part of the halo at the rim instead of hidden behind art.
+         The wrapper is inline-grid so it hugs the image rather than
+         stretching across the centred column. */
+      .logo-glow {
+        position: relative;
+        display: inline-grid;
+        place-items: center;
+        isolation: isolate;
+      }
+      .logo-glow::before {
+        content: "";
+        position: absolute;
+        /* Sized from the wrapper's WIDTH with a forced square aspect, then
+           centred. Using `inset: -25%` instead would take its vertical offset
+           from the wrapper's height — and the wrapper is a flex item, so any
+           container that stretches it turns the halo into an oval. */
+        left: 50%;
+        top: 50%;
+        width: 120%;
+        aspect-ratio: 1;
+        border-radius: 50%;
+        z-index: -1;
+        /* Solid through the middle on purpose: that part is hidden behind the
+           opaque icon disc, and holding full strength out to the rim (67% of
+           this circle's radius, i.e. the logo's own edge) is what stops a dark
+           gap appearing between the
+           logo edge and the glow. The falloff beyond it is the visible part. */
+        background: radial-gradient(
+          circle,
+          rgba(56, 168, 216, 0.55) 0%,
+          rgba(56, 168, 216, 0.55) 83%,
+          rgba(56, 168, 216, 0.32) 90%,
+          rgba(56, 168, 216, 0.1) 96%,
+          rgba(56, 168, 216, 0) 100%
+        );
+        filter: blur(12px);
+        will-change: opacity, transform;
+        animation: logoGlowPulse 4.5s ease-in-out infinite;
+      }
+      /* The centring translate has to be repeated in every keyframe, since
+         transform is a single property and the animation overrides it. */
+      @keyframes logoGlowPulse {
+        0%,
+        100% {
+          opacity: 0.45;
+          transform: translate(-50%, -50%) scale(0.97);
+        }
+        50% {
+          opacity: 0.8;
+          transform: translate(-50%, -50%) scale(1.03);
+        }
+      }
+      /* Pulsing motion is exactly what this setting is meant to suppress:
+         keep the halo, drop the animation. */
+      @media (prefers-reduced-motion: reduce) {
+        .logo-glow::before {
+          animation: none;
+          opacity: 0.7;
+          transform: translate(-50%, -50%);
+        }
+      }

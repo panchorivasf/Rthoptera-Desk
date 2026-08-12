@@ -38,7 +38,33 @@
         playT0 = 0,
         playOff = 0,
         raf = null;
-      let activeTool = "select";
+      // Rate the CURRENT playback was started at. Captured per start rather
+      // than read live, so changing the speed box mid-playback cannot
+      // corrupt the elapsed-time arithmetic (see onPlaySpeedChange).
+      let playRate = 1;
+      // Playback-only frequency drop (see refreshPlaybackDropBuffer). Declared
+      // up here with the rest of the playback state because
+      // rebuildAudioFromEdits invalidates it, and that runs well before the
+      // playback section is reached on first evaluation.
+      let _pbBuffer = null; // AudioBuffer with the drop baked in, or null
+      let _pbDropPct = 0; // the percentage currently baked into _pbBuffer
+      // Annotate is the default tool: drawing selections is the main job of
+      // the Spectral Analysis tab, so it is ready without a first click.
+      let activeTool = "annotate";
+      // Which tab the shared waveform/spectrogram viewer is parked in. The
+      // subtree is the same either way (one set of canvas IDs, one render
+      // pipeline — see _placeSharedViewer), but its BEHAVIOUR is not: in
+      // "preprocess" the viewer is a plain transport — annotations and
+      // detections are neither drawn nor hit-tested, and a click only moves
+      // the playhead. Trim handles are unaffected; they are Preprocessing's
+      // own selection and are handled before any of this.
+      let viewerMode = "analyzer"; // "analyzer" | "preprocess"
+      // Preprocessing's own time selection: {t0, t1} in seconds, or null.
+      // Distinct from the trim selection — this one costs nothing to make
+      // (no mode to enter), marks a stretch of time to look at or jump
+      // around, and never edits the audio. A plain click clears it.
+      let ppSel = null;
+      let ppDrag = null; // {anchor, startX, moved} while dragging one out
       let drawing = null;
       // Visual trim: when trimMode is on, two draggable handles (trimSel.t0/t1,
       // in seconds on the ORIGINAL timeline) define the region to KEEP. Nothing
@@ -611,6 +637,13 @@
             sig = applyBandpass(sig, sr, ed.hp, ed.lp);
           }
         }
+        // Frequency drop runs last, whatever order the chain is in: it moves
+        // every frequency, so applying it before the bandpass would leave the
+        // HP/LP cutoffs pointing at the wrong part of the signal. Applied
+        // last, the cutoffs still mean what the user typed against the
+        // original audio.
+        const fd = audioEdits.find((e) => e.type === "freqdrop");
+        if (fd && fd.pct > 0) sig = applyFreqDrop(sig, fd.pct);
 
         rawSamples = sig instanceof Float32Array ? sig : Float32Array.from(sig);
         sampleRate = sr;
@@ -630,6 +663,12 @@
           const buf = audioCtx.createBuffer(1, rawSamples.length, sr);
           buf.copyToChannel(rawSamples, 0);
           audioBuffer = buf;
+          // The dropped playback buffer was rendered from the PREVIOUS
+          // samples; drop it and re-render if the setting is still on.
+          _pbBuffer = null;
+          _pbDropPct = 0;
+          if (typeof refreshPlaybackDropBuffer === "function")
+            refreshPlaybackDropBuffer();
         } catch (e) {
           // Playback buffer is non-critical; analysis still works without it.
           log("Could not rebuild playback buffer: " + e.message, "warn");
@@ -664,6 +703,8 @@
 
         $("btnPlay").disabled = false;
         $("btnStop").disabled = false;
+        $("btnPrevEdge").disabled = false;
+        $("btnNextEdge").disabled = false;
         $("btnRaven").disabled = false;
         $("btnXlsxSel").disabled = false;
         $("btnPkDetect").disabled = false;
@@ -798,6 +839,145 @@
       }
 
       // ── Edit chain helpers ──────────────────────────────────────────────
+      // ── Frequency drop (pitch shift, duration preserved) ────────────────
+      // Scales every frequency in the signal by `ratio` without changing how
+      // long the recording is — a 25% drop moves a 40 kHz peak to 30 kHz over
+      // the same 3 seconds. Two stages: a phase vocoder time-scales by
+      // `ratio` (pitch untouched), then linear-interpolation resampling
+      // stretches back to the original length, which is what actually moves
+      // the frequencies.
+      //
+      // The vocoder uses identity phase locking: only spectral PEAKS are
+      // advanced by their own instantaneous frequency, and each peak's
+      // neighbouring bins are carried rigidly with it. Advancing every bin
+      // independently (the textbook phase vocoder) lets bins belonging to one
+      // partial drift apart, and they then partly cancel on overlap-add —
+      // measured here as ~3 dB of level loss on a harmonic stack, which
+      // locking recovers.
+      function _ifft(re, im, n) {
+        for (let i = 0; i < n; i++) im[i] = -im[i];
+        fft(re, im, n);
+        for (let i = 0; i < n; i++) {
+          re[i] /= n;
+          im[i] = -im[i] / n;
+        }
+      }
+      function _princarg(x) {
+        return x - 2 * Math.PI * Math.round(x / (2 * Math.PI));
+      }
+
+      const PV_FRAME = 1024;
+      const PV_HOP = 256; // synthesis hop; Hann at 75% overlap is COLA
+
+      function _pvTimeScale(x, alpha) {
+        const N = PV_FRAME,
+          Hs = PV_HOP,
+          H = N / 2;
+        const Ha = Hs / alpha; // fractional analysis hop is expected
+        const nFrames = Math.max(1, Math.floor((x.length - N) / Ha) + 1);
+        const outLen = Math.ceil(nFrames * Hs) + N;
+        const out = new Float64Array(outLen),
+          wsum = new Float64Array(outLen);
+        const w = new Float64Array(N);
+        for (let i = 0; i < N; i++)
+          w[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / N);
+        const lastPhase = new Float64Array(H + 1),
+          sumPhase = new Float64Array(H + 1);
+        const re = new Float64Array(N),
+          im = new Float64Array(N);
+        const mag = new Float64Array(H + 1),
+          anaPh = new Float64Array(H + 1);
+        const expct = (2 * Math.PI * Ha) / N;
+        const peaks = [];
+
+        for (let m = 0; m < nFrames; m++) {
+          const ta = Math.round(m * Ha);
+          for (let i = 0; i < N; i++) {
+            const s = ta + i;
+            re[i] = (s < x.length ? x[s] : 0) * w[i];
+            im[i] = 0;
+          }
+          fft(re, im, N);
+          for (let k = 0; k <= H; k++) {
+            mag[k] = Math.hypot(re[k], im[k]);
+            anaPh[k] = Math.atan2(im[k], re[k]);
+          }
+          peaks.length = 0;
+          for (let k = 2; k <= H - 2; k++) {
+            if (
+              mag[k] > mag[k - 1] &&
+              mag[k] > mag[k + 1] &&
+              mag[k] > mag[k - 2] &&
+              mag[k] > mag[k + 2]
+            )
+              peaks.push(k);
+          }
+          if (!peaks.length) peaks.push(0);
+          for (const k of peaks) {
+            const dp = _princarg(anaPh[k] - lastPhase[k] - k * expct);
+            sumPhase[k] += Hs * ((k * 2 * Math.PI) / N + dp / Ha);
+          }
+          // Each bin follows its nearest peak, keeping the partial rigid.
+          let pi = 0;
+          for (let k = 0; k <= H; k++) {
+            while (
+              pi + 1 < peaks.length &&
+              Math.abs(peaks[pi + 1] - k) < Math.abs(peaks[pi] - k)
+            )
+              pi++;
+            const p = peaks[pi];
+            const ph =
+              k === p ? sumPhase[p] : sumPhase[p] + (anaPh[k] - anaPh[p]);
+            if (k !== p) sumPhase[k] = ph;
+            re[k] = mag[k] * Math.cos(ph);
+            im[k] = mag[k] * Math.sin(ph);
+          }
+          for (let k = 0; k <= H; k++) lastPhase[k] = anaPh[k];
+          // Hermitian-mirror the upper half so the inverse transform is real.
+          for (let k = 1; k < H; k++) {
+            re[N - k] = re[k];
+            im[N - k] = -im[k];
+          }
+          im[0] = 0;
+          im[H] = 0;
+          _ifft(re, im, N);
+          const ts = Math.round(m * Hs);
+          for (let i = 0; i < N; i++) {
+            if (ts + i >= outLen) break;
+            out[ts + i] += re[i] * w[i];
+            wsum[ts + i] += w[i] * w[i];
+          }
+        }
+        for (let i = 0; i < outLen; i++)
+          if (wsum[i] > 1e-8) out[i] /= wsum[i];
+        return out;
+      }
+
+      function _resampleLinear(x, step, outLen) {
+        const out = new Float32Array(outLen);
+        for (let i = 0; i < outLen; i++) {
+          const p = i * step,
+            i0 = Math.floor(p);
+          if (i0 + 1 >= x.length) {
+            out[i] = x.length ? x[x.length - 1] : 0;
+            continue;
+          }
+          const fr = p - i0;
+          out[i] = x[i0] * (1 - fr) + x[i0 + 1] * fr;
+        }
+        return out;
+      }
+
+      // pct = percentage to drop, e.g. 25 -> every frequency × 0.75.
+      function applyFreqDrop(sig, pct) {
+        const ratio = 1 - pct / 100;
+        if (!(ratio > 0) || Math.abs(ratio - 1) < 1e-6)
+          return sig instanceof Float32Array ? sig : Float32Array.from(sig);
+        if (sig.length < PV_FRAME * 2)
+          return sig instanceof Float32Array ? sig : Float32Array.from(sig);
+        return _resampleLinear(_pvTimeScale(sig, ratio), ratio, sig.length);
+      }
+
       function audioHasEdit(type) {
         return audioEdits.some((e) => e.type === type);
       }
@@ -811,6 +991,10 @@
       function setBandpassEdit(hp, lp) {
         audioEdits = audioEdits.filter((e) => e.type !== "bandpass");
         audioEdits.push({ type: "bandpass", hp, lp });
+      }
+      function setFreqDropEdit(pct) {
+        audioEdits = audioEdits.filter((e) => e.type !== "freqdrop");
+        audioEdits.push({ type: "freqdrop", pct });
       }
 
       // ── UI actions ──────────────────────────────────────────────────────
@@ -1039,6 +1223,33 @@
         log("Bandpass removed", "ok");
       }
 
+      async function applyFreqDropEdit() {
+        if (!origSamples) {
+          log("Load audio first", "warn");
+          return;
+        }
+        const pct = parseFloat($("editFreqDrop").value);
+        if (!isFinite(pct) || pct <= 0 || pct >= 100) {
+          log("Frequency drop must be between 0 and 100%.", "warn");
+          return;
+        }
+        setFreqDropEdit(pct);
+        await withBusy("Dropping frequencies…", async () => {
+          await busyTick();
+          rebuildAudioFromEdits({ resetView: false });
+        });
+        log(
+          `Frequency drop ${pct}% — every frequency × ${(1 - pct / 100).toFixed(3)}, duration unchanged.`,
+          "ok",
+        );
+      }
+      function clearFreqDrop() {
+        if (!audioHasEdit("freqdrop")) return;
+        audioEdits = audioEdits.filter((e) => e.type !== "freqdrop");
+        rebuildAudioFromEdits({ resetView: false });
+        log("Frequency drop removed", "ok");
+      }
+
       // Trim changes the timeline, invalidating peak detections, measurement
       // detections, and imported annotations. Clear them so stale times don't
       // point at the wrong audio.
@@ -1060,7 +1271,13 @@
         detMeasurements = [];
         annotations = [];
         selAid = null;
+        // Its times refer to the pre-edit timeline.
+        ppSel = null;
+        if (typeof updatePpSelReadout === "function") updatePpSelReadout();
         if (typeof pkAppliedAnnotationIds !== "undefined") pkAppliedAnnotationIds = [];
+        // Snapshots hold times on the pre-edit timeline — restoring them onto
+        // the edited audio would put annotations over the wrong sound.
+        if (typeof annotResetUndo === "function") annotResetUndo();
         if (typeof refreshAnnotList === "function") refreshAnnotList();
         const sx = $("btnSaveSpectralExcel");
         if (sx) sx.disabled = true;
@@ -1079,6 +1296,14 @@
       // already the trimmed signal.
       function remapTimeDependentWork(t0, t1) {
         const eps = 1e-9;
+        // Everything below is re-timed onto the trimmed timeline; the undo
+        // snapshots still hold the old times, so they are dropped rather
+        // than left to restore annotations onto the wrong audio. The time
+        // selection goes for the same reason — after a cut it would point at
+        // a stretch the user never selected.
+        if (typeof annotResetUndo === "function") annotResetUndo();
+        ppSel = null;
+        if (typeof updatePpSelReadout === "function") updatePpSelReadout();
         // ── Annotations ──────────────────────────────────────────────────
         if (annotations && annotations.length) {
           annotations = annotations
@@ -1182,6 +1407,9 @@
           "editLp",
           "btnApplyBandpass",
           "btnClearBandpass",
+          "editFreqDrop",
+          "btnApplyFreqDrop",
+          "btnClearFreqDrop",
           "btnSaveEditedAudio",
         ].forEach((id) => {
           const el = $(id);
@@ -1190,6 +1418,9 @@
         // Trim Reset only meaningful when a trim is applied.
         const ct = $("btnClearTrim");
         if (ct) ct.disabled = !has || !audioHasEdit("trim");
+        // Same for the frequency-drop Reset.
+        const cf = $("btnClearFreqDrop");
+        if (cf) cf.disabled = !has || !audioHasEdit("freqdrop");
         const st = $("editStatus");
         if (st) {
           if (!has) {
@@ -1204,6 +1435,8 @@
               parts.push(
                 "trim " + tr.t0.toFixed(3) + "–" + tr.t1.toFixed(3) + "s",
               );
+            const fdEd = audioEdits.find((e) => e.type === "freqdrop");
+            if (fdEd) parts.push("freq drop " + fdEd.pct + "%");
             const bp = audioEdits.find((e) => e.type === "bandpass");
             if (bp)
               parts.push(
@@ -1322,6 +1555,11 @@
         annotations = [];
         nextAid = 1;
         selAid = null;
+        ppSel = null;
+        if (typeof updatePpSelReadout === "function") updatePpSelReadout();
+        // Same reasoning as pkResetUndo below: these snapshots describe the
+        // recording just left, not the one coming in.
+        annotResetUndo();
         detections = [];
         clearMeasurements();
         spectrogramData = null;
@@ -1416,6 +1654,8 @@
         [
           "btnPlay",
           "btnStop",
+          "btnPrevEdge",
+          "btnNextEdge",
           "btnRaven",
           "btnXlsxSel",
           "btnPkDetect",
@@ -1425,6 +1665,9 @@
           "editLp",
           "btnApplyBandpass",
           "btnClearBandpass",
+          "editFreqDrop",
+          "btnApplyFreqDrop",
+          "btnClearFreqDrop",
           "btnSaveEditedAudio",
           "btnUndoEdit",
           "btnComputeSpectral",
@@ -1619,12 +1862,26 @@
         const n = audioLibBatchSelected.size;
         const btn = $("btnBatchBandpass");
         const nBtn = $("btnBatchNormalize");
+        const fBtn = $("btnBatchFreqDrop");
         const sBtn = $("btnBatchSave");
         const label = $("batchSelCount");
         if (btn) btn.disabled = n === 0;
         if (nBtn) nBtn.disabled = n === 0;
+        if (fBtn) fBtn.disabled = n === 0;
         if (sBtn) sBtn.disabled = n === 0;
         if (label) label.textContent = n ? n + " selected" : "";
+        // The Loaded Audio panel carries its own copy of the Select
+        // all/Clear selection pair, since that panel is where the
+        // checkboxes actually are and it stays visible on every tab (the
+        // Batch Edit pair above only shows in Preprocessing). Both drive
+        // batchSelectAllLibrary, so the two stay in step by construction.
+        const libN = audioLibrary.length;
+        const selAll = $("btnAudioLibSelAll");
+        const selNone = $("btnAudioLibSelNone");
+        const libLabel = $("audioLibSelCount");
+        if (selAll) selAll.disabled = !libN || n === libN;
+        if (selNone) selNone.disabled = n === 0;
+        if (libLabel) libLabel.textContent = n ? n + " checked" : "";
         // Habitus draws straight from this same selection, so its own
         // "what's checked" readout + Draw-button state must track every
         // individual checkbox click too, not just full library re-renders.
@@ -1719,6 +1976,50 @@
 
         renderAudioLibraryPanel();
         log(`Batch peak-normalize applied to ${count} recording(s), each to ${targetDb} dBFS.`, "ok");
+      }
+
+      async function applyBatchFreqDrop() {
+        if (!audioLibBatchSelected.size) return;
+        const pct = parseFloat($("batchFreqDrop").value);
+        if (!isFinite(pct) || pct <= 0 || pct >= 100) {
+          log("Frequency drop must be between 0 and 100%.", "warn");
+          return;
+        }
+        const targets = audioLibrary.filter((e) =>
+          audioLibBatchSelected.has(e.id),
+        );
+        let touchedActive = false;
+        let count = 0;
+        await withBusy("Dropping frequencies…", async (progress) => {
+          for (let i = 0; i < targets.length; i++) {
+            const entry = targets[i];
+            progress(
+              `${entry.name} (${i + 1}/${targets.length})…`,
+              i / targets.length,
+            );
+            await busyTick();
+            entry.samples = applyFreqDrop(entry.samples, pct);
+            // Replace any previous drop tag rather than stacking them — the
+            // samples already carry the earlier shift, so the tag has to
+            // describe the last operation, not a history.
+            entry.editTags = entry.editTags.filter(
+              (t) => !/^fd-?[\d.]+$/.test(t),
+            );
+            entry.editTags.push("fd" + pct);
+            count++;
+            if (entry.id === audioLibActiveId) touchedActive = true;
+          }
+        });
+        if (!count) {
+          log("Batch frequency drop: nothing to apply.", "warn");
+          return;
+        }
+        if (touchedActive) selectLibraryAudio(audioLibActiveId);
+        renderAudioLibraryPanel();
+        log(
+          `Frequency drop ${pct}% applied to ${count} recording(s) (duration unchanged).`,
+          "ok",
+        );
       }
 
       // ── Save Edited Audio As… modal ─────────────────────────────────────
@@ -2527,7 +2828,12 @@
         function fy(f) {
           return H * (1 - (f - fvMin) / (fvMax - fvMin));
         }
-        if ($("showAnnots").checked) {
+        // Preprocessing shows the signal only — annotations and detections
+        // belong to Spectral Analysis. (The showAnnots/showDets checkboxes
+        // live in the sidebar, which is hidden there, so they cannot be the
+        // gate on their own.)
+        const showWork = viewerMode !== "preprocess";
+        if (showWork && $("showAnnots").checked) {
           annotations.forEach((a) => {
             const x1 = tx(a.start),
               x2 = tx(a.end);
@@ -2581,7 +2887,7 @@
             }
           });
         }
-        if ($("showDets").checked) {
+        if (showWork && $("showDets").checked) {
           detections.forEach((d) => {
             const x1 = tx(d.start),
               x2 = tx(d.end);
@@ -2611,6 +2917,33 @@
               ctx.stroke();
             }
             ctx.setLineDash([]);
+          });
+        }
+
+        // ── Preprocessing time selection ─────────────────────────────────
+        // Drawn under the trim handles so trim always reads on top when both
+        // are present. Blue, to stay clearly distinct from trim's amber and
+        // from Spectral Analysis's green selections.
+        if (viewerMode === "preprocess" && ppSel && ppSel.t1 > ppSel.t0) {
+          const xa = tx(ppSel.t0),
+            xb = tx(ppSel.t1);
+          const ca = Math.max(0, xa),
+            cb = Math.min(W, xb);
+          if (cb > ca) {
+            ctx.globalAlpha = 0.18;
+            ctx.fillStyle = "#58a6ff";
+            ctx.fillRect(ca, 0, cb - ca, H);
+            ctx.globalAlpha = 1;
+          }
+          ctx.strokeStyle = "#58a6ff";
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([]);
+          [xa, xb].forEach((x) => {
+            if (x < 0 || x > W) return;
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, H);
+            ctx.stroke();
           });
         }
 
@@ -2674,8 +3007,13 @@
       function drawBox(ctx, d, W, H, src) {
         const x1 = Math.min(d.x0, d.x1),
           x2 = Math.max(d.x0, d.x1);
-        const y1 = src === "spec" ? Math.min(d.y0, d.y1) : 0;
-        const y2 = src === "spec" ? Math.max(d.y0, d.y1) : H;
+        // Full-height preview whenever the resulting annotation will span the
+        // whole frequency axis — on the waveform always, and on the
+        // spectrogram when "Temporal only" is on — so the rubber band shows
+        // what is actually about to be created.
+        const fullBand = src !== "spec" || annotTemporalOnly();
+        const y1 = fullBand ? 0 : Math.min(d.y0, d.y1);
+        const y2 = fullBand ? H : Math.max(d.y0, d.y1);
         ctx.globalAlpha = 0.15;
         ctx.fillStyle = "#ffcc00";
         ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
@@ -2737,19 +3075,22 @@
         ctx.strokeStyle = "rgba(56,139,253,.6)";
         ctx.lineWidth = 1;
         ctx.stroke();
-        // Draw annotations on minimap
-        annotations.forEach((a) => {
-          const x1 = (a.start / duration) * W,
-            x2 = (a.end / duration) * W;
-          ctx.fillStyle = "rgba(63,185,80,.5)";
-          ctx.fillRect(x1, 0, x2 - x1, H);
-        });
-        detections.forEach((d) => {
-          const x1 = (d.start / duration) * W,
-            x2 = (d.end / duration) * W;
-          ctx.fillStyle = "rgba(247,129,102,.4)";
-          ctx.fillRect(x1, 0, x2 - x1, H);
-        });
+        // Draw annotations on minimap — skipped in Preprocessing for the
+        // same reason as the main overlay.
+        if (viewerMode !== "preprocess") {
+          annotations.forEach((a) => {
+            const x1 = (a.start / duration) * W,
+              x2 = (a.end / duration) * W;
+            ctx.fillStyle = "rgba(63,185,80,.5)";
+            ctx.fillRect(x1, 0, x2 - x1, H);
+          });
+          detections.forEach((d) => {
+            const x1 = (d.start / duration) * W,
+              x2 = (d.end / duration) * W;
+            ctx.fillStyle = "rgba(247,129,102,.4)";
+            ctx.fillRect(x1, 0, x2 - x1, H);
+          });
+        }
         // Update view window indicator
         const xStart = (viewStart / duration) * W;
         const xWidth = (viewDur / duration) * W;
@@ -2794,6 +3135,15 @@
       // ═══════════════════════════════════════════════════════════════════
       // TOOL & POINTER HANDLING
       // ═══════════════════════════════════════════════════════════════════
+      // "Temporal only" annotation mode: the drag's vertical extent is
+      // ignored and the annotation covers 0–Nyquist, so a time-only
+      // selection can be dragged anywhere on the spectrogram without
+      // having to reach the top and bottom edges.
+      function annotTemporalOnly() {
+        const el = $("annotTemporal");
+        return !!(el && el.checked);
+      }
+
       function setTool(t) {
         activeTool = t;
         $("toolSelect").classList.toggle("atool", t === "select");
@@ -2804,16 +3154,41 @@
         $("waveI").style.cursor = cursor;
         $("specI").style.cursor = cursor;
       }
+      // True while Spectral Analysis is the visible tab. Ctrl+Z is claimed by
+      // both this module and Temporal Analysis's peak undo, so each defers to
+      // the other based on which tab the user is actually looking at.
+      function isAnalyzerTabActive() {
+        const t = $("maintab-analyzer");
+        return !!(t && t.classList.contains("active"));
+      }
+
       document.addEventListener("keydown", (e) => {
         if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT")
           return;
-        if (e.key === "s" || e.key === "S") setTool("select");
-        if (e.key === "a" || e.key === "A") setTool("annotate");
-        if (e.key === "h" || e.key === "H") setTool("pan");
+        if (
+          (e.key === "z" || e.key === "Z") &&
+          (e.ctrlKey || e.metaKey) &&
+          !e.shiftKey &&
+          !e.altKey &&
+          isAnalyzerTabActive()
+        ) {
+          undoAnnot();
+          e.preventDefault();
+          return;
+        }
+        // Space is a transport key and works wherever the viewer is; the
+        // rest act on selections and would otherwise fire invisibly from
+        // Preprocessing (or Temporal Analysis), silently switching the tool
+        // or deleting a selection the user cannot see.
         if (e.key === " ") {
           e.preventDefault();
           togglePlay();
+          return;
         }
+        if (!isAnalyzerTabActive()) return;
+        if (e.key === "s" || e.key === "S") setTool("select");
+        if (e.key === "a" || e.key === "A") setTool("annotate");
+        if (e.key === "h" || e.key === "H") setTool("pan");
         if ((e.key === "Delete" || e.key === "Backspace") && selAid !== null) {
           deleteAnnot(selAid);
           selAid = null;
@@ -2885,6 +3260,26 @@
             }
             return; // trim mode suppresses other tools
           }
+          if (ppDrag) {
+            // Button released off-canvas: mouseup never reached us, so the
+            // drag would otherwise keep tracking the pointer unpressed.
+            if (e.buttons === 0) {
+              ppDrag = null;
+              return;
+            }
+            // 3px of slop so a click with a shaky hand stays a click.
+            if (Math.abs(e.offsetX - ppDrag.startX) > 3) ppDrag.moved = true;
+            if (ppDrag.moved) {
+              const nt = Math.max(0, Math.min(duration, t));
+              ppSel = {
+                t0: Math.min(ppDrag.anchor, nt),
+                t1: Math.max(ppDrag.anchor, nt),
+              };
+              updatePpSelReadout();
+              render();
+            }
+            return;
+          }
           if (activeTool === "annotate" && drawing) {
             drawing.x1 = e.offsetX;
             drawing.y1 = e.offsetY;
@@ -2936,6 +3331,18 @@
             render();
             return;
           }
+          // Preprocessing: the viewer is a transport, not an editor. No
+          // annotate, no pan tool, no annotation hit-test. A click places the
+          // playhead; a drag pulls out a time selection. Both start the same
+          // way — which one it turns out to be is settled on mouseup by
+          // whether the pointer actually moved. Reached only when trim mode
+          // is off, since that branch returns above.
+          if (viewerMode === "preprocess") {
+            const { t } = pixToTF(e.offsetX, e.offsetY, src);
+            ppDrag = { anchor: t, startX: e.offsetX, moved: false };
+            seekTo(t);
+            return;
+          }
           if (activeTool === "annotate") {
             drawing = {
               src,
@@ -2958,13 +3365,12 @@
               selAid = null;
               refreshAnnotList();
               const { t } = pixToTF(e.offsetX, e.offsetY, src);
-              playPos = Math.max(0, Math.min(duration, t));
-              $("timeDisp").textContent = playPos.toFixed(3) + " s";
-              if (isPlaying) {
-                pausePb();
-                startPb();
-              }
-              render();
+              // Via seekTo so the pause happens BEFORE the new position is
+              // set: pausePb() advances playPos by the elapsed time, so the
+              // old order (set, then pause) landed the playhead past the
+              // click while playing — and past it by the speed multiplier
+              // once playback is not at 100%.
+              seekTo(t);
             }
           }
         });
@@ -2989,6 +3395,20 @@
             render();
             return;
           }
+          // Preprocessing: settle the gesture. A drag leaves the time
+          // selection it pulled out; a plain click clears any existing one
+          // (the playhead was already placed on mousedown). Returning early
+          // also stops the pan branch below from stomping the seek cursor
+          // when the tool left over from Spectral Analysis is Pan.
+          if (viewerMode === "preprocess") {
+            if (ppDrag && !ppDrag.moved) {
+              ppSel = null;
+              updatePpSelReadout();
+              render();
+            }
+            ppDrag = null;
+            return;
+          }
           if (activeTool === "pan") {
             panState = null;
             c.style.cursor = "grab";
@@ -3002,11 +3422,16 @@
           const fLo = Math.min(f0, f1),
             fHi = Math.max(f0, f1);
           if (tHi - tLo > 0.0005) {
+            annotSnapshot("draw annotation");
             const nyq = sampleRate / 2;
-            // When drawn on waveform, freq covers full range (0–Nyquist)
-            // When drawn on spectrogram, use the actual drawn freq bounds
-            const aFlo = src === "wave" ? 0 : Math.max(0, fLo);
-            const aFhi = src === "wave" ? nyq : Math.min(nyq, fHi);
+            // When drawn on waveform, freq covers full range (0–Nyquist).
+            // On the spectrogram, use the drawn freq bounds — unless
+            // "Temporal only" is on, in which case the vertical drag is
+            // ignored and the annotation spans the whole frequency axis, so
+            // the user only has to aim at the time axis.
+            const fullBand = src === "wave" || annotTemporalOnly();
+            const aFlo = fullBand ? 0 : Math.max(0, fLo);
+            const aFhi = fullBand ? nyq : Math.min(nyq, fHi);
             const a = {
               id: nextAid++,
               start: tLo,
@@ -3123,7 +3548,110 @@
       // ═══════════════════════════════════════════════════════════════════
       // ANNOTATION MANAGEMENT
       // ═══════════════════════════════════════════════════════════════════
+
+      // ── Undo ───────────────────────────────────────────────────────────
+      // Snapshot-based, mirroring the Temporal Analysis peak undo
+      // (pkSnapshot/pkUndo). Every action that changes the annotation set
+      // stores the state as it was BEFORE the change.
+      //
+      // nextAid is part of the snapshot, and that is what makes the
+      // numbering reset: undo a freshly drawn #7 and the counter goes back
+      // to 7, so the next box you draw is #7 again instead of #8 leaving a
+      // permanent hole in the sequence.
+      //
+      // Detections/measurements ride along only so that undoing "Clear
+      // Spectrogram" — the one action here that also wipes them — puts back
+      // everything it removed rather than half of it.
+      const ANNOT_UNDO_LIMIT = 40;
+      let annotUndoStack = [];
+
+      function annotSnapshot(label) {
+        annotUndoStack.push({
+          label,
+          annotations: annotations.map((a) => ({ ...a })),
+          nextAid,
+          selAid,
+          detections: detections.map((d) => ({ ...d })),
+          detMeasurements: detMeasurements.slice(),
+          pkAppliedAnnotationIds:
+            typeof pkAppliedAnnotationIds !== "undefined"
+              ? pkAppliedAnnotationIds.slice()
+              : [],
+        });
+        if (annotUndoStack.length > ANNOT_UNDO_LIMIT) annotUndoStack.shift();
+        annotUpdateUndoButton();
+      }
+
+      // Wipe the history when the annotations are replaced wholesale — after
+      // loading different audio or trimming the timeline, the old snapshots
+      // describe times that no longer point at the same sound.
+      function annotResetUndo() {
+        annotUndoStack = [];
+        annotUpdateUndoButton();
+      }
+
+      function annotUpdateUndoButton() {
+        const b = $("btnAnnotUndo");
+        if (!b) return;
+        b.disabled = !annotUndoStack.length;
+        b.title = annotUndoStack.length
+          ? "Undo: " +
+            annotUndoStack[annotUndoStack.length - 1].label +
+            "  (Ctrl+Z)  ·  " +
+            annotUndoStack.length +
+            " step(s) available"
+          : "Nothing to undo (Ctrl+Z)";
+      }
+
+      function undoAnnot() {
+        const snap = annotUndoStack.pop();
+        if (!snap) {
+          log("Nothing to undo", "warn");
+          return;
+        }
+        annotations = snap.annotations;
+        nextAid = snap.nextAid;
+        selAid = snap.selAid;
+        detections = snap.detections;
+        detMeasurements = snap.detMeasurements;
+        if (typeof pkAppliedAnnotationIds !== "undefined")
+          pkAppliedAnnotationIds = snap.pkAppliedAnnotationIds;
+        // refreshAnnotList() clears spectralMetricsRows, which is correct
+        // here: metrics computed against the post-change annotations no
+        // longer describe the restored ones and must be recomputed.
+        refreshAnnotList();
+        $("detBadge").textContent = detections.length
+          ? "(" + detections.length + ")"
+          : "";
+        $("detCount").textContent = detMeasurements.length
+          ? detMeasurements.length + " units measured"
+          : detections.length
+            ? detections.length + " detections"
+            : "";
+        $("btnExport").disabled = !detections.length;
+        const _exMeasU = $("btnExportMeas");
+        if (detMeasurements.length) {
+          renderMeasTable();
+          if (_exMeasU) _exMeasU.disabled = false;
+          $("btnClearMeas").disabled = false;
+        } else {
+          $("measHead").innerHTML = "";
+          $("measBody").innerHTML = "";
+          $("summaryCards").style.display = "none";
+          if (_exMeasU) _exMeasU.disabled = true;
+          $("btnClearMeas").disabled = true;
+        }
+        annotUpdateUndoButton();
+        log("Undo: " + snap.label, "ok");
+        render();
+        renderMinimap();
+        // Force redraw so the restored overlay is immediately visible.
+        setTimeout(render, 50);
+      }
+
       function deleteAnnot(id) {
+        if (!annotations.some((a) => a.id === id)) return;
+        annotSnapshot("delete annotation #" + id);
         annotations = annotations.filter((a) => a.id !== id);
         refreshAnnotList();
         render();
@@ -3139,6 +3667,7 @@
               ? `Delete all ${annotations.length} annotations?`
               : `Delete all ${detections.length} detections?`;
         if (!confirm(msg)) return;
+        annotSnapshot("clear spectrogram");
         annotations = [];
         detections = [];
         detMeasurements = [];
@@ -3230,6 +3759,7 @@
         const txt = await f.text();
         const rows = parseSelections(txt);
         let added = 0;
+        if (rows.length) annotSnapshot("import selections");
         rows.forEach((r) => {
           if (
             !annotations.find(
@@ -3396,6 +3926,7 @@
         const nyq = rawSamples ? sampleRate / 2 : 20000;
         let added = 0,
           skipped = 0;
+        if (rows.length) annotSnapshot("import " + kind + " selections");
         rows.forEach((row) => {
           const sk = realKey(row, startKey),
             ek = realKey(row, endKey);
@@ -3546,7 +4077,15 @@
               const v = (inner.match(/<v\b[^>]*>([\s\S]*?)<\/v>/) || [])[1];
               val = v != null ? v : "";
             }
-            if (ref) cells.push({ col: ref, row: rNum, val });
+            // Whether the cell was written as TEXT matters downstream: a
+            // specimen id of "0012" is a label, not the number 12.
+            if (ref)
+              cells.push({
+                col: ref,
+                row: rNum,
+                val,
+                text: type === "s" || type === "inlineStr" || type === "str",
+              });
           }
         }
         if (!cells.length) return [];
@@ -3567,9 +4106,21 @@
           headerCells.forEach((hc) => {
             const cell = rowCells.find((c) => c.col === hc.col);
             const raw = cell ? cell.val : "";
-            // numeric coercion
-            const num =
-              raw !== "" && raw !== null && !isNaN(raw) ? Number(raw) : raw;
+            // Numeric coercion, but never at the cost of what the cell said.
+            //
+            // A cell Excel marked as text keeps its string form unless the
+            // number round-trips back to exactly the same characters. That is
+            // what protects zero-padded specimen ids ("0012" is an animal, not
+            // 12), ids that read as exponents ("1e3"), decimals written with a
+            // trailing zero ("1.50"), and "0x1A", which Number() happily turns
+            // into 26. Cells written as numbers are coerced unconditionally —
+            // they round-trip by construction, so measurements are unaffected.
+            let num = raw;
+            if (raw !== "" && raw !== null && !isNaN(raw)) {
+              const n = Number(raw);
+              if (!(cell && cell.text) || String(n) === String(raw).trim())
+                num = n;
+            }
             obj[colName[hc.col]] = num;
             if (raw !== "") any = true;
           });
@@ -4310,59 +4861,92 @@
         renderMeasTable();
       }
 
+      // Display names and decimal places for the measurements preview. This
+      // map is presentation only — the table's COLUMNS come from the keys the
+      // rows actually carry (see _measColumns), so a newly added metric shows
+      // up in the preview whether or not it is registered here. Anything
+      // missing falls back to a humanised key and its raw value.
+      const MEAS_COL_META = {
+        n: { lbl: "#" },
+        selection: { lbl: "#" },
+        source_file: { lbl: "Source file" },
+        temp_c: { lbl: "Temp (°C)" },
+        specimen_id: { lbl: "Specimen" },
+        species: { lbl: "Species" },
+        country: { lbl: "Country" },
+        locality: { lbl: "Locality" },
+        label: { lbl: "Label" },
+        start: { lbl: "Start (s)", dec: 4 },
+        end: { lbl: "End (s)", dec: 4 },
+        dur_ms: { lbl: "Dur (ms)", dec: 2 },
+        gap_ms: { lbl: "Gap (ms)", dec: 2 },
+        sel_low_freq_khz: { lbl: "Sel Low (kHz)", dec: 3 },
+        sel_high_freq_khz: { lbl: "Sel High (kHz)", dec: 3 },
+        peak_freq_khz: { lbl: "Peak Freq (kHz)", dec: 3 },
+        freq_min_khz: { lbl: "Freq Min -20dB (kHz)", dec: 3 },
+        freq_max_khz: { lbl: "Freq Max -20dB (kHz)", dec: 3 },
+        freq_min_20db_khz: { lbl: "Freq Min -20dB (kHz)", dec: 3 },
+        freq_max_20db_khz: { lbl: "Freq Max -20dB (kHz)", dec: 3 },
+        bw_20db_khz: { lbl: "BW -20dB (kHz)", dec: 3 },
+        bw_10db_khz: { lbl: "BW -10dB (kHz)", dec: 3 },
+        q_3db: { lbl: "Q -3dB", dec: 2 },
+        q_10db: { lbl: "Q -10dB", dec: 2 },
+        q_20db: { lbl: "Q -20dB", dec: 2 },
+        spec_centroid_khz: { lbl: "Centroid (kHz)", dec: 3 },
+        iq_bw_khz: { lbl: "IQ BW (kHz)", dec: 3 },
+        spec_entropy: { lbl: "Entropy", dec: 4 },
+        spec_flatness: { lbl: "Flatness", dec: 4 },
+      };
+
+      // The rows the preview shows. Deliberately the SAME choice
+      // saveSpectralMetricsExcel makes, so what is on screen is what lands in
+      // the workbook — the preview used to render detMeasurements only, which
+      // drops the metadata, label and selection-bounds columns that the
+      // export carries.
+      function _measTableRows() {
+        return spectralMetricsRows && spectralMetricsRows.length
+          ? spectralMetricsRows
+          : detMeasurements && detMeasurements.length
+            ? detMeasurements
+            : [];
+      }
+
+      // Union of keys across rows, in first-seen order, so a field present on
+      // only some rows still gets a column and the order matches the export's.
+      function _measColumns(rows) {
+        const seen = [];
+        const set = new Set();
+        rows.forEach((r) =>
+          Object.keys(r).forEach((k) => {
+            if (!set.has(k)) {
+              set.add(k);
+              seen.push(k);
+            }
+          }),
+        );
+        return seen.map((k) => {
+          const meta = MEAS_COL_META[k] || {};
+          return {
+            k,
+            dec: meta.dec,
+            lbl:
+              meta.lbl ||
+              k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+          };
+        });
+      }
+
+      function _fmtMeasCell(v, dec) {
+        if (v === null || v === undefined || v === "") return "—";
+        if (typeof v === "number")
+          return isFinite(v) ? (dec == null ? String(v) : v.toFixed(dec)) : "—";
+        return String(v);
+      }
+
       function renderMeasTable() {
-        if (!detMeasurements.length) return;
-        const cols = [
-          { k: "n", lbl: "#" },
-          { k: "start", lbl: "Start (s)", fmt: (v) => v.toFixed(4) },
-          { k: "end", lbl: "End (s)", fmt: (v) => v.toFixed(4) },
-          { k: "dur_ms", lbl: "Dur (ms)", fmt: (v) => v.toFixed(2) },
-          {
-            k: "gap_ms",
-            lbl: "Gap (ms)",
-            fmt: (v) => (v !== null ? v.toFixed(2) : "—"),
-          },
-          {
-            k: "peak_freq_khz",
-            lbl: "Peak Freq (kHz)",
-            fmt: (v) => v.toFixed(3),
-          },
-          {
-            k: "freq_min_khz",
-            lbl: "Freq Min -20dB (kHz)",
-            fmt: (v) => v.toFixed(3),
-          },
-          {
-            k: "freq_max_khz",
-            lbl: "Freq Max -20dB (kHz)",
-            fmt: (v) => v.toFixed(3),
-          },
-          { k: "bw_20db_khz", lbl: "BW -20dB (kHz)", fmt: (v) => v.toFixed(3) },
-          { k: "bw_10db_khz", lbl: "BW -10dB (kHz)", fmt: (v) => v.toFixed(3) },
-          {
-            k: "q_3db",
-            lbl: "Q -3dB",
-            fmt: (v) => (v != null ? v.toFixed(2) : "—"),
-          },
-          {
-            k: "q_10db",
-            lbl: "Q -10dB",
-            fmt: (v) => (v != null ? v.toFixed(2) : "—"),
-          },
-          {
-            k: "q_20db",
-            lbl: "Q -20dB",
-            fmt: (v) => (v != null ? v.toFixed(2) : "—"),
-          },
-          {
-            k: "spec_centroid_khz",
-            lbl: "Centroid (kHz)",
-            fmt: (v) => v.toFixed(3),
-          },
-          { k: "iq_bw_khz", lbl: "IQ BW (kHz)", fmt: (v) => v.toFixed(3) },
-          { k: "spec_entropy", lbl: "Entropy", fmt: (v) => v.toFixed(4) },
-          { k: "spec_flatness", lbl: "Flatness", fmt: (v) => v.toFixed(4) },
-        ];
+        const rows = _measTableRows();
+        if (!rows.length) return;
+        const cols = _measColumns(rows);
         const thead = $("measHead");
         thead.innerHTML = "";
         cols.forEach((c) => {
@@ -4372,11 +4956,11 @@
         });
         const tbody = $("measBody");
         tbody.innerHTML = "";
-        detMeasurements.forEach((m) => {
+        rows.forEach((m) => {
           const tr = document.createElement("tr");
           cols.forEach((c) => {
             const td = document.createElement("td");
-            td.textContent = c.fmt ? c.fmt(m[c.k]) : m[c.k];
+            td.textContent = _fmtMeasCell(m[c.k], c.dec);
             tr.appendChild(td);
           });
           tbody.appendChild(tr);
@@ -4660,6 +5244,83 @@
       // ═══════════════════════════════════════════════════════════════════
       // PLAYBACK
       // ═══════════════════════════════════════════════════════════════════
+      // ── Playback-only frequency drop ───────────────────────────────────
+      // The same pitch shift as the Preprocessing edit, but rendered into a
+      // SEPARATE buffer that only the playback engine ever sees — rawSamples,
+      // every measurement, every export and every plot keep the real
+      // frequencies. Duration is preserved by the shift, so the playhead
+      // arithmetic below needs no adjustment; only Speed % scales time.
+      function playbackDropPct() {
+        const el = $("playFreqDrop");
+        const v = el ? parseFloat(el.value) : 0;
+        return isFinite(v) && v > 0 && v < 100 ? v : 0;
+      }
+
+      // Rendered eagerly whenever the setting or the audio changes, so
+      // startPb() stays synchronous and just picks a buffer.
+      async function refreshPlaybackDropBuffer() {
+        const pct = playbackDropPct();
+        if (!pct || !rawSamples || !rawSamples.length) {
+          _pbBuffer = null;
+          _pbDropPct = 0;
+          if (isPlaying) {
+            pausePb();
+            startPb();
+          }
+          return;
+        }
+        if (_pbBuffer && _pbDropPct === pct) return;
+        await withBusy("Preparing playback…", async () => {
+          await busyTick();
+          const shifted = applyFreqDrop(rawSamples, pct);
+          try {
+            if (!audioCtx)
+              audioCtx = new (window.AudioContext ||
+                window.webkitAudioContext)();
+            const buf = audioCtx.createBuffer(
+              1,
+              shifted.length,
+              sampleRate,
+            );
+            buf.copyToChannel(shifted, 0);
+            _pbBuffer = buf;
+            _pbDropPct = pct;
+          } catch (e) {
+            _pbBuffer = null;
+            _pbDropPct = 0;
+            log("Could not prepare dropped playback: " + e.message, "warn");
+          }
+        });
+        // Swap it in mid-playback rather than waiting for the next press.
+        if (isPlaying) {
+          pausePb();
+          startPb();
+        }
+      }
+
+      function onPlayDropChange() {
+        refreshPlaybackDropBuffer();
+      }
+
+      // Playback speed as a fraction of real time, from the "Speed %" box.
+      // Web Audio resamples rather than time-stretches, so slowing down also
+      // drops the pitch — which is the point for ultrasonic insect song.
+      function currentPlayRate() {
+        const el = $("playSpeed");
+        const pct = el ? parseFloat(el.value) : 100;
+        if (!isFinite(pct) || pct <= 0) return 1;
+        return Math.min(400, Math.max(5, pct)) / 100;
+      }
+
+      // Restart from the current position so the elapsed-time arithmetic
+      // below stays exact — playRate is captured per playback, not read live.
+      function onPlaySpeedChange() {
+        if (isPlaying) {
+          pausePb();
+          startPb();
+        }
+      }
+
       function togglePlay() {
         if (!audioBuffer) return;
         isPlaying ? pausePb() : startPb();
@@ -4673,7 +5334,12 @@
             sourceNode.stop();
           } catch (e) {}
         sourceNode = audioCtx.createBufferSource();
-        sourceNode.buffer = audioBuffer;
+        // The dropped buffer when one is ready, the real audio otherwise —
+        // so a press during the (~200 ms) render just plays undropped rather
+        // than failing.
+        sourceNode.buffer = _pbBuffer || audioBuffer;
+        playRate = currentPlayRate();
+        sourceNode.playbackRate.value = playRate;
         sourceNode.connect(audioCtx.destination);
         playOff = playPos;
         playT0 = audioCtx.currentTime;
@@ -4690,7 +5356,8 @@
           try {
             sourceNode.stop();
           } catch (e) {}
-        playPos += audioCtx.currentTime - playT0;
+        // Wall-clock elapsed × rate = audio consumed.
+        playPos += (audioCtx.currentTime - playT0) * playRate;
         isPlaying = false;
         $("btnPlay").textContent = "▶ Play";
         cancelAnimationFrame(raf);
@@ -4707,9 +5374,102 @@
         $("timeDisp").textContent = "0.000 s";
         render();
       }
+      // ── Seek / jump to selection edges ─────────────────────────────────
+      // "Selection" means whatever is being selected in the tab you are in:
+      // the trim handles while trim mode is open (Preprocessing's own
+      // selection), otherwise the Spectral Analysis annotation bounds. Both
+      // reduce to a sorted list of edge times.
+      function selectionEdges() {
+        // The recording's own start and end are always stops, so stepping
+        // past the first or last selection edge lands on 0 / duration rather
+        // than refusing to move.
+        const es = [0, duration];
+        // Trim handles are global — they show wherever the viewer is parked.
+        if (trimMode) es.push(trimSel.t0, trimSel.t1);
+        if (viewerMode === "preprocess") {
+          if (ppSel) es.push(ppSel.t0, ppSel.t1);
+        } else {
+          // Annotations are Spectral Analysis's selections and are neither
+          // drawn nor jumpable in Preprocessing.
+          annotations.forEach((a) => es.push(a.start, a.end));
+        }
+        const sorted = es
+          .filter((t) => isFinite(t) && t >= 0 && t <= duration)
+          .sort((a, b) => a - b);
+        // Collapse coincident stops (a selection edge sitting on 0, two
+        // annotations meeting) so one press does not need two.
+        const out = [];
+        for (const t of sorted) {
+          if (!out.length || t - out[out.length - 1] > 1e-6) out.push(t);
+        }
+        return out;
+      }
+
+      function updatePpSelReadout() {
+        const el = $("ppSelReadout");
+        const btn = $("btnClearPpSel");
+        const has = !!(ppSel && ppSel.t1 > ppSel.t0);
+        if (el)
+          el.textContent = has
+            ? `${ppSel.t0.toFixed(3)}–${ppSel.t1.toFixed(3)} s  (${(ppSel.t1 - ppSel.t0).toFixed(3)} s)`
+            : "No selection";
+        if (btn) btn.disabled = !has;
+      }
+
+      function clearPpSel() {
+        ppSel = null;
+        updatePpSelReadout();
+        render();
+      }
+
+      function seekTo(t) {
+        // pausePb() advances playPos by the elapsed time, so it has to run
+        // BEFORE the new position is set, not after.
+        const wasPlaying = isPlaying;
+        if (wasPlaying) pausePb();
+        playPos = Math.max(0, Math.min(duration, t));
+        $("timeDisp").textContent = playPos.toFixed(3) + " s";
+        // Recentre only if the target fell outside the current view.
+        if (playPos < viewStart || playPos > viewStart + viewDur) {
+          viewStart = Math.max(
+            0,
+            Math.min(playPos - viewDur / 2, Math.max(0, duration - viewDur)),
+          );
+        }
+        if (wasPlaying) startPb();
+        render();
+      }
+
+      function jumpEdge(dir) {
+        if (!rawSamples) return;
+        const edges = selectionEdges();
+        if (!edges.length) return;
+        // Strict comparison with a small tolerance, so repeated presses walk
+        // the list instead of sticking on the edge already landed on.
+        const eps = 1e-4;
+        let target = null;
+        if (dir > 0) {
+          for (const t of edges)
+            if (t > playPos + eps) {
+              target = t;
+              break;
+            }
+        } else {
+          for (let i = edges.length - 1; i >= 0; i--)
+            if (edges[i] < playPos - eps) {
+              target = edges[i];
+              break;
+            }
+        }
+        // Unreachable in practice — 0 and duration are always in the list, so
+        // the only way to find nothing ahead is to already be at the end.
+        if (target === null) return;
+        seekTo(target);
+      }
+
       function animPH() {
         if (!isPlaying) return;
-        playPos = playOff + (audioCtx.currentTime - playT0);
+        playPos = playOff + (audioCtx.currentTime - playT0) * playRate;
         if (playPos >= duration) {
           stopPb();
           return;
@@ -4797,6 +5557,75 @@
         // Perceived luminance
         return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.5;
       }
+      // WCAG relative luminance of one sRGB triple.
+      function _relLum(r, g, b) {
+        const f = (v) => {
+          v /= 255;
+          return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+        };
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+      }
+      // Mean relative luminance of a region that has ALREADY been drawn, for
+      // text that has to sit on top of it. Sampling the rendered pixels
+      // rather than reasoning about a background color is what makes this
+      // work over a colormap, an inverted spectrogram, or loud signal —
+      // none of which any single setting describes.
+      // Returns null when the pixels cannot be read; the caller then keeps
+      // whatever static color it would have used.
+      function _regionLuminance(ctx, x, y, w, h) {
+        const x0 = Math.max(0, Math.floor(x)),
+          y0 = Math.max(0, Math.floor(y));
+        const x1 = Math.min(ctx.canvas.width, Math.ceil(x + w)),
+          y1 = Math.min(ctx.canvas.height, Math.ceil(y + h));
+        if (x1 <= x0 || y1 <= y0) return null;
+        let d;
+        try {
+          d = ctx.getImageData(x0, y0, x1 - x0, y1 - y0).data;
+        } catch (e) {
+          return null;
+        }
+        let sum = 0,
+          n = 0;
+        // Every 4th pixel — plenty for a mean, and keeps the read cheap at
+        // high DPI where the sampled box is a few thousand pixels.
+        for (let i = 0; i < d.length; i += 16) {
+          sum += _relLum(d[i], d[i + 1], d[i + 2]);
+          n++;
+        }
+        return n ? sum / n : null;
+      }
+      // Ink for text drawn over a ground of the given relative luminance.
+      // Candidates are ordered by how the figure already looks, and the
+      // first to clear the WCAG AA body-text ratio (4.5:1) wins — so a light
+      // spectrogram keeps today's soft grey, while a dark one switches to
+      // near-white. A binary light/dark test is not enough: a mid-tone
+      // ground leaves BOTH extremes weak, and there the best of them is
+      // taken rather than a fixed one.
+      const STAMP_INKS = [
+        "#555555",
+        "#e6edf3",
+        "#111111",
+        "#ffffff",
+        "#000000",
+      ];
+      function _pickInk(lum) {
+        const ratio = (hex) => {
+          const [r, g, b] = _hexToRgb(hex);
+          const l = _relLum(r, g, b);
+          return (Math.max(l, lum) + 0.05) / (Math.min(l, lum) + 0.05);
+        };
+        let best = STAMP_INKS[0],
+          bestRatio = 0;
+        for (const c of STAMP_INKS) {
+          const r = ratio(c);
+          if (r >= 4.5) return c;
+          if (r > bestRatio) {
+            bestRatio = r;
+            best = c;
+          }
+        }
+        return best;
+      }
 
       async function renderPlot() {
         if (!rawSamples) {
@@ -4851,8 +5680,8 @@
         );
         const overlapFrac = parseFloat($("plotOverlap").value) || 0.875;
         const psPxW = parseInt($("plotPsWidth").value) || 160;
-        const legendSizePt = parseFloat($("plotLegendSize").value) || 11;
-        const tickSizePt = parseFloat($("plotTickSize").value) || 9;
+        const legendSizePt = parseFloat($("plotLegendSize").value) || 18;
+        const tickSizePt = parseFloat($("plotTickSize").value) || 16;
         const timeUnitPref = $("plotTimeUnit").value || "auto"; // 'auto'|'s'|'ms'
         const timeStepPref = $("plotTimeStep").value || "auto"; // 'auto'|seconds
         const freqStepPref = $("plotFreqStep").value || "auto"; // 'auto'|'10000'|'5000'|'2000'
@@ -5183,7 +6012,7 @@
           ctx.textBaseline = "middle";
           ctx.font = `${FSL}px ${font}`;
           ctx.fillStyle = FG;
-          ctx.fillText("Frequency (Hz)", 0, 0);
+          ctx.fillText("Frequency (kHz)", 0, 0);
           ctx.restore();
           // Border
           ctx.strokeStyle = FG;
@@ -5228,12 +6057,14 @@
           ctx.stroke();
           let lbl;
           const elapsed = t - t0; // always 0-based labels
+          // Bare numbers — the axis title below carries the unit, so
+          // repeating it on every tick is redundant.
           if (useMs) {
-            lbl = Math.round(elapsed * 1000) + "ms";
+            lbl = String(Math.round(elapsed * 1000));
           } else {
             const dec =
               tStep >= 1 ? 0 : tStep >= 0.1 ? 1 : tStep >= 0.01 ? 2 : 3;
-            lbl = elapsed.toFixed(dec) + "s";
+            lbl = elapsed.toFixed(dec);
           }
           ctx.fillStyle = FG;
           ctx.fillText(lbl, x, specTop + specH + 7 * D2);
@@ -5255,6 +6086,13 @@
             ? niceTick(fRange / Math.max(4, Math.floor(specH / (40 * D2))))
             : parseInt(freqStepPref);
         const fFirst = Math.ceil(f0 / fStep) * fStep;
+        // Ticks are labelled in kHz as bare numbers (the axis title carries
+        // the unit). Decimals follow the step so a 500 Hz step reads
+        // 0.5 / 1.0 / 1.5 instead of collapsing to 0 / 1 / 2.
+        const fKhzDec = Math.max(
+          0,
+          Math.min(3, Math.ceil(-Math.log10(fStep / 1000))),
+        );
         ctx.textAlign = "right";
         ctx.textBaseline = "middle";
         ctx.font = `${FS}px ${font}`;
@@ -5281,10 +6119,7 @@
           ctx.moveTo(ML, y);
           ctx.lineTo(ML - 5 * D2, y);
           ctx.stroke();
-          const lbl =
-            f >= 1000
-              ? (f / 1000).toFixed(f % 1000 === 0 ? 0 : 1) + "k"
-              : f.toFixed(0);
+          const lbl = (f / 1000).toFixed(fKhzDec);
           ctx.fillStyle = FG;
           ctx.fillText(lbl, ML - 8 * D2, y);
         }
@@ -5296,7 +6131,7 @@
         ctx.textBaseline = "middle";
         ctx.font = `${FSL}px ${font}`;
         ctx.fillStyle = FG;
-        ctx.fillText("Frequency (Hz)", 0, 0);
+        ctx.fillText("Frequency (kHz)", 0, 0);
         ctx.restore();
 
         // ─── ANNOTATIONS & DETECTIONS ───────────────────────────────────
@@ -5354,8 +6189,26 @@
           ctx.textAlign = "right";
           ctx.textBaseline = "bottom";
           ctx.font = `${Math.round(9 * D2)}px ${font}`;
-          ctx.fillStyle = FG2;
-          ctx.fillText(info, ML + specW, specTop + specH - 3 * D2);
+          // This text sits INSIDE the spectrogram, so it must contrast with
+          // what is painted there — plotSpecBg, the colormap, Invert — not
+          // with the figure background that FG2 is derived from. A white
+          // figure with a black spectrogram used to put dark grey on black
+          // and the stamp vanished. Measure the box the text will occupy,
+          // read the pixels already under it, and pick ink accordingly.
+          const stampX = ML + specW,
+            stampY = specTop + specH - 3 * D2;
+          const stampW = ctx.measureText(info).width;
+          const stampH = Math.round(12 * D2);
+          const behindLum = _regionLuminance(
+            ctx,
+            stampX - stampW,
+            stampY - stampH,
+            stampW,
+            stampH,
+          );
+          // null = pixels unreadable, so keep the old static choice.
+          ctx.fillStyle = behindLum === null ? FG2 : _pickInk(behindLum);
+          ctx.fillText(info, stampX, stampY);
         }
 
         // ── Show preview ────────────────────────────────────────────────
@@ -5535,6 +6388,30 @@
         const analyzerOnly = $("analyzerOnlyControls");
         if (analyzerOnly)
           analyzerOnly.style.display = name === "analyzer" ? "contents" : "none";
+
+        // Hiding the tool buttons is not enough on its own: activeTool keeps
+        // whatever it was (Annotate by default), so without this a drag in
+        // Preprocessing would quietly create selections. viewerMode gates the
+        // behaviour instead of the chrome.
+        viewerMode = name === "preprocess" ? "preprocess" : "analyzer";
+        if (viewerMode === "preprocess") {
+          // One unambiguous affordance: click to place the playhead.
+          const wi = $("waveI"),
+            si = $("specI");
+          if (wi) wi.style.cursor = "text";
+          if (si) si.style.cursor = "text";
+          // Drop any in-flight annotate/pan gesture. selAid is deliberately
+          // left alone: the highlight is not drawn here anyway, and clearing
+          // it would mean calling refreshAnnotList(), which invalidates
+          // computed spectral metrics on every tab switch.
+          drawing = null;
+          panState = null;
+          ppDrag = null;
+          updatePpSelReadout();
+        } else {
+          ppDrag = null;
+          setTool(activeTool); // restores the tool's own cursor
+        }
       }
 
       // Brings back the landing/guide view. Unlike the real tabs, landing
@@ -5731,6 +6608,179 @@
         }
       }
 
+      // ── Preset files (.json) ───────────────────────────────────────────
+      // The ten slots above live in localStorage, which is per-install: a
+      // preset there cannot travel with a dataset, go into version control,
+      // or survive the webview's storage being cleared. Export/Import write
+      // the same captured object to a real file, so the settings behind a
+      // figure can be kept beside the recordings and handed to someone else.
+      //
+      // Export takes the LIVE toolbar state rather than a saved slot, so
+      // getting a file out never costs a slot; Import applies straight to the
+      // toolbar, mirroring Load. Save it into a slot afterwards if it should
+      // stick.
+      const PRESET_FILE_KIND = "rthoptera.multiplot.preset";
+      const PRESET_FILE_VERSION = 1;
+
+      function _presetFileStatus(msg, isErr) {
+        const el = $("presetStatus");
+        if (el) {
+          el.textContent = msg;
+          el.style.color = isErr ? "var(--red)" : "var(--txt3)";
+        }
+        log(msg, isErr ? "err" : "ok");
+      }
+
+      // Filters a parsed file down to entries this build can actually apply.
+      // Everything is checked against the live control rather than trusted:
+      // a preset written by a different version (or edited by hand) can name
+      // fields that no longer exist, or carry a value that is not one of a
+      // dropdown's options — assigning those would silently blank the control
+      // instead of failing loudly.
+      function _sanitizePresetData(data) {
+        const known = new Set(PRESET_FIELDS);
+        const clean = {};
+        const invalid = [];
+        const clamped = [];
+        let unknown = 0;
+
+        Object.keys(data).forEach((k) => {
+          // Keys starting with "_" are file metadata (_kind/_version/…), not
+          // settings, so they are not counted as unrecognized.
+          if (!k.startsWith("_") && !known.has(k)) unknown++;
+        });
+
+        PRESET_FIELDS.forEach((id) => {
+          if (!(id in data)) return;
+          const el = $(id);
+          if (!el) return;
+          const v = data[id];
+          if (el.type === "checkbox") {
+            if (typeof v !== "boolean") {
+              invalid.push(id);
+              return;
+            }
+            clean[id] = v;
+          } else if (el.tagName === "SELECT") {
+            const want = String(v);
+            if (!Array.from(el.options).some((o) => o.value === want)) {
+              invalid.push(id);
+              return;
+            }
+            clean[id] = want;
+          } else if (el.type === "number" || el.type === "range") {
+            // A blank number field is a real state, not corruption — the
+            // plot falls back to a default for it — so it round-trips as
+            // blank rather than being reported invalid.
+            if (typeof v === "string" && v.trim() === "") {
+              clean[id] = "";
+              return;
+            }
+            const num = parseFloat(v);
+            if (!isFinite(num)) {
+              invalid.push(id);
+              return;
+            }
+            // Honour the control's own bounds — a hand-edited width of
+            // 999999 would otherwise try to allocate a canvas that cannot
+            // be drawn.
+            const lo = el.min === "" ? -Infinity : parseFloat(el.min);
+            const hi = el.max === "" ? Infinity : parseFloat(el.max);
+            const fixed = Math.min(
+              isFinite(hi) ? hi : Infinity,
+              Math.max(isFinite(lo) ? lo : -Infinity, num),
+            );
+            if (fixed !== num) clamped.push(id);
+            clean[id] = String(fixed);
+          } else if (el.type === "color") {
+            // Anything a color input cannot parse is silently coerced to
+            // black, so reject it here instead of letting a typo repaint
+            // the figure.
+            if (typeof v !== "string" || !/^#[0-9a-f]{6}$/i.test(v.trim())) {
+              invalid.push(id);
+              return;
+            }
+            clean[id] = v.trim().toLowerCase();
+          } else {
+            if (v === null || typeof v === "object") {
+              invalid.push(id);
+              return;
+            }
+            clean[id] = String(v);
+          }
+        });
+        return { clean, invalid, clamped, unknown };
+      }
+
+      async function exportPresetFile() {
+        const data = _capturePreset();
+        const title = ($("plotTitle")?.value || "").trim();
+        const payload = {
+          _kind: PRESET_FILE_KIND,
+          _version: PRESET_FILE_VERSION,
+          _app: "Rthoptera Desktop",
+          _savedAt: new Date().toISOString(),
+          _name: title || "Multiplot preset",
+          ...data,
+        };
+        // exactName: a preset describes plot settings, not one recording, so
+        // it must not be renamed after the loaded audio file.
+        await dlFile(
+          "rthoptera_multiplot_preset.json",
+          JSON.stringify(payload, null, 2),
+          "application/json",
+          { exactName: true },
+        );
+      }
+
+      async function importPresetFile(fileList) {
+        const file = fileList && fileList[0];
+        if (!file) return;
+        try {
+          const data = JSON.parse(await file.text());
+          if (!data || typeof data !== "object" || Array.isArray(data)) {
+            _presetFileStatus("Not a preset file (expected a JSON object).", true);
+            return;
+          }
+          // Only reject on a kind that is present and wrong — files without
+          // the marker (hand-written, or from before it existed) are still
+          // tried, and fall out below if they carry nothing usable.
+          if (data._kind && data._kind !== PRESET_FILE_KIND) {
+            _presetFileStatus(
+              `Not a Multiplot preset (file says "${data._kind}").`,
+              true,
+            );
+            return;
+          }
+          const { clean, invalid, clamped, unknown } = _sanitizePresetData(data);
+          const n = Object.keys(clean).length;
+          if (!n) {
+            _presetFileStatus("No recognizable Multiplot settings in that file.", true);
+            return;
+          }
+          // Not auto-rendered, matching slot Load: the Multiplot only ever
+          // redraws when the user clicks Render.
+          _applyPreset(clean);
+          const notes = [];
+          if (unknown) notes.push(`${unknown} unknown setting(s) ignored`);
+          if (invalid.length)
+            notes.push(`${invalid.length} skipped (${invalid.join(", ")})`);
+          if (clamped.length)
+            notes.push(`${clamped.length} clamped to range (${clamped.join(", ")})`);
+          _presetFileStatus(
+            `✔ Loaded "${data._name || file.name}" — ${n} setting(s)` +
+              (notes.length ? "; " + notes.join("; ") : ""),
+          );
+        } catch (e) {
+          _presetFileStatus("Could not read preset: " + e.message, true);
+        } finally {
+          // Let the same file be picked twice in a row (change fires only on
+          // a different value otherwise).
+          const inp = $("presetFile");
+          if (inp) inp.value = "";
+        }
+      }
+
       // ═══════════════════════════════════════════════════════════════════
       // INIT
       // ═══════════════════════════════════════════════════════════════════
@@ -5745,6 +6795,9 @@
         // audio import — see switchMainTab).
         makePointer("waveI", "wave");
         makePointer("specI", "spec");
+        // Applies the default tool's button highlight and canvas cursor —
+        // the markup carries the highlight, but only setTool sets the cursor.
+        setTool(activeTool);
         initDragHandles();
         initMinimap();
         pkWatchCanvasResize();
@@ -9057,6 +10110,7 @@
           !e.shiftKey &&
           !e.altKey &&
           !isTyping &&
+          !isAnalyzerTabActive() &&
           pkEnv
         ) {
           pkUndo();
@@ -9406,6 +10460,39 @@
           return Math.sqrt(q / (v.length - 1));
         };
 
+        // ── Carrier-frequency statistics over constituent pulses ───────────
+        // Distinct from the peak_freq_khz already on these rows, which is the
+        // dominant frequency of ONE transform over the whole train/motif span.
+        // These describe the DISTRIBUTION of the per-pulse carriers inside the
+        // structure: where they sit on average, how far they drift, and the
+        // extremes reached. A species whose train sweeps in frequency and one
+        // whose train holds a steady carrier can report the same
+        // peak_freq_khz; only these columns separate them.
+        //
+        // The p- prefix marks "aggregated over peak rows", parallel to the
+        // _tmean suffix meaning "aggregated over train rows".
+        const pkFreqCols = (peaksIn) => {
+          const f = peaksIn
+            .map((pk) => peakFreqOf.get(pk))
+            .filter((v) => typeof v === "number" && isFinite(v));
+          if (!f.length)
+            return {
+              peak_freq_pmean_khz: null,
+              peak_freq_psd_khz: null,
+              peak_freq_pmin_khz: null,
+              peak_freq_pmax_khz: null,
+            };
+          const s = sd(f);
+          return {
+            peak_freq_pmean_khz: round4(
+              f.reduce((a, b) => a + b, 0) / f.length,
+            ),
+            peak_freq_psd_khz: s === null ? null : round4(s),
+            peak_freq_pmin_khz: round4(Math.min(...f)),
+            peak_freq_pmax_khz: round4(Math.max(...f)),
+          };
+        };
+
         motifs.forEach((motif, mi) => {
           motif.forEach((train, ti) => {
             const times = train.map((p) => p.time);
@@ -9474,8 +10561,11 @@
                     )
                   : null,
               ...pkSpecCols(computeSpectralMetrics(start, end, trainRes)),
-              // How much the per-peak carrier moves across this train. Large
-              // values mean the train's own bandwidth is driven by drift
+              ...pkFreqCols(train),
+              // Historical name for peak_freq_psd_khz, kept so workbooks and
+              // scripts written against older exports keep working. Same
+              // number: how much the per-peak carrier moves across this train.
+              // Large values mean the train's own bandwidth is driven by drift
               // between pulses rather than the width of any one pulse.
               freq_spread: (() => {
                 const f = train
@@ -9570,6 +10660,11 @@
             // window Welch-averaged across the span, silences included.
             ...pkSpecCols(computeSpectralMetrics(mStart, mEnd, motifRes)),
             ...pkMotifSpecMeans(mi + 1),
+            // Pooled over every pulse in the motif, not averaged over its
+            // trains: a motif whose trains each hold a steady but different
+            // carrier has a small freq_spread (each train is tight) and a
+            // large peak_freq_psd_khz (the motif as a whole is not).
+            ...pkFreqCols(allPeaks),
           });
         });
 
@@ -9938,7 +11033,14 @@
           cols.forEach((c, ci) => {
             const v = row[c];
             const ref = _colRef(ci) + r;
-            if (v === null || v === undefined || v === "") {
+            if (v && typeof v === "object" && typeof v.__xlFormula === "string") {
+              // A live formula rather than a literal. No cached <v> is
+              // written, so Excel computes it on open — see fullCalcOnLoad
+              // in _buildXlsx, without which the cells can read blank until
+              // something forces a recalculation.
+              rows +=
+                '<c r="' + ref + '"><f>' + _xmlEsc(v.__xlFormula) + "</f></c>";
+            } else if (v === null || v === undefined || v === "") {
               // empty cell — omit value
               rows += '<c r="' + ref + '"/>';
             } else if (typeof v === "number" && isFinite(v)) {
@@ -10019,7 +11121,11 @@
                 '"/>',
             )
             .join("") +
-          "</sheets></workbook>";
+          "</sheets>" +
+          // Formula cells are written without a cached result, so Excel has
+          // to be told to calculate the whole book when it opens it.
+          '<calcPr calcId="0" fullCalcOnLoad="1"/>' +
+          "</workbook>";
 
         files["xl/_rels/workbook.xml.rels"] =
           '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
@@ -10402,10 +11508,19 @@
         try {
           const fname = currentAudioFileName || "recording";
           const bytes = _buildDocx("Analysis Report — " + fname, paragraphs);
+          // Built here rather than left to dlFile's rename intercept: that
+          // maps a stem containing "spec" to the bare "_spec" marker used by
+          // the workbooks, which would collide with the Excel export. Naming
+          // it explicitly (with exactName) keeps the report distinct while
+          // still matching the "<audio>_<marker>" convention — and
+          // _summRecordingKey still cuts at "_spec", so it groups with the
+          // other exports from the same recording.
+          const base = fname.replace(/\.[^/.]+$/, "");
           dlFile(
-            "report.docx",
+            base + "_spec_report.docx",
             bytes,
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            { exactName: true },
           );
           log("Saved text report", "ok");
         } catch (e) {
@@ -10590,6 +11705,8 @@
           return;
         }
 
+        annotSnapshot("apply " + kind + " selections");
+
         // Replace whatever this function added last time — otherwise
         // editing detections (splitting/joining/deleting peaks) and
         // re-applying just piles fresh, correctly-numbered selections on
@@ -10709,7 +11826,21 @@
       // retyping the same tags across many files from one field trip.
       let summMetaClipboard = null;
       let summMerged = null; // {peaks:[],trains:[],motifs:[],motseq:[],spectral:[]}
-      let summStatsRows = null; // [{category, specimenId, metric, n, mean, sd, min, max}]
+      let summStatsRows = null; // [{selection, category, specimenId, metric, n, mean, sd, min, max}]
+      // Kept from the last merge so a selection can be edited and re-summarized
+      // without re-reading every workbook.
+      let summIndividuals = [];
+      let summNRecordings = 0;
+      // User-defined structure selections and the rows each one last matched.
+      let summSelections = []; // [{id, name, level, positions, filters}]
+      let summNextSelId = 1;
+      let summSelResults = []; // [{sel, cat, rows, nGroups, nBefore, err}]
+      // Set once the user types in the report box, so re-summarizing after a
+      // selection edit never overwrites their own wording.
+      let summReportEdited = false;
+      // The label the pooled (unselected) stats carry in the `selection`
+      // column, so "everything" is a selection like any other downstream.
+      const SUMM_SEL_ALL = "All rows";
 
       const SUMM_CATS = ["peaks", "trains", "motifs", "motseq", "spectral"];
       const SUMM_LABEL = {
@@ -10823,7 +11954,13 @@
           kl === "country" ||
           kl === "locality" ||
           kl === "selection" ||
-          kl === "n"
+          kl === "n" ||
+          // Bookkeeping stamped onto selected rows: which position the
+          // structure held inside its parent, and how many siblings it had.
+          // Averaging them would report the mean ordinal of the selection,
+          // which says nothing about the animal.
+          kl === "sel_position" ||
+          kl === "sel_group_n"
         )
           return true;
         if (/_id$/.test(kl)) return true;
@@ -11055,9 +12192,207 @@
         summResetResults();
       }
 
+      // ── Structure selection panel ───────────────────────────────────────
+      // The selections themselves survive a reset — they are the user's
+      // analysis design, not a result of it, and are meant to be reused as
+      // new recordings are added to the merge.
+      function summAddSelection() {
+        const id = summNextSelId++;
+        summSelections.push({
+          id,
+          name: "Selection " + id,
+          level: "train_in_motif",
+          positions: "1",
+          filters: "",
+        });
+        summRenderSelections();
+        summComputeStats();
+      }
+
+      function summRemoveSelection(id) {
+        summSelections = summSelections.filter((s) => s.id !== id);
+        summRenderSelections();
+        summComputeStats();
+      }
+
+      // Typing in a box re-summarizes, but must NOT rebuild the cards — the
+      // input being typed into would be replaced mid-keystroke and lose focus.
+      // summComputeStats only refreshes the notes, so the DOM the user is
+      // editing survives. Debounced because every keystroke otherwise
+      // re-groups every merged row, and the merged tables run to thousands of
+      // rows on a decent field season.
+      let _summSelTimer = null;
+      function summSelectionsChanged() {
+        clearTimeout(_summSelTimer);
+        _summSelTimer = setTimeout(() => summComputeStats(), 250);
+      }
+
+      // The "matched N of M" line on each card, by selection id. Held aside so
+      // it can be rewritten in place without touching the inputs around it.
+      let _summSelNotes = new Map();
+
+      function summRenderSelections() {
+        const wrap = $("summSelList");
+        if (!wrap) return;
+        _summSelNotes = new Map();
+        wrap.innerHTML = "";
+        if (!summSelections.length) {
+          wrap.innerHTML =
+            '<div style="color:var(--txt2);font-size:11px">No selections yet — everything is summarized together.</div>';
+          return;
+        }
+        summSelections.forEach((sel) => {
+          const card = document.createElement("div");
+          card.style.cssText =
+            "display:flex;flex-direction:column;gap:4px;padding:5px;border:1px solid var(--border);border-radius:4px;background:var(--bg3)";
+
+          const head = document.createElement("div");
+          head.style.cssText = "display:flex;align-items:center;gap:4px";
+          const nameIn = document.createElement("input");
+          nameIn.type = "text";
+          nameIn.value = sel.name;
+          nameIn.placeholder = "Name (used for the sheet and the report)";
+          nameIn.style.cssText = "flex:1;font-size:11px;min-width:0";
+          nameIn.oninput = () => {
+            sel.name = nameIn.value;
+            summSelectionsChanged();
+          };
+          const del = document.createElement("button");
+          del.textContent = "✕";
+          del.style.cssText = "font-size:10px;padding:1px 6px";
+          del.onclick = () => summRemoveSelection(sel.id);
+          head.appendChild(nameIn);
+          head.appendChild(del);
+          card.appendChild(head);
+
+          const lvlSel = document.createElement("select");
+          lvlSel.style.cssText = "font-size:11px;width:100%";
+          Object.keys(SUMM_SEL_LEVELS).forEach((k) => {
+            const o = document.createElement("option");
+            o.value = k;
+            o.textContent = SUMM_SEL_LEVELS[k].label;
+            if (k === sel.level) o.selected = true;
+            lvlSel.appendChild(o);
+          });
+          lvlSel.onchange = () => {
+            sel.level = lvlSel.value;
+            summSelectionsChanged();
+          };
+          card.appendChild(lvlSel);
+
+          const posRow = document.createElement("div");
+          posRow.style.cssText = "display:flex;align-items:center;gap:4px";
+          const posLbl = document.createElement("span");
+          posLbl.textContent = "at";
+          posLbl.style.cssText = "color:var(--txt2);font-size:11px";
+          const posIn = document.createElement("input");
+          posIn.type = "text";
+          posIn.value = sel.positions;
+          posIn.placeholder = "1,3,5 · first · odd · 2-n · -1";
+          posIn.title =
+            "Position inside the parent structure, counted from 1.\n" +
+            "3            the third\n" +
+            "1,3,5        a list\n" +
+            "2-4 / 2-n    a range, n meaning the last\n" +
+            "-1           the last, -2 the one before it\n" +
+            "first, last, odd, even\n" +
+            "every 2 from 1   every second, starting at the first\n" +
+            "all or blank     no positional restriction";
+          posIn.style.cssText = "flex:1;font-size:11px;min-width:0";
+          posIn.oninput = () => {
+            sel.positions = posIn.value;
+            summSelectionsChanged();
+          };
+          posRow.appendChild(posLbl);
+          posRow.appendChild(posIn);
+          card.appendChild(posRow);
+
+          const fltIn = document.createElement("input");
+          fltIn.type = "text";
+          fltIn.value = sel.filters;
+          fltIn.placeholder = "where… n_peaks >= 3; train_dur_ms > 20";
+          fltIn.title =
+            "Optional conditions on the measured columns, separated by ';'.\n" +
+            "Use >, >=, <, <=, = and != — for example n_peaks >= 3.\n" +
+            "Conditions narrow the rows the positions already picked; they\n" +
+            "never change which position a structure holds.";
+          fltIn.style.cssText = "font-size:11px;width:100%;box-sizing:border-box";
+          fltIn.oninput = () => {
+            sel.filters = fltIn.value;
+            summSelectionsChanged();
+          };
+          card.appendChild(fltIn);
+
+          const note = document.createElement("div");
+          note.style.cssText = "font-size:10px;line-height:1.3";
+          _summSelNotes.set(sel.id, note);
+          card.appendChild(note);
+          wrap.appendChild(card);
+        });
+        summUpdateSelNotes();
+      }
+
+      // Rewrite each card's status line from the last resolved results.
+      // Separate from summRenderSelections so it can run on every keystroke
+      // without rebuilding the inputs.
+      function summUpdateSelNotes() {
+        if (!_summSelNotes.size) return;
+        // Resolve here only when nothing has resolved them yet (the panel is
+        // being drawn outside a summarize pass); summComputeStats resolves
+        // first and stores per-selection stats on the results, which
+        // re-resolving would throw away.
+        const inSync =
+          summSelResults.length === summSelections.length &&
+          summSelResults.every((r, i) => r.sel === summSelections[i]);
+        const resolved = !summMerged
+          ? []
+          : inSync
+            ? summSelResults
+            : summResolveSelections();
+        summSelections.forEach((sel, i) => {
+          const note = _summSelNotes.get(sel.id);
+          if (!note) return;
+          const res = resolved[i];
+          if (!summMerged) {
+            note.style.color = "var(--txt3)";
+            note.textContent = "Merge & Summarize to see what this matches.";
+          } else if (!res || !res.ok) {
+            note.style.color = "#e06c75";
+            note.textContent = (res && res.err) || "Could not read this rule.";
+          } else if (!res.rows.length) {
+            note.style.color = "var(--txt3)";
+            note.textContent =
+              res.note ||
+              "Matched nothing — " +
+                summSelDescribe(sel, res) +
+                " selects no rows.";
+          } else {
+            note.style.color = "var(--txt2)";
+            const lvl = SUMM_SEL_LEVELS[sel.level];
+            note.textContent =
+              res.rows.length +
+              " of " +
+              res.nBefore +
+              " " +
+              lvl.unit +
+              "s, across " +
+              res.nGroups +
+              " " +
+              lvl.parent +
+              (res.nGroups === 1 ? "" : "s") +
+              ".";
+          }
+        });
+      }
+
       function summResetResults() {
         summMerged = null;
         summStatsRows = null;
+        summSelResults = [];
+        summIndividuals = [];
+        summNRecordings = 0;
+        summReportEdited = false;
+        summRenderSelections();
         $("summCards").innerHTML =
           '<div style="color:var(--txt2);font-size:11px">Add files and click Merge &amp; Summarize to see pooled counts and per-metric mean ± SD here.</div>';
         $("summTableHead").innerHTML = "";
@@ -11141,56 +12476,10 @@
             ),
           ),
         ];
-        const stats = [];
-        SUMM_CATS.forEach((cat) => {
-          const rows = merged[cat];
-          if (!rows.length) return;
-          const keys = new Set();
-          rows.forEach((r) =>
-            Object.keys(r).forEach((k) => {
-              if (!_summIsCategoricalKey(k)) keys.add(k);
-            }),
-          );
-          const groups =
-            individuals.length > 1 ? ["ALL", ...individuals] : ["ALL"];
-          groups.forEach((grp) => {
-            const subset =
-              grp === "ALL"
-                ? rows
-                : rows.filter((r) => r.specimen_id === grp);
-            if (!subset.length) return;
-            keys.forEach((k) => {
-              const vals = subset
-                .map((r) => r[k])
-                .filter((v) => typeof v === "number" && isFinite(v));
-              if (!vals.length) return;
-              const n = vals.length;
-              const mean = vals.reduce((s, v) => s + v, 0) / n;
-              const sd =
-                n > 1
-                  ? Math.sqrt(
-                      vals.reduce((s, v) => s + (v - mean) ** 2, 0) / n,
-                    )
-                  : 0;
-              stats.push({
-                category: SUMM_LABEL[cat],
-                specimen_id: grp,
-                metric: k,
-                n,
-                mean: round4(mean),
-                sd: round4(sd),
-                min: round4(Math.min(...vals)),
-                max: round4(Math.max(...vals)),
-              });
-            });
-          });
-        });
-        summStatsRows = stats;
-
-        summRenderCards(merged, individuals, nRecordings);
-        summRenderTable(stats);
-        const paragraphs = summBuildReportParagraphs(merged, individuals, nRecordings);
-        $("summReportText").value = paragraphs.join("\n\n");
+        summIndividuals = individuals;
+        summNRecordings = nRecordings;
+        summReportEdited = false;
+        summComputeStats();
 
         $("btnSummSaveXlsx").disabled = false;
         $("btnSummSaveReport").disabled = false;
@@ -11209,6 +12498,54 @@
           "Summarize: merged " + summFilesData.length + " file(s).",
           "ok",
         );
+      }
+
+      // Everything downstream of the merge: pooled stats, one stats block per
+      // structure selection, then the cards, table and drafted report. Split
+      // out of summRun so editing a selection re-summarizes in place instead
+      // of forcing every workbook to be read again.
+      function summComputeStats() {
+        if (!summMerged) return;
+        const stats = [];
+        SUMM_CATS.forEach((cat) => {
+          stats.push(
+            ..._summStatsBlock(
+              summMerged[cat],
+              SUMM_LABEL[cat],
+              summIndividuals,
+              SUMM_SEL_ALL,
+            ),
+          );
+        });
+        summResolveSelections().forEach((res) => {
+          if (!res.ok || !res.rows.length) return;
+          // Kept on the result rather than looked up later by name: two
+          // selections may legitimately carry the same name, and filtering
+          // the pooled list by that name would give each of them the other's
+          // rows as well.
+          res.stats = _summStatsBlock(
+            res.rows,
+            SUMM_LABEL[res.cat],
+            summIndividuals,
+            res.sel.name,
+          );
+          stats.push(...res.stats);
+        });
+        summStatsRows = stats;
+
+        summUpdateTempNote();
+        summRenderCards(summMerged, summIndividuals, summNRecordings);
+        summRenderTable(stats);
+        summUpdateSelNotes();
+        // Re-drafting on every selection edit would throw away the user's own
+        // wording, so the draft is only (re)written while the box is still
+        // untouched. A fresh merge clears the flag and drafts again.
+        if (!summReportEdited)
+          $("summReportText").value = summBuildReportParagraphs(
+            summMerged,
+            summIndividuals,
+            summNRecordings,
+          ).join("\n\n");
       }
 
       function summRenderCards(merged, individuals, nRecordings) {
@@ -11238,6 +12575,7 @@
         const pooledMean = (cat, key, digits) => {
           const row = summStatsRows.find(
             (s) =>
+              s.selection === SUMM_SEL_ALL &&
               s.category === SUMM_LABEL[cat] &&
               s.specimen_id === "ALL" &&
               s.metric === key,
@@ -11267,8 +12605,19 @@
       function summRenderTable(stats) {
         const head = $("summTableHead");
         const body = $("summTableBody");
-        const cols = ["category", "specimen_id", "metric", "n", "mean", "sd", "min", "max"];
+        const cols = [
+          "selection",
+          "category",
+          "specimen_id",
+          "metric",
+          "n",
+          "mean",
+          "sd",
+          "min",
+          "max",
+        ];
         const labels = {
+          selection: "Selection",
           category: "Category",
           specimen_id: "Specimen ID",
           metric: "Metric",
@@ -11321,6 +12670,7 @@
         const statFor = (cat, key) =>
           summStatsRows.find(
             (s) =>
+              s.selection === SUMM_SEL_ALL &&
               s.category === SUMM_LABEL[cat] &&
               s.specimen_id === "ALL" &&
               s.metric === key,
@@ -11415,6 +12765,7 @@
             if (!indRows.length) return;
             const s = summStatsRows.find(
               (s) =>
+                s.selection === SUMM_SEL_ALL &&
                 s.category === "Trains" &&
                 s.specimen_id === ind &&
                 s.metric === "peak_rate_pps",
@@ -11432,6 +12783,83 @@
               );
           });
         }
+
+        // One paragraph per structure selection. Stated as a rule plus its
+        // headline numbers, because "the first train of each echeme" only
+        // means something in a paper if the rule that produced it is on the
+        // page beside the values.
+        summSelResults.forEach((res) => {
+          if (!res.ok || !res.rows.length) return;
+          const lvl = SUMM_SEL_LEVELS[res.sel.level];
+          const selStat = (key) =>
+            summStatsRows.find(
+              (s) =>
+                s.selection === res.sel.name &&
+                s.specimen_id === "ALL" &&
+                s.metric === key,
+            );
+          // Which metrics are worth naming depends on the structure; these
+          // are the same headline measures the pooled paragraphs use.
+          const wanted =
+            res.cat === "trains"
+              ? [
+                  ["train_dur_ms", "a mean duration of", "ms", 1],
+                  ["peak_rate_pps", "a mean peak rate of", "peaks/s", 2],
+                  ["train_gap_ms", "a mean gap to the next train of", "ms", 1],
+                  ["peak_freq_pmean_khz", "a mean carrier frequency of", "kHz", 3],
+                ]
+              : res.cat === "motifs"
+                ? [
+                    ["motif_dur_s", "a mean duration of", "s", 2],
+                    ["n_trains", "a mean of", "trains", 1],
+                    ["duty_cycle_pct", "a mean duty cycle of", "%", 1],
+                    ["peak_freq_pmean_khz", "a mean carrier frequency of", "kHz", 3],
+                  ]
+                : res.cat === "peaks"
+                  ? [
+                      ["peak_period_ms", "a mean period of", "ms", 2],
+                      ["peak_freq_khz", "a mean carrier frequency of", "kHz", 3],
+                      ["peak_amp", "a mean amplitude of", "(normalized)", 3],
+                    ]
+                  : [
+                      ["seq_dur_s", "a mean duration of", "s", 2],
+                      ["n_motifs", "a mean of", "motifs", 1],
+                    ];
+          const bits = [];
+          wanted.forEach(([key, lead, unit, d]) => {
+            const s = selStat(key);
+            if (s)
+              bits.push(
+                lead +
+                  " " +
+                  s.mean.toFixed(d) +
+                  " ± " +
+                  s.sd.toFixed(d) +
+                  " " +
+                  unit,
+              );
+          });
+          paras.push(
+            '"' +
+              res.sel.name +
+              '" selects ' +
+              summSelDescribe(res.sel, res) +
+              " (" +
+              res.rows.length +
+              " of " +
+              res.nBefore +
+              " " +
+              SUMM_LABEL[res.cat].toLowerCase() +
+              " rows, across " +
+              res.nGroups +
+              " " +
+              lvl.parent +
+              (res.nGroups === 1 ? "" : "s") +
+              ")" +
+              (bits.length ? ", showing " + bits.join("; ") : "") +
+              ".",
+          );
+        });
 
         return paras;
       }
@@ -11488,19 +12916,870 @@
         );
       }
 
+      // ── Publication-ready strings (Excel formulas, not baked text) ──────
+      // Columns of the Summary and per-selection stats sheets: A selection,
+      // B category, C specimen_id, D metric, E n, F mean, G sd, H min, I max.
+      // The two extra columns below are live formulas referencing F–I, so
+      // editing a value updates the string. Column letters are absolute ($F)
+      // and rows relative, which is what makes them survive being filled down
+      // or copied sideways.
+      function _summWithFormulaCols(stats) {
+        return stats.map((r, i) => {
+          const row = i + 2; // +1 for the header, +1 because Excel is 1-based
+          const t = (col) => `TEXT($${col}${row},"0.00")`;
+          const tail = `" ["&${t("H")}&"-"&${t("I")}&"]"`;
+          return Object.assign({}, r, {
+            // \pm in LaTeX; UNICHAR(177) is the ± glyph for Word.
+            // The _xlfn. prefix is REQUIRED in the stored XML for functions
+            // added after the original ECMA-376 set (UNICHAR arrived in Excel
+            // 2013). Written bare, Excel does not resolve it as a built-in,
+            // treats it as an unknown defined name, and tags it with the
+            // implicit-intersection "@" — which then fails to compute. Excel
+            // hides the prefix, so the formula bar still reads UNICHAR(177).
+            latex: { __xlFormula: `${t("F")}&"$\\pm$"&${t("G")}&${tail}` },
+            word: { __xlFormula: `${t("F")}&_xlfn.UNICHAR(177)&${t("G")}&${tail}` },
+          });
+        });
+      }
+
+      // Same pair of columns for the temperature sheet, whose adjusted
+      // mean/sd/min/max sit in different columns — passed in by letter so the
+      // two callers cannot drift apart silently.
+      function _withFormulaCols(rows, [mCol, sCol, loCol, hiCol]) {
+        return rows.map((r, i) => {
+          const row = i + 2;
+          const t = (col) => `TEXT($${col}${row},"0.00")`;
+          const tail = `" ["&${t(loCol)}&"-"&${t(hiCol)}&"]"`;
+          return Object.assign({}, r, {
+            latex: { __xlFormula: `${t(mCol)}&"$\\pm$"&${t(sCol)}&${tail}` },
+            word: { __xlFormula: `${t(mCol)}&_xlfn.UNICHAR(177)&${t(sCol)}&${tail}` },
+          });
+        });
+      }
+
+      // ── Structure selections ────────────────────────────────────────────
+      // Pooled means answer "what does this species do on average". They
+      // cannot answer "what does the OPENING stroke do", because opening and
+      // closing strokes sit in the same Trains table and average together.
+      //
+      // A selection names a subset of structures by their POSITION inside the
+      // parent structure — the first train of every echeme, the odd-numbered
+      // trains, the last train — optionally narrowed further by conditions on
+      // the measured columns. Each selection is then summarized with exactly
+      // the same statistics as the pooled data, so the two are comparable.
+      //
+      // Positions are resolved per parent, per recording. "Train 1" means the
+      // first train of each echeme in each recording, not the first row of the
+      // merged sheet.
+      const SUMM_SEL_LEVELS = {
+        train_in_motif: {
+          cat: "trains",
+          label: "Trains within each echeme (motif)",
+          group: ["_rec", "motif_id"],
+          order: ["train_id"],
+          unit: "train",
+          parent: "echeme",
+        },
+        train_in_rec: {
+          cat: "trains",
+          label: "Trains within each recording",
+          group: ["_rec"],
+          order: ["motif_id", "train_id"],
+          unit: "train",
+          parent: "recording",
+        },
+        peak_in_train: {
+          cat: "peaks",
+          label: "Peaks within each train",
+          group: ["_rec", "motif_id", "train_id"],
+          order: ["peak_id"],
+          unit: "peak",
+          parent: "train",
+        },
+        peak_in_motif: {
+          cat: "peaks",
+          label: "Peaks within each echeme (motif)",
+          group: ["_rec", "motif_id"],
+          order: ["train_id", "peak_id"],
+          unit: "peak",
+          parent: "echeme",
+        },
+        motif_in_rec: {
+          cat: "motifs",
+          label: "Echemes (motifs) within each recording",
+          group: ["_rec"],
+          order: ["motif_id"],
+          unit: "echeme",
+          parent: "recording",
+        },
+        motseq_in_rec: {
+          cat: "motseq",
+          label: "Motif sequences within each recording",
+          group: ["_rec"],
+          order: ["seq_id"],
+          unit: "motif sequence",
+          parent: "recording",
+        },
+      };
+
+      // Which recording a merged row came from. source_file names the AUDIO
+      // and is what should group structures; source_workbook is the fallback
+      // for exports predating that column, where one workbook is one
+      // recording anyway.
+      function _summRecKey(r) {
+        return String(r.source_file || r.source_workbook || "(unnamed)");
+      }
+
+      // Position spec → a predicate over (position, siblingCount), both
+      // 1-based. Comma-separated terms are OR-ed, so "1,3,5" and "odd" and
+      // "every 2 from 1" are three ways to write the same thing.
+      //
+      //   3            the third
+      //   1,3,5        an explicit list
+      //   2-4          an inclusive range
+      //   2-n          from the second to the last
+      //   -1           the last; -2 the second-to-last
+      //   first, last  the obvious
+      //   odd, even    by parity of position
+      //   every 2 from 1   every second, starting at the first
+      //   all or blank     no positional restriction
+      function _summParsePositions(spec) {
+        const raw = String(spec == null ? "" : spec).trim();
+        const allOf = { ok: true, label: "all", test: () => true };
+        if (!raw || /^(all|\*)$/i.test(raw)) return allOf;
+        const parts = raw
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s);
+        const tests = [];
+        for (const part of parts) {
+          const p = part.toLowerCase();
+          let m;
+          if (p === "first") {
+            tests.push((i) => i === 1);
+          } else if (p === "last") {
+            tests.push((i, n) => i === n);
+          } else if (p === "odd") {
+            tests.push((i) => i % 2 === 1);
+          } else if (p === "even") {
+            tests.push((i) => i % 2 === 0);
+          } else if ((m = p.match(/^every\s+(\d+)(?:\s+from\s+(\d+))?$/))) {
+            const k = parseInt(m[1], 10);
+            const s = m[2] ? parseInt(m[2], 10) : 1;
+            if (k < 1 || s < 1)
+              return {
+                ok: false,
+                err: `"${part}": the step and the starting position must be 1 or more.`,
+              };
+            tests.push((i) => i >= s && (i - s) % k === 0);
+          } else if (
+            (m = p.match(/^(\d+)\s*(?:-|\.\.|–)\s*(\d+|n|last|end)$/))
+          ) {
+            const a = parseInt(m[1], 10);
+            if (a < 1)
+              return { ok: false, err: `"${part}": positions start at 1.` };
+            if (/^\d+$/.test(m[2])) {
+              const b = parseInt(m[2], 10);
+              if (b < a)
+                return {
+                  ok: false,
+                  err: `"${part}": the range ends before it starts.`,
+                };
+              tests.push((i) => i >= a && i <= b);
+            } else {
+              tests.push((i, n) => i >= a && i <= n);
+            }
+          } else if ((m = p.match(/^-(\d+)$/))) {
+            const k = parseInt(m[1], 10);
+            if (k < 1)
+              return {
+                ok: false,
+                err: `"${part}": counting back from the end starts at -1.`,
+              };
+            tests.push((i, n) => i === n - k + 1);
+          } else if ((m = p.match(/^(\d+)$/))) {
+            const k = parseInt(m[1], 10);
+            if (k < 1)
+              return { ok: false, err: `"${part}": positions start at 1.` };
+            tests.push((i) => i === k);
+          } else {
+            return {
+              ok: false,
+              err: `Could not read "${part}". Try a number, a list like 1,3,5, a range like 2-4 or 2-n, -1 for the last, or one of first/last/odd/even/every 2 from 1.`,
+            };
+          }
+        }
+        if (!tests.length) return allOf;
+        return {
+          ok: true,
+          label: parts.join(", "),
+          test: (i, n) => tests.some((t) => t(i, n)),
+        };
+      }
+
+      // Longest first: ">=" must be recognised before ">", "<>" before "<",
+      // "!=" and "==" before "=". Scanning left to right with this order is
+      // what makes "n_peaks>=3" parse as (n_peaks) (>=) (3).
+      const SUMM_FILTER_OPS = [
+        [">=", (a, b) => a >= b],
+        ["<=", (a, b) => a <= b],
+        ["!=", (a, b) => a !== b],
+        ["<>", (a, b) => a !== b],
+        ["==", (a, b) => a === b],
+        [">", (a, b) => a > b],
+        ["<", (a, b) => a < b],
+        ["=", (a, b) => a === b],
+      ];
+
+      // Conditions on the measured columns, one per line (or separated by
+      // ";"), e.g. "n_peaks >= 3" or "species = Neoconocephalus". Equality and
+      // inequality also accept text; the ordering operators require a number.
+      function _summParseFilters(text) {
+        const lines = String(text || "")
+          .split(/[\n;]+/)
+          .map((s) => s.trim())
+          .filter((s) => s);
+        const out = [];
+        for (const line of lines) {
+          let found = null;
+          for (let i = 0; i < line.length && !found; i++)
+            for (const [sym, fn] of SUMM_FILTER_OPS)
+              if (line.startsWith(sym, i)) {
+                found = { sym, fn, at: i };
+                break;
+              }
+          if (!found)
+            return {
+              ok: false,
+              err: `Could not read the condition "${line}" — expected something like "n_peaks >= 3".`,
+            };
+          const key = line.slice(0, found.at).trim();
+          const rhs = line.slice(found.at + found.sym.length).trim();
+          if (!key || !rhs)
+            return { ok: false, err: `The condition "${line}" is incomplete.` };
+          const isNum = /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(rhs);
+          if (!isNum && !/^(=|==|!=|<>)$/.test(found.sym))
+            return {
+              ok: false,
+              err: `"${line}": ${found.sym} needs a number on the right.`,
+            };
+          out.push({
+            key,
+            sym: found.sym,
+            fn: found.fn,
+            num: parseFloat(rhs),
+            rhs,
+            isNum,
+            text: line,
+          });
+        }
+        return { ok: true, filters: out, label: out.map((f) => f.text).join("; ") };
+      }
+
+      // A row must satisfy every condition. A row that does not carry the
+      // column at all fails rather than passes: workbooks of different vintages
+      // sit in the same merged table, and silently admitting the ones that
+      // predate a column would mix filtered and unfiltered rows in one mean.
+      function _summRowPasses(row, filters) {
+        for (const f of filters) {
+          let rk = f.key in row ? f.key : undefined;
+          if (rk === undefined) {
+            const kl = f.key.toLowerCase();
+            rk = Object.keys(row).find((x) => x.toLowerCase() === kl);
+          }
+          if (rk === undefined) return false;
+          const v = row[rk];
+          if (f.isNum) {
+            if (typeof v !== "number" || !isFinite(v)) return false;
+            if (!f.fn(v, f.num)) return false;
+          } else {
+            const eq =
+              String(v ?? "").trim().toLowerCase() === f.rhs.toLowerCase();
+            if (f.sym === "=" || f.sym === "==" ? !eq : eq) return false;
+          }
+        }
+        return true;
+      }
+
+      // Resolve one selection against the merged tables.
+      //
+      // Position first, conditions second, and the order is deliberate: with
+      // conditions applied first, "train 1" would mean "the first train that
+      // survived filtering", which for a filter like train_dur_ms > 20 quietly
+      // promotes a second or third train into the first position. Positions
+      // therefore always refer to the structure's real place in the song.
+      function summApplySelection(merged, sel) {
+        const lvl = SUMM_SEL_LEVELS[sel.level];
+        if (!lvl) return { ok: false, err: "Unknown structure level." };
+        const pos = _summParsePositions(sel.positions);
+        if (!pos.ok) return { ok: false, err: pos.err, cat: lvl.cat };
+        const flt = _summParseFilters(sel.filters);
+        if (!flt.ok) return { ok: false, err: flt.err, cat: lvl.cat };
+
+        const all = (merged && merged[lvl.cat]) || [];
+        const base = {
+          ok: true,
+          cat: lvl.cat,
+          lvl,
+          pos,
+          flt,
+          nBefore: all.length,
+        };
+        if (!all.length)
+          return Object.assign({ rows: [], nGroups: 0 }, base, {
+            note: `No ${SUMM_LABEL[lvl.cat]} rows were merged.`,
+          });
+
+        const groups = new Map();
+        all.forEach((r, i) => {
+          // The parts are joined on U+0001, a character no filename or id can
+          // contain, so ("rec1", 12) and ("rec11", 2) stay distinct groups.
+          const key = lvl.group
+            .map((g) => (g === "_rec" ? _summRecKey(r) : String(r[g] ?? "")))
+            .join("");
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push({ r, i });
+        });
+
+        // Rows missing an index column sort last and keep their original file
+        // order, so a workbook without motif_id still produces one ordered
+        // group per recording instead of dropping out of the selection.
+        const idx = (r, k) => {
+          const v = parseFloat(r[k]);
+          return isFinite(v) ? v : Infinity;
+        };
+        const rows = [];
+        groups.forEach((g) => {
+          g.sort((a, b) => {
+            for (const k of lvl.order) {
+              const d = idx(a.r, k) - idx(b.r, k);
+              if (d) return d;
+            }
+            return a.i - b.i;
+          });
+          const n = g.length;
+          g.forEach((e, i) => {
+            if (!pos.test(i + 1, n)) return;
+            if (flt.filters.length && !_summRowPasses(e.r, flt.filters)) return;
+            rows.push(
+              Object.assign({ sel_position: i + 1, sel_group_n: n }, e.r),
+            );
+          });
+        });
+        return Object.assign({ rows, nGroups: groups.size }, base);
+      }
+
+      // Mean / SD / min / max for every numeric column, pooled and then per
+      // specimen. The one place these statistics are defined — the pooled
+      // summary and every selection go through it, so they cannot drift.
+      // SD uses the population divisor (n), matching what the summary has
+      // always reported.
+      function _summStatsBlock(rows, catLabel, individuals, selection) {
+        const out = [];
+        if (!rows || !rows.length) return out;
+        const keys = new Set();
+        rows.forEach((r) =>
+          Object.keys(r).forEach((k) => {
+            if (!_summIsCategoricalKey(k)) keys.add(k);
+          }),
+        );
+        const groups =
+          individuals.length > 1 ? ["ALL", ...individuals] : ["ALL"];
+        groups.forEach((grp) => {
+          const subset =
+            grp === "ALL" ? rows : rows.filter((r) => r.specimen_id === grp);
+          if (!subset.length) return;
+          keys.forEach((k) => {
+            const vals = subset
+              .map((r) => r[k])
+              .filter((v) => typeof v === "number" && isFinite(v));
+            if (!vals.length) return;
+            const n = vals.length;
+            const mean = vals.reduce((s, v) => s + v, 0) / n;
+            const sd =
+              n > 1
+                ? Math.sqrt(vals.reduce((s, v) => s + (v - mean) ** 2, 0) / n)
+                : 0;
+            out.push({
+              selection,
+              category: catLabel,
+              specimen_id: grp,
+              metric: k,
+              n,
+              mean: round4(mean),
+              sd: round4(sd),
+              min: round4(Math.min(...vals)),
+              max: round4(Math.max(...vals)),
+            });
+          });
+        });
+        return out;
+      }
+
+      // Human-readable one-liner for a resolved selection — reused by the
+      // side panel, the status line and the drafted report, so the wording
+      // the user reads on screen is the wording that reaches the paper.
+      function summSelDescribe(sel, res) {
+        const lvl = SUMM_SEL_LEVELS[sel.level];
+        if (!lvl) return "";
+        const where =
+          res && res.flt && res.flt.filters.length
+            ? ` with ${res.flt.label}`
+            : "";
+        const which =
+          res && res.pos && res.pos.label !== "all"
+            ? `${lvl.unit}s at position ${res.pos.label}`
+            : `all ${lvl.unit}s`;
+        return `${which} of each ${lvl.parent}${where}`;
+      }
+
+      // Sheet-name stem for a selection. _buildXlsx already truncates to 31
+      // characters and de-duplicates, but it does that AFTER the suffixes are
+      // appended — so the stem is clipped short enough here that
+      // "<stem>_TempReg" still fits and two selections do not collide only in
+      // the part that gets cut off.
+      function _summSelSheetStem(name) {
+        const safe =
+          String(name || "")
+            .replace(/[^A-Za-z0-9]+/g, "_")
+            .replace(/^_+|_+$/g, "")
+            .slice(0, 18) || "Selection";
+        return "Sel_" + safe;
+      }
+
+      // _sheetXml takes its column list from the FIRST row, so rows whose keys
+      // differ (workbooks of different vintages merged together) would lose
+      // whatever the first row happens not to carry. Give every row the union
+      // of the keys, in first-seen order, before writing a sheet.
+      function _summUniformRows(rows) {
+        const cols = [];
+        const seen = new Set();
+        rows.forEach((r) =>
+          Object.keys(r).forEach((k) => {
+            if (!seen.has(k)) {
+              seen.add(k);
+              cols.push(k);
+            }
+          }),
+        );
+        return rows.map((r) => {
+          const out = {};
+          cols.forEach((c) => {
+            out[c] = c in r ? r[c] : null;
+          });
+          return out;
+        });
+      }
+
+      // Every selection resolved against the current merge, in panel order.
+      function summResolveSelections() {
+        summSelResults = summSelections.map((sel) => {
+          const res = summApplySelection(summMerged, sel);
+          return Object.assign({ sel }, res);
+        });
+        return summSelResults;
+      }
+
+      // ── Temperature regression ──────────────────────────────────────────
+      // Insect song rates scale strongly with temperature, so measurements
+      // taken on different days are not directly comparable. For each metric
+      // we fit value = intercept + slope × temperature by ordinary least
+      // squares across all observations that carry a temperature, then express
+      // every observation at one chosen temperature:
+      //     adjusted = observed + slope × (target − observed_temperature)
+      // which removes the thermal component while leaving the residual
+      // (individual) variation intact.
+      function _summFitTemp(pairs) {
+        const n = pairs.length;
+        if (n < 3) return null; // a slope through two points is not a fit
+        const ts = pairs.map((p) => p.t);
+        const tMin = Math.min(...ts),
+          tMax = Math.max(...ts);
+        if (!(tMax - tMin > 1e-9)) return null; // no thermal spread to model
+        const mt = ts.reduce((a, b) => a + b, 0) / n;
+        const mv = pairs.reduce((a, p) => a + p.v, 0) / n;
+        let sxx = 0,
+          sxy = 0,
+          syy = 0;
+        for (const p of pairs) {
+          const dt = p.t - mt,
+            dv = p.v - mv;
+          sxx += dt * dt;
+          sxy += dt * dv;
+          syy += dv * dv;
+        }
+        if (!(sxx > 0)) return null;
+        const slope = sxy / sxx;
+        return {
+          n,
+          tMin,
+          tMax,
+          slope,
+          intercept: mv - slope * mt,
+          r2: syy > 0 ? (sxy * sxy) / (sxx * syy) : 1,
+        };
+      }
+
+      function summTempRegression(merged, targetT) {
+        const model = [];
+        const adjusted = [];
+        SUMM_CATS.forEach((cat) => {
+          const rows = merged[cat] || [];
+          if (!rows.length) return;
+          const keys = new Set();
+          rows.forEach((r) =>
+            Object.keys(r).forEach((k) => {
+              if (!_summIsCategoricalKey(k)) keys.add(k);
+            }),
+          );
+          keys.forEach((k) => {
+            const obs = [];
+            rows.forEach((r) => {
+              const t = parseFloat(r.temp_c);
+              const v = r[k];
+              if (isFinite(t) && typeof v === "number" && isFinite(v))
+                obs.push({ t, v, row: r });
+            });
+            const fit = _summFitTemp(obs.map(({ t, v }) => ({ t, v })));
+            if (!fit) return;
+            const adjVals = [];
+            obs.forEach((o) => {
+              const adj = o.v + fit.slope * (targetT - o.t);
+              adjVals.push(adj);
+              adjusted.push({
+                category: SUMM_LABEL[cat],
+                specimen_id: o.row.specimen_id || "",
+                species: o.row.species || "",
+                source_file: o.row.source_file || o.row.source_workbook || "",
+                metric: k,
+                temp_c: o.t,
+                observed: round4(o.v),
+                adjusted: round4(adj),
+                target_temp_c: targetT,
+              });
+            });
+            const an = adjVals.length;
+            const amean = adjVals.reduce((a, b) => a + b, 0) / an;
+            const asd =
+              an > 1
+                ? Math.sqrt(
+                    adjVals.reduce((s, v) => s + (v - amean) ** 2, 0) / an,
+                  )
+                : 0;
+            model.push({
+              category: SUMM_LABEL[cat],
+              metric: k,
+              n: fit.n,
+              adj_mean: round4(amean),
+              adj_sd: round4(asd),
+              adj_min: round4(Math.min(...adjVals)),
+              adj_max: round4(Math.max(...adjVals)),
+              target_temp_c: targetT,
+              slope_per_C: round4(fit.slope),
+              intercept: round4(fit.intercept),
+              r2: round4(fit.r2),
+              temp_min_c: round4(fit.tMin),
+              temp_max_c: round4(fit.tMax),
+              // Predicting outside the temperatures actually observed is an
+              // extrapolation; flag it rather than let it pass as a fit.
+              extrapolated:
+                targetT < fit.tMin || targetT > fit.tMax ? "YES" : "",
+            });
+          });
+        });
+        return { model, adjusted };
+      }
+
+      // ── Estimating a missing temperature from the song itself ───────────
+      // The inverse of the correction above: if a metric tracks temperature
+      // closely, it can be read as a thermometer for recordings where none
+      // was noted. Note the fit direction — temperature is regressed ON the
+      // metric (temp ~ value), not obtained by algebraically inverting the
+      // value ~ temp line. Inverting that line divides by the slope, which
+      // explodes for weakly thermal metrics; regressing the quantity you
+      // actually want to predict keeps the estimate stable.
+      //
+      // Only metrics that genuinely track temperature are allowed to vote,
+      // and each vote is weighted by how well it fits.
+      //
+      // The gate is a significance test, not a flat r² cutoff, because r²
+      // alone ignores sample size: four points of pure noise reach r² ≈ 0.5
+      // routinely, and a fixed threshold lets that vote as if it were a real
+      // thermal response. Critical |r| for p = 0.05 (two-tailed) by degrees
+      // of freedom (n − 2); values between listed sizes step to the nearest
+      // smaller n, which errs toward rejecting.
+      const PEARSON_CRIT_05 = [
+        [3, 0.997], [4, 0.95], [5, 0.878], [6, 0.811], [7, 0.754],
+        [8, 0.707], [9, 0.666], [10, 0.632], [12, 0.576], [15, 0.514],
+        [20, 0.444], [25, 0.396], [30, 0.361], [40, 0.312], [50, 0.279],
+        [60, 0.254], [80, 0.22], [100, 0.197],
+      ];
+      // A floor as well: with a large n almost any slope becomes
+      // "significant", and a metric that explains 10% of the variance is not
+      // a thermometer worth trusting.
+      const TEMP_CALIB_MIN_R2 = 0.25;
+
+      function _tempCalibUsable(r2, n) {
+        if (!(r2 >= TEMP_CALIB_MIN_R2) || n < 3) return false;
+        let crit = PEARSON_CRIT_05[0][1];
+        for (const [size, c] of PEARSON_CRIT_05) {
+          if (n >= size) crit = c;
+          else break;
+        }
+        return Math.sqrt(r2) >= crit;
+      }
+
+      function summEstimateTemps(merged) {
+        // 1. Calibrate on the recordings that DO carry a temperature.
+        const calib = [];
+        SUMM_CATS.forEach((cat) => {
+          const rows = merged[cat] || [];
+          if (!rows.length) return;
+          const keys = new Set();
+          rows.forEach((r) =>
+            Object.keys(r).forEach((k) => {
+              if (!_summIsCategoricalKey(k)) keys.add(k);
+            }),
+          );
+          keys.forEach((k) => {
+            const pairs = [];
+            rows.forEach((r) => {
+              const t = parseFloat(r.temp_c);
+              const v = r[k];
+              if (isFinite(t) && typeof v === "number" && isFinite(v))
+                // t = the predictor (metric value), v = what we predict (temp)
+                pairs.push({ t: v, v: t });
+            });
+            const fit = _summFitTemp(pairs);
+            if (fit && _tempCalibUsable(fit.r2, fit.n))
+              calib.push({ cat, metric: k, fit });
+          });
+        });
+        if (!calib.length) return { estimates: [], detail: [], nCalib: 0 };
+
+        // 2. Gather the recordings with no temperature, grouped by audio file
+        //    — one estimate per recording, not per train or per peak.
+        const groups = new Map();
+        SUMM_CATS.forEach((cat) => {
+          (merged[cat] || []).forEach((r) => {
+            if (isFinite(parseFloat(r.temp_c))) return;
+            const key = r.source_file || r.source_workbook || "(unnamed)";
+            if (!groups.has(key))
+              groups.set(key, {
+                key,
+                specimen_id: r.specimen_id || "",
+                species: r.species || "",
+                byCat: {},
+              });
+            const g = groups.get(key);
+            (g.byCat[cat] = g.byCat[cat] || []).push(r);
+          });
+        });
+
+        const estimates = [];
+        const detail = [];
+        groups.forEach((g) => {
+          const votes = [];
+          calib.forEach(({ cat, metric, fit }) => {
+            const rows = g.byCat[cat];
+            if (!rows || !rows.length) return;
+            const vals = rows
+              .map((r) => r[metric])
+              .filter((v) => typeof v === "number" && isFinite(v));
+            if (!vals.length) return;
+            const meanVal = vals.reduce((a, b) => a + b, 0) / vals.length;
+            const est = fit.intercept + fit.slope * meanVal;
+            // fit.tMin/tMax are the METRIC values seen during calibration,
+            // since the metric is the predictor here.
+            const outside = meanVal < fit.tMin || meanVal > fit.tMax;
+            votes.push({ est, w: fit.r2, outside });
+            detail.push({
+              source_file: g.key,
+              specimen_id: g.specimen_id,
+              category: SUMM_LABEL[cat],
+              metric,
+              value_used: round4(meanVal),
+              n_rows: vals.length,
+              temp_estimate_c: round4(est),
+              r2: round4(fit.r2),
+              calib_value_min: round4(fit.tMin),
+              calib_value_max: round4(fit.tMax),
+              calib_n: fit.n,
+              extrapolated: outside ? "YES" : "",
+            });
+          });
+          if (!votes.length) return;
+          const wsum = votes.reduce((s, v) => s + v.w, 0) || votes.length;
+          const est =
+            votes.reduce((s, v) => s + v.est * v.w, 0) / wsum;
+          const ests = votes.map((v) => v.est);
+          const sd =
+            ests.length > 1
+              ? Math.sqrt(
+                  ests.reduce((s, v) => s + (v - est) ** 2, 0) / ests.length,
+                )
+              : 0;
+          estimates.push({
+            source_file: g.key,
+            specimen_id: g.specimen_id,
+            species: g.species,
+            metrics_used: votes.length,
+            temp_estimate_c: round4(est),
+            sd_across_metrics_c: round4(sd),
+            lowest_metric_estimate_c: round4(Math.min(...ests)),
+            highest_metric_estimate_c: round4(Math.max(...ests)),
+            // Any vote drawn from outside its calibration range makes the
+            // whole estimate a guess beyond the evidence.
+            extrapolated: votes.some((v) => v.outside) ? "YES" : "",
+          });
+        });
+        return { estimates, detail, nCalib: calib.length };
+      }
+
+      // How many merged recordings carry no temperature at all.
+      function summRecordingsMissingTemp(merged) {
+        const missing = new Set();
+        SUMM_CATS.forEach((cat) =>
+          (merged[cat] || []).forEach((r) => {
+            if (!isFinite(parseFloat(r.temp_c)))
+              missing.add(r.source_file || r.source_workbook || "(unnamed)");
+          }),
+        );
+        return missing;
+      }
+
+      // Distinct temperatures across everything merged — drives the readout
+      // that tells the user whether a regression is even possible.
+      function summTempsAvailable(merged) {
+        const set = new Set();
+        SUMM_CATS.forEach((cat) =>
+          (merged[cat] || []).forEach((r) => {
+            const t = parseFloat(r.temp_c);
+            if (isFinite(t)) set.add(t);
+          }),
+        );
+        return [...set].sort((a, b) => a - b);
+      }
+
+      function summUpdateTempNote() {
+        const el = $("summTempNote");
+        if (!el) return;
+        if (!summMerged) {
+          el.textContent = "";
+          return;
+        }
+        const temps = summTempsAvailable(summMerged);
+        if (temps.length < 2) {
+          el.textContent =
+            temps.length === 1
+              ? `Only one temperature found (${temps[0]} °C) — a slope needs at least two.`
+              : "No temperatures found in the merged files.";
+        } else {
+          const missing = summRecordingsMissingTemp(summMerged).size;
+          el.textContent =
+            `${temps.length} temperatures: ${temps.join(", ")} °C. ` +
+            `Metrics with ≥3 observations spanning them get a fit.` +
+            (missing
+              ? ` ${missing} recording(s) have no temperature — their ` +
+                `temperature will be estimated from the song.`
+              : "");
+        }
+      }
+
       function summSaveWorkbook() {
         if (!summMerged) {
           log("Run Merge & Summarize first.", "warn");
           return;
         }
+        const allStats = (summStatsRows || []).filter(
+          (s) => s.selection === SUMM_SEL_ALL,
+        );
         const sheets = [
           [SUMM_SHEET_NAME.peaks, summMerged.peaks],
           [SUMM_SHEET_NAME.trains, summMerged.trains],
           [SUMM_SHEET_NAME.motifs, summMerged.motifs],
           [SUMM_SHEET_NAME.motseq, summMerged.motseq],
           [SUMM_SHEET_NAME.spectral, summMerged.spectral],
-          ["Summary", summStatsRows || []],
+          ["Summary", _summWithFormulaCols(allStats)],
         ].filter(([, data]) => data && data.length);
+
+        // One pair of sheets per structure selection: the rows it matched,
+        // and their statistics. Kept out of the Summary sheet so that sheet
+        // stays what it has always been — every row, pooled.
+        summSelResults.forEach((res) => {
+          if (!res.ok || !res.rows.length) return;
+          const stem = _summSelSheetStem(res.sel.name);
+          sheets.push([stem, _summUniformRows(res.rows)]);
+          if (res.stats && res.stats.length)
+            sheets.push([stem + "_Stats", _summWithFormulaCols(res.stats)]);
+        });
+
+        // Optional temperature-corrected sheets.
+        const wantTemp = $("summRegressOn") && $("summRegressOn").checked;
+        if (wantTemp) {
+          const targetT = parseFloat($("summRegressTemp").value);
+          if (!isFinite(targetT)) {
+            log("Enter a target temperature to regress to.", "warn");
+            return;
+          }
+          const { model, adjusted } = summTempRegression(summMerged, targetT);
+          if (!model.length) {
+            log(
+              "No metric had ≥3 observations across two or more temperatures — " +
+                "temperature sheets skipped.",
+              "warn",
+            );
+          } else {
+            // Columns of Temp_Regression: A category, B metric, C n,
+            // D adj_mean, E adj_sd, F adj_min, G adj_max — hence D..G here.
+            sheets.push([
+              "Temp_Regression",
+              _withFormulaCols(model, ["D", "E", "F", "G"]),
+            ]);
+            sheets.push(["Temp_Adjusted", adjusted]);
+          }
+
+          // The same correction, refitted within each selection. Refitting
+          // matters rather than reusing the pooled slope: opening and closing
+          // strokes need not respond to temperature at the same rate, and a
+          // pooled slope would carry one structure's thermal response into
+          // the other.
+          summSelResults.forEach((res) => {
+            if (!res.ok || !res.rows.length) return;
+            const sub = {
+              peaks: [],
+              trains: [],
+              motifs: [],
+              motseq: [],
+              spectral: [],
+            };
+            sub[res.cat] = res.rows;
+            const r = summTempRegression(sub, targetT);
+            if (!r.model.length) return;
+            const stem = _summSelSheetStem(res.sel.name);
+            sheets.push([
+              stem + "_TempReg",
+              _withFormulaCols(r.model, ["D", "E", "F", "G"]),
+            ]);
+            sheets.push([stem + "_TempAdj", r.adjusted]);
+          });
+
+          // Read the song as a thermometer for recordings with no
+          // temperature noted. Independent of the correction above: it needs
+          // only a calibration, so it still runs when nothing qualified there.
+          const est = summEstimateTemps(summMerged);
+          if (est.estimates.length) {
+            sheets.push(["Temp_Estimated", est.estimates]);
+            sheets.push(["Temp_Estimated_Detail", est.detail]);
+          } else if (summRecordingsMissingTemp(summMerged).size) {
+            log(
+              "Some recordings have no temperature, but no metric tracked " +
+                "temperature closely enough (significant at p<0.05 and " +
+                "r² ≥ " + TEMP_CALIB_MIN_R2 + ") to estimate one.",
+              "warn",
+            );
+          }
+        }
         if (!sheets.length) {
           log("Nothing to save.", "warn");
           return;
