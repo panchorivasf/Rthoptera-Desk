@@ -7,7 +7,56 @@ on:
   workflow_dispatch:
 
 jobs:
+  # The release is created exactly once, here, and its id is handed to the
+  # build matrix below. Letting each matrix job find-or-create the release
+  # instead lets two jobs race and create two release objects for the same
+  # tag, which silently splits the installers across them.
+  create-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.release_id }}
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Create draft release
+        id: create
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # workflow_dispatch has no tag, so fall back to the version in
+          # tauri.conf.json rather than tagging the branch name.
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            tag="${{ github.ref_name }}"
+          else
+            tag="v$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' src-tauri/tauri.conf.json | head -1)"
+          fi
+          echo "Using tag: $tag"
+
+          # Reuse an existing draft for this tag if one is already there, so a
+          # re-run does not add a second release alongside the first.
+          id=$(gh api "repos/${{ github.repository }}/releases?per_page=100" \
+                 --jq ".[] | select(.tag_name == \"$tag\") | .id" | head -1)
+
+          if [ -z "$id" ]; then
+            id=$(gh api --method POST "repos/${{ github.repository }}/releases" \
+                   -f tag_name="$tag" \
+                   -f name="Rthoptera $tag" \
+                   -f body="See the assets below to download this version." \
+                   -F draft=true \
+                   -F prerelease=false \
+                   --jq .id)
+            echo "Created release $id"
+          else
+            echo "Reusing existing release $id"
+          fi
+
+          echo "release_id=$id" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: create-release
     permissions:
       contents: write
     strategy:
@@ -53,14 +102,10 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
-      - name: Build and release
+      - name: Build and upload to the release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Rthoptera v__VERSION__'
-          releaseBody: 'See the assets below to download this version.'
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
