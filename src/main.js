@@ -4013,7 +4013,19 @@
         const sst = [];
         const sstXml = getText("xl/sharedStrings.xml");
         if (sstXml) {
-          for (const si of sstXml.matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/g)) {
+          // The self-closing form is matched FIRST and on purpose. Cells refer
+          // to shared strings by index, so an entry that fails to match is not
+          // merely lost — every later index shifts down by one and the whole
+          // table reads as someone else's text. "<si\b[^>]*>" would happily
+          // treat "<si/>" as an opening tag and then swallow everything up to
+          // the next "</si>", which is exactly how that shift happens.
+          for (const si of sstXml.matchAll(
+            /<si\b[^>]*?\/>|<si\b[^>]*>([\s\S]*?)<\/si>/g,
+          )) {
+            if (si[1] === undefined) {
+              sst.push("");
+              continue;
+            }
             // concatenate all <t> runs inside this <si>
             let s = "";
             for (const t of si[1].matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/g))
@@ -4047,13 +4059,30 @@
         // Collect cells as {col-letter, rowNum, value}.
         const cells = [];
         let maxRow = 0;
+        // Same hazard one level up: an entirely empty row is written as
+        // <row r="5"/>, which as an "opening" tag would swallow the row after
+        // it. Matched and skipped explicitly instead — an empty row has no
+        // cells to contribute anyway.
         for (const rm of xml.matchAll(
-          /<row\b[^>]*r="(\d+)"[^>]*>([\s\S]*?)<\/row>/g,
+          /<row\b[^>]*?\/>|<row\b[^>]*r="(\d+)"[^>]*>([\s\S]*?)<\/row>/g,
         )) {
+          if (rm[1] === undefined) continue;
           const rNum = +rm[1];
           if (rNum > maxRow) maxRow = rNum;
+          // The attribute group MUST be lazy. Greedy, "[^>]*" swallows the
+          // trailing slash of an empty cell written as <c r="B2"/>, which
+          // leaves the "\/>" branch unmatchable; the match then falls into the
+          // ">...</c>" branch and runs on to the NEXT cell's "</c>", eating it
+          // whole. The blank cell reads as empty (correct by luck) and the
+          // column after it disappears from the row entirely.
+          //
+          // That is not a corner case: exports written without a temperature
+          // have an empty temp_c, so specimen_id — the very next column — was
+          // read as blank in every row of the file, while species and locality
+          // two columns further on were fine. Lazy matching lets "\/>" win on
+          // a self-closing cell, which is what the alternation intended.
           for (const cm of rm[2].matchAll(
-            /<c\b([^>]*)(?:\/>|>([\s\S]*?)<\/c>)/g,
+            /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g,
           )) {
             const attrs = cm[1];
             const inner = cm[2] || "";
@@ -4095,7 +4124,12 @@
           .sort((a, b) => _colNum(a.col) - _colNum(b.col));
         const colName = {};
         headerCells.forEach((c) => {
-          colName[c.col] = c.val;
+          // Header text is normalised before it becomes a key. A stray space,
+          // a non-breaking space pasted in from a document, or a leading BOM
+          // is invisible in Excel but makes "specimen_id " a different column
+          // from "specimen_id" to every lookup downstream — the tag would then
+          // be reported as missing from a file that plainly shows it.
+          colName[c.col] = _normHeader(c.val);
         });
         const out = [];
         for (let r = 2; r <= maxRow; r++) {
@@ -4106,6 +4140,13 @@
           headerCells.forEach((hc) => {
             const cell = rowCells.find((c) => c.col === hc.col);
             const raw = cell ? cell.val : "";
+            // Two columns can carry the same header — a workbook re-saved with
+            // a column re-added beside the original, or one hand-edited copy
+            // pasted next to another. Iterating in column order, the later one
+            // used to win outright, so a blank duplicate silently erased a
+            // populated first column for every row in the file. Keep whichever
+            // occurrence actually holds something.
+            if (colName[hc.col] in obj && (raw === "" || raw === null)) return;
             // Numeric coercion, but never at the cost of what the cell said.
             //
             // A cell Excel marked as text keeps its string form unless the
@@ -4134,6 +4175,19 @@
           n = n * 26 + (letters.charCodeAt(i) - 64);
         return n;
       }
+      // Column header → the key it becomes on every parsed row. Strips a
+      // leading BOM, folds the space-like characters that survive a copy-paste
+      // out of Word or a web page (non-breaking, figure and narrow no-break
+      // spaces) into ordinary spaces, then trims. Case is left alone: lookups
+      // that need it compare case-insensitively, and the header is still shown
+      // to the user as they wrote it.
+      function _normHeader(s) {
+        return String(s == null ? "" : s)
+          .replace(/^\uFEFF/, "")
+          .replace(/[\u00A0\u2007\u202F\u200B]/g, " ")
+          .trim();
+      }
+
       function _xmlUnesc(s) {
         return String(s == null ? "" : s)
           .replace(/&lt;/g, "<")
@@ -11896,22 +11950,65 @@
       // Rthoptera's exports tag every row with whatever was entered in the
       // toolbar for that recording; this recovers it so files group by the
       // real tag instead of guessing from the file name.
+      //
+      // Returns {value, why}. `why` distinguishes the two ways this comes back
+      // empty — no such column anywhere, versus a column that is present but
+      // blank — because the file list can only say something useful about a
+      // missing tag if it knows which happened. "Not found" sent a user
+      // hunting for a column that was sitting right there, empty.
       function _summFindTagField(workbook, fieldName) {
+        const want = _normHeader(fieldName).toLowerCase();
+        let sawColumn = false;
         for (const sn of Object.keys(workbook)) {
           const rows = workbook[sn];
           if (!rows || !rows.length) continue;
-          const key = Object.keys(rows[0]).find(
-            (k) => k.toLowerCase() === fieldName,
-          );
-          if (!key) continue;
+          // Keyed off each row rather than the first one alone. Rows are built
+          // from the header list so they normally agree, but a workbook that
+          // has been merged or hand-edited need not be uniform, and the tag is
+          // worth finding wherever it actually sits.
           for (const row of rows) {
+            const key = Object.keys(row).find(
+              (k) => _normHeader(k).toLowerCase() === want,
+            );
+            if (key === undefined) continue;
+            sawColumn = true;
             const v = row[key];
             if (v !== null && v !== undefined && String(v).trim() !== "") {
-              return String(v).trim();
+              return { value: String(v).trim(), why: "found" };
             }
           }
         }
-        return "";
+        return { value: "", why: sawColumn ? "blank" : "missing" };
+      }
+
+      // Headers that look like they were MEANT to be the tag column but do not
+      // match it — "Specimen ID", "specimenID", "specimen". Compared on letters
+      // and digits alone, so spacing, punctuation and case all fall away. Used
+      // only to make the warning specific; nothing is matched automatically,
+      // because silently accepting a column the user did not name is how a
+      // whole field season ends up pooled under the wrong animal.
+      function _summNearMissHeaders(workbook, fieldName) {
+        // A header is only "not a near miss" if the LOOKUP would have taken
+        // it. Judging that by the squashed form instead would throw away the
+        // commonest case of all — "Specimen ID" squashes to the same letters
+        // as "specimen_id" while the lookup rejects it, which is precisely the
+        // header the user needs to be told about.
+        const exact = (s) => _normHeader(s).toLowerCase();
+        const squash = (s) => exact(s).replace(/[^a-z0-9]/g, "");
+        const want = squash(fieldName);
+        const seen = new Set();
+        Object.keys(workbook).forEach((sn) => {
+          const rows = workbook[sn];
+          if (!rows || !rows.length) return;
+          Object.keys(rows[0]).forEach((k) => {
+            if (exact(k) === exact(fieldName)) return;
+            const sq = squash(k);
+            if (!sq) return;
+            if (sq === want || sq.includes(want) || want.includes(sq))
+              seen.add(_normHeader(k));
+          });
+        });
+        return [...seen];
       }
 
       // Rthoptera's own exports always keep the original audio file name as
@@ -11983,6 +12080,12 @@
         )
           return true;
         if (/_id$/.test(kl)) return true;
+        // Bookkeeping on the rows the derived levels build: where a gap or a
+        // syllable sits in the recording (same reasoning as the structure
+        // extents above — it locates the row, it is not a property of it), and
+        // which members it spans, written "1-2". Their LENGTHS are separate
+        // columns (gap_ms, syl_dur_ms, …) and are averaged normally.
+        if (/^(gap|syl|grp)_(start|end|between|members)$/.test(kl)) return true;
         return false;
       }
 
@@ -12008,10 +12111,13 @@
               );
               continue;
             }
-            const fromFile = _summFindTagField(workbook, "specimen_id");
-            const speciesFromFile = _summFindTagField(workbook, "species");
-            const countryFromFile = _summFindTagField(workbook, "country");
-            const localityFromFile = _summFindTagField(workbook, "locality");
+            const idTag = _summFindTagField(workbook, "specimen_id");
+            const fromFile = idTag.value;
+            const speciesFromFile = _summFindTagField(workbook, "species").value;
+            const countryFromFile = _summFindTagField(workbook, "country").value;
+            const localityFromFile = _summFindTagField(workbook, "locality")
+              .value;
+            const idNear = _summNearMissHeaders(workbook, "specimen_id");
             const recordingKey = _summRecordingKey(f.name);
             summFilesData.push({
               id: summNextFileId++,
@@ -12024,16 +12130,63 @@
               // same specimen too — editable below either way.
               specimenId: fromFile || recordingKey,
               fromData: !!fromFile,
+              // Why the tag had to be guessed, for the warning on the card.
+              idWhy: idTag.why,
+              // The headers actually present, so a near-miss ("Specimen ID",
+              // "specimenid") can be named in the warning instead of leaving
+              // the user to guess what the file calls its column.
+              idNear,
               species: speciesFromFile,
               country: countryFromFile,
               locality: localityFromFile,
               sheets,
             });
+            // Say it out loud too. A tooltip is only found by someone who
+            // already suspects something is wrong, and pooling under a guessed
+            // specimen id quietly merges or splits animals.
+            if (!fromFile)
+              log(
+                '"' +
+                  f.name +
+                  '": ' +
+                  (idTag.why === "blank"
+                    ? "specimen_id column is present but empty"
+                    : "no specimen_id column found") +
+                  " — using the file name instead" +
+                  (idNear.length ? " (file has: " + idNear.join(", ") + ")" : "") +
+                  ".",
+                "warn",
+              );
           } catch (err) {
             log('Could not read "' + f.name + '": ' + err.message, "err");
           }
         }
         summRenderFileList();
+      }
+
+      // What the ⚠ beside "Specimen ID" actually means for this file. The old
+      // wording said "not found" for every failure, which is wrong half the
+      // time and unactionable the other half: a blank column and a column
+      // under another name need different things done to them.
+      function _summIdTagTitle(f) {
+        if (f.fromData) return "Read from the specimen_id column in this file.";
+        const near =
+          f.idNear && f.idNear.length
+            ? "\n\nThis file does have: " +
+              f.idNear.join(", ") +
+              ".\nRename it to specimen_id in the workbook if that is the tag."
+            : "";
+        if (f.idWhy === "blank")
+          return (
+            "This file HAS a specimen_id column, but every row of it is empty.\n" +
+            "Guessed from the file name instead — edit if wrong." +
+            near
+          );
+        return (
+          "No specimen_id column in any sheet of this file.\n" +
+          "Guessed from the file name instead — edit if wrong." +
+          near
+        );
       }
 
       function summRenderFileList() {
@@ -12088,9 +12241,7 @@
             "</div>" +
             '<div style="display:flex;align-items:center;gap:4px">' +
             '<span style="color:var(--txt2);font-size:10px" title="' +
-            (f.fromData
-              ? "Read from the specimen_id column in this file."
-              : "Not found in the file — guessed from the file name. Edit if wrong.") +
+            _summIdTagTitle(f).replace(/"/g, "&quot;") +
             '">🏷 Specimen ID' +
             (f.fromData ? "" : " ⚠") +
             "</span>" +
@@ -12223,6 +12374,10 @@
           level: "train_in_motif",
           positions: "1",
           filters: "",
+          // Only read by the chunk levels: a disyllabic species pairs trains
+          // two at a time, from the first one.
+          chunkSize: 2,
+          chunkOffset: 0,
         });
         summRenderSelections();
         summComputeStats();
@@ -12286,38 +12441,142 @@
 
           const lvlSel = document.createElement("select");
           lvlSel.style.cssText = "font-size:11px;width:100%";
-          Object.keys(SUMM_SEL_LEVELS).forEach((k) => {
-            const o = document.createElement("option");
-            o.value = k;
-            o.textContent = SUMM_SEL_LEVELS[k].label;
-            if (k === sel.level) o.selected = true;
-            lvlSel.appendChild(o);
+          // Split so the sound and the silence between it are visibly two
+          // different things to select, rather than ten sibling entries in one
+          // list where the gap levels read as more structure levels.
+          const lvlGroups = [
+            ["Structures", (l) => !l.gap && !l.chunk],
+            ["Gaps between structures", (l) => !!l.gap],
+            ["Runs of structures (syllables)", (l) => !!l.chunk],
+          ];
+          lvlGroups.forEach(([groupLabel, want]) => {
+            const og = document.createElement("optgroup");
+            og.label = groupLabel;
+            Object.keys(SUMM_SEL_LEVELS).forEach((k) => {
+              if (!want(SUMM_SEL_LEVELS[k])) return;
+              const o = document.createElement("option");
+              o.value = k;
+              o.textContent = SUMM_SEL_LEVELS[k].label;
+              if (k === sel.level) o.selected = true;
+              og.appendChild(o);
+            });
+            if (og.children.length) lvlSel.appendChild(og);
           });
           lvlSel.onchange = () => {
             sel.level = lvlSel.value;
+            // The positions box means something different on a gap level, so
+            // its hints are rewritten in place rather than waiting for the
+            // next full render (which would take the focused input with it).
+            applyPosHints();
             summSelectionsChanged();
           };
           card.appendChild(lvlSel);
 
+          // Run size / phase, shown only for the chunk levels. Placed above
+          // the positions box because it defines what a "position" counts.
+          const runRow = document.createElement("div");
+          runRow.style.cssText = "display:flex;align-items:center;gap:4px";
+          const runLbl = document.createElement("span");
+          runLbl.style.cssText = "color:var(--txt2);font-size:11px";
+          const runSize = document.createElement("input");
+          runSize.type = "number";
+          runSize.min = "2";
+          runSize.step = "1";
+          runSize.value = sel.chunkSize == null ? 2 : sel.chunkSize;
+          runSize.style.cssText = "width:42px;font-size:11px";
+          runSize.title =
+            "How many consecutive structures make one unit.\n" +
+            "2 for a disyllabic species (trains 1+2, 3+4, 5+6 …),\n" +
+            "3 for a trisyllabic one.";
+          const runOffLbl = document.createElement("span");
+          runOffLbl.textContent = "skipping";
+          runOffLbl.style.cssText = "color:var(--txt2);font-size:11px";
+          const runOff = document.createElement("input");
+          runOff.type = "number";
+          runOff.min = "0";
+          runOff.step = "1";
+          runOff.value = sel.chunkOffset == null ? 0 : sel.chunkOffset;
+          runOff.style.cssText = "width:42px;font-size:11px";
+          runOff.title =
+            "How many structures to skip before the first run starts.\n" +
+            "Leave at 0 unless the species opens with a lead-in stroke that\n" +
+            "is not part of the first syllable — then set 1 so the pairing\n" +
+            "runs 2+3, 4+5, … instead of 1+2, 3+4, …";
+          runSize.oninput = () => {
+            sel.chunkSize = runSize.value;
+            summSelectionsChanged();
+          };
+          runOff.oninput = () => {
+            sel.chunkOffset = runOff.value;
+            summSelectionsChanged();
+          };
+          runRow.appendChild(runLbl);
+          runRow.appendChild(runSize);
+          runRow.appendChild(runOffLbl);
+          runRow.appendChild(runOff);
+          card.appendChild(runRow);
+
           const posRow = document.createElement("div");
           posRow.style.cssText = "display:flex;align-items:center;gap:4px";
           const posLbl = document.createElement("span");
-          posLbl.textContent = "at";
           posLbl.style.cssText = "color:var(--txt2);font-size:11px";
           const posIn = document.createElement("input");
           posIn.type = "text";
           posIn.value = sel.positions;
-          posIn.placeholder = "1,3,5 · first · odd · 2-n · -1";
-          posIn.title =
-            "Position inside the parent structure, counted from 1.\n" +
-            "3            the third\n" +
-            "1,3,5        a list\n" +
-            "2-4 / 2-n    a range, n meaning the last\n" +
-            "-1           the last, -2 the one before it\n" +
-            "first, last, odd, even\n" +
-            "every 2 from 1   every second, starting at the first\n" +
-            "all or blank     no positional restriction";
           posIn.style.cssText = "flex:1;font-size:11px;min-width:0";
+          // Rewrites the label, placeholder and tooltip for whichever level is
+          // currently chosen. Defined here so the level's onchange above can
+          // call it; called once below for the initial state.
+          function applyPosHints() {
+            const lvl = SUMM_SEL_LEVELS[sel.level];
+            runRow.style.display = lvl && lvl.chunk ? "flex" : "none";
+            if (lvl && lvl.chunk) {
+              runLbl.textContent = "runs of";
+              runOffLbl.textContent = lvl.chunk.of + "s, skipping";
+              posLbl.textContent = "at";
+              posIn.placeholder = "all · 1 · odd · 1-3 · -1";
+              posIn.title =
+                `Which ${lvl.unit}, counted from 1 inside each ${lvl.parent}.\n` +
+                `Runs are formed first, then numbered: with runs of 2, ${lvl.unit} 2\n` +
+                `is made of ${lvl.chunk.of}s 3 and 4.\n\n` +
+                `all or blank     every ${lvl.unit} (the usual choice)\n` +
+                "1            only the first\n" +
+                "odd, even    every other one\n" +
+                "1-3 / 2-n    a range, n meaning the last\n" +
+                "-1           the last\n" +
+                "first, last, every 2 from 1";
+              return;
+            }
+            if (lvl && lvl.gap) {
+              posLbl.textContent = "gap";
+              posIn.placeholder = "1-2, 3-4, 5-6 · odd · first · -1";
+              posIn.title =
+                `Which gap, counted from 1 inside each ${lvl.parent}.\n` +
+                `A ${lvl.parent} holding k ${lvl.gap.of}s has k-1 gaps;\n` +
+                `gap i lies between ${lvl.gap.of} i and ${lvl.gap.of} i+1.\n\n` +
+                "1-2          the gap between the 1st and 2nd\n" +
+                "1-2, 3-4, 5-6    those three gaps (the intra-syllable set)\n" +
+                "odd / even   every other gap — odd is the same set as above\n" +
+                "3            gap 3, i.e. between the 3rd and 4th\n" +
+                "2..4 / 2..n  a RANGE of gaps (note the two dots)\n" +
+                "-1           the last gap\n" +
+                "first, last, every 2 from 1\n" +
+                "all or blank     every gap";
+              return;
+            }
+            posLbl.textContent = "at";
+            posIn.placeholder = "1,3,5 · first · odd · 2-n · -1";
+            posIn.title =
+              "Position inside the parent structure, counted from 1.\n" +
+              "3            the third\n" +
+              "1,3,5        a list\n" +
+              "2-4 / 2-n    a range, n meaning the last\n" +
+              "-1           the last, -2 the one before it\n" +
+              "first, last, odd, even\n" +
+              "every 2 from 1   every second, starting at the first\n" +
+              "all or blank     no positional restriction";
+          }
+          applyPosHints();
           posIn.oninput = () => {
             sel.positions = posIn.value;
             summSelectionsChanged();
@@ -12334,7 +12593,10 @@
             "Optional conditions on the measured columns, separated by ';'.\n" +
             "Use >, >=, <, <=, = and != — for example n_peaks >= 3.\n" +
             "Conditions narrow the rows the positions already picked; they\n" +
-            "never change which position a structure holds.";
+            "never change which position a structure holds.\n\n" +
+            "On a gap level the condition is read against the structure the\n" +
+            "gap follows, with all of its columns — so both train_gap_ms > 5\n" +
+            "and n_peaks >= 3 work.";
           fltIn.style.cssText = "font-size:11px;width:100%;box-sizing:border-box";
           fltIn.oninput = () => {
             sel.filters = fltIn.value;
@@ -12399,7 +12661,17 @@
               " " +
               lvl.parent +
               (res.nGroups === 1 ? "" : "s") +
-              ".";
+              "." +
+              // Never let an incomplete run vanish quietly — the reader needs
+              // to know a tail was left out before quoting the mean.
+              (res.dropped
+                ? " " +
+                  res.dropped +
+                  " " +
+                  lvl.chunk.of +
+                  (res.dropped === 1 ? "" : "s") +
+                  " left over (no complete run)."
+                : "");
           }
         });
       }
@@ -12550,6 +12822,35 @@
           );
           stats.push(...res.stats);
         });
+
+        // Each selection is refitted on its own rows rather than borrowing the
+        // pooled slope — the same reasoning the workbook's per-selection
+        // temperature sheets use: opening and closing strokes need not respond
+        // to temperature at the same rate.
+        const adjT = _summAdjTarget();
+        if (adjT !== null) {
+          SUMM_CATS.forEach((cat) =>
+            _summAttachAdjusted(
+              stats,
+              summMerged[cat],
+              SUMM_LABEL[cat],
+              summIndividuals,
+              SUMM_SEL_ALL,
+              adjT,
+            ),
+          );
+          summSelResults.forEach((res) => {
+            if (!res.ok || !res.rows.length) return;
+            _summAttachAdjusted(
+              stats,
+              res.rows,
+              SUMM_LABEL[res.cat],
+              summIndividuals,
+              res.sel.name,
+              adjT,
+            );
+          });
+        }
         summStatsRows = stats;
 
         summUpdateTempNote();
@@ -12646,6 +12947,18 @@
           min: "Min",
           max: "Max",
         };
+        // The corrected columns appear only when the correction is on AND
+        // something was actually fitted, so an empty pair of columns never
+        // implies a fit that did not happen. adj_n is shown beside them
+        // because it is usually smaller than N — recordings without a
+        // temperature cannot be corrected and drop out.
+        const adjT = _summAdjTarget();
+        if (adjT !== null && (stats || []).some((s) => s.adj_mean != null)) {
+          cols.push("adj_n", "adj_mean", "adj_sd");
+          labels.adj_n = "N @" + adjT + "°C";
+          labels.adj_mean = "Mean @" + adjT + "°C";
+          labels.adj_sd = "SD @" + adjT + "°C";
+        }
         head.innerHTML = "";
         cols.forEach((c) => {
           const th = document.createElement("th");
@@ -12686,6 +12999,43 @@
             " motifs.",
         );
 
+        // Stated up front, and unconditionally, because a song description
+        // without the temperature it was measured at is not interpretable —
+        // rates and periods in these animals move with it. The per-recording
+        // lines below repeat it individually, but they only appear once more
+        // than one recording is merged, so this is what covers the single
+        // recording case.
+        {
+          const temps = summTempsAvailable(merged);
+          const noTemp = summRecordingsMissingTemp(merged).size;
+          if (temps.length === 1 && !noTemp) {
+            paras.push("All recordings were made at " + temps[0] + " °C.");
+          } else if (temps.length) {
+            paras.push(
+              "Recording temperatures ranged from " +
+                temps[0] +
+                " to " +
+                temps[temps.length - 1] +
+                " °C (" +
+                temps.join(", ") +
+                ")" +
+                (noTemp
+                  ? "; " +
+                    noTemp +
+                    " recording" +
+                    (noTemp === 1 ? " carries" : "s carry") +
+                    " no temperature"
+                  : "") +
+                ".",
+            );
+          } else {
+            paras.push(
+              "No recording temperature was noted, so the values below cannot " +
+                "be compared against measurements made at another temperature.",
+            );
+          }
+        }
+
         const statFor = (cat, key) =>
           summStatsRows.find(
             (s) =>
@@ -12694,13 +13044,95 @@
               s.specimen_id === "ALL" &&
               s.metric === key,
           );
-        const pm = (s, d) =>
-          s ? s.mean.toFixed(d) + " ± " + s.sd.toFixed(d) : null;
+        // Observed value first, always. The corrected one follows in brackets
+        // where a fit exists, so a reader can see both and the report can
+        // never quote a corrected number without saying it is corrected.
+        const adjT = _summAdjTarget();
+        const pm = (s, d) => {
+          if (!s) return null;
+          const base = s.mean.toFixed(d) + " ± " + s.sd.toFixed(d);
+          if (adjT === null || s.adj_mean == null) return base;
+          return (
+            base +
+            " [" +
+            s.adj_mean.toFixed(d) +
+            " ± " +
+            s.adj_sd.toFixed(d) +
+            " at " +
+            adjT +
+            " °C]"
+          );
+        };
+
+        // Stated before any number is quoted. A corrected value that appears
+        // without its target temperature, its method and the range it was
+        // fitted over is not reportable, and this paragraph is what makes the
+        // bracketed figures downstream mean something on the page.
+        if (adjT !== null) {
+          const temps = summTempsAvailable(merged);
+          const anyAdj = (summStatsRows || []).some((s) => s.adj_mean != null);
+          if (!anyAdj) {
+            paras.push(
+              "Temperature correction to " +
+                adjT +
+                " °C was requested but no metric could be fitted" +
+                (temps.length < 2
+                  ? " — a slope needs recordings at two or more temperatures, and " +
+                    (temps.length === 1
+                      ? "only " + temps[0] + " °C is present"
+                      : "none carry a temperature")
+                  : " to the temperatures available (" +
+                    temps.join(", ") +
+                    " °C)") +
+                ". All values below are as observed.",
+            );
+          } else {
+            const lo = temps[0];
+            const hi = temps[temps.length - 1];
+            paras.push(
+              "Values are given as observed, followed in brackets by the same " +
+                "measurement expressed at " +
+                adjT +
+                " °C. The correction fits each metric against recording " +
+                "temperature by least squares, one observation per recording, " +
+                "and shifts every value along that line. Only metrics whose " +
+                "thermal response is statistically supported (r² ≥ 0.25 and " +
+                "significant at p < 0.05) are corrected; the rest carry no " +
+                "bracketed figure, and the workbook's Temp_Regression sheet " +
+                "gives the slope and r² behind each one. Recordings were made " +
+                "between " +
+                lo +
+                " and " +
+                hi +
+                " °C" +
+                (adjT < lo || adjT > hi
+                  ? ", so " +
+                    adjT +
+                    " °C lies outside the range actually observed and the " +
+                    "corrected values are extrapolations"
+                  : "") +
+                ". Only observations carrying a temperature contribute to the " +
+                "corrected figures, so their N can be smaller than the " +
+                "observed N.",
+            );
+          }
+        }
+
+        // "Peak frequency" in the conventional sense: the maximum of the
+        // structure's own power spectrum. peak_freq_pmean_khz — the mean of
+        // the per-PEAK carriers — is the fallback for workbooks exported
+        // before the spectral columns were added to the temporal tables, and
+        // is a different quantity, so it is only used when the real one is
+        // absent rather than mixed in beside it.
+        const pfStat = (cat) =>
+          statFor(cat, "peak_freq_khz") || statFor(cat, "peak_freq_pmean_khz");
 
         const rate = statFor("trains", "peak_rate_pps");
         const meanAmp = statFor("trains", "mean_amp");
         const trainDur = statFor("trains", "train_dur_ms");
         const trainGap = statFor("trains", "train_gap_ms");
+        const trainPf = pfStat("trains");
+        const trainBw = statFor("trains", "bw_20db_khz");
         const bits = [];
         if (rate)
           bits.push("a mean peak rate of " + pm(rate, 2) + " peaks/s");
@@ -12710,6 +13142,10 @@
           bits.push("a mean amplitude of " + pm(meanAmp, 3) + " (normalized)");
         if (trainGap)
           bits.push("a mean gap between trains of " + pm(trainGap, 1) + " ms");
+        if (trainPf)
+          bits.push("a mean peak frequency of " + pm(trainPf, 3) + " kHz");
+        if (trainBw)
+          bits.push("a mean -20 dB bandwidth of " + pm(trainBw, 3) + " kHz");
         if (bits.length)
           paras.push(
             "Across all trains, recordings showed " + bits.join("; ") + ".",
@@ -12748,6 +13184,12 @@
             mbits.push("a mean temporal excursion of " + pm(temExc, 2));
           if (dynExc)
             mbits.push("a mean dynamic excursion of " + pm(dynExc, 2));
+          const mPf = pfStat("motifs");
+          const mBw = statFor("motifs", "bw_20db_khz");
+          if (mPf)
+            mbits.push("a mean peak frequency of " + pm(mPf, 3) + " kHz");
+          if (mBw)
+            mbits.push("a mean -20 dB bandwidth of " + pm(mBw, 3) + " kHz");
           if (mbits.length)
             paras.push(
               "Across all motifs (n=" +
@@ -12782,24 +13224,94 @@
           individuals.forEach((ind) => {
             const indRows = merged.trains.filter((r) => r.specimen_id === ind);
             if (!indRows.length) return;
-            const s = summStatsRows.find(
-              (s) =>
-                s.selection === SUMM_SEL_ALL &&
-                s.category === "Trains" &&
-                s.specimen_id === ind &&
-                s.metric === "peak_rate_pps",
-            );
-            if (s)
+            const indStat = (metric) =>
+              summStatsRows.find(
+                (s) =>
+                  s.selection === SUMM_SEL_ALL &&
+                  s.category === "Trains" &&
+                  s.specimen_id === ind &&
+                  s.metric === metric,
+              );
+            const s = indStat("peak_rate_pps");
+            const pf = indStat("peak_freq_khz") || indStat("peak_freq_pmean_khz");
+            const ibits = [];
+            if (s) ibits.push("mean peak rate " + pm(s, 2) + " peaks/s");
+            if (pf) ibits.push("mean peak frequency " + pm(pf, 3) + " kHz");
+            if (ibits.length)
               paras.push(
                 ind +
                   ": " +
                   indRows.length +
-                  " trains, mean peak rate " +
-                  s.mean.toFixed(2) +
-                  " ± " +
-                  s.sd.toFixed(2) +
-                  " peaks/s.",
+                  " trains, " +
+                  ibits.join(", ") +
+                  ".",
               );
+          });
+        }
+
+        // One line per recording. Temperature belongs here and nowhere else:
+        // it is a property of the recording, so a per-specimen line cannot
+        // state it once an animal has been recorded twice at different
+        // temperatures. Values are as observed — the whole point of naming a
+        // recording's temperature is to show the conditions the raw numbers
+        // came from, which a corrected figure would erase.
+        const recKeys = [];
+        const recOf = new Map();
+        merged.trains.forEach((r) => {
+          const k = _summRecKey(r);
+          if (!recOf.has(k)) {
+            recOf.set(k, []);
+            recKeys.push(k);
+          }
+          recOf.get(k).push(r);
+        });
+        if (recKeys.length > 1) {
+          recKeys.forEach((k) => {
+            const rows = recOf.get(k);
+            const rate = _summMeanSd(rows, "peak_rate_pps");
+            const pf =
+              _summMeanSd(rows, "peak_freq_khz") ||
+              _summMeanSd(rows, "peak_freq_pmean_khz");
+            const temps = [
+              ...new Set(
+                rows
+                  .map((r) => parseFloat(r.temp_c))
+                  .filter((t) => isFinite(t)),
+              ),
+            ];
+            const spec = rows[0].specimen_id;
+            const rbits = [];
+            if (temps.length)
+              rbits.push(
+                "recorded at " +
+                  temps.join(", ") +
+                  " °C",
+              );
+            rbits.push(rows.length + " trains");
+            if (rate)
+              rbits.push(
+                "mean peak rate " +
+                  rate.mean.toFixed(2) +
+                  " ± " +
+                  rate.sd.toFixed(2) +
+                  " peaks/s",
+              );
+            if (pf)
+              rbits.push(
+                "mean peak frequency " +
+                  pf.mean.toFixed(3) +
+                  " ± " +
+                  pf.sd.toFixed(3) +
+                  " kHz",
+              );
+            paras.push(
+              k +
+                (spec ? " (" + spec + ")" : "") +
+                ": " +
+                rbits.join(", ") +
+                (temps.length ? "" : "; no temperature recorded") +
+                ".",
+            );
           });
         }
 
@@ -12818,9 +13330,30 @@
                 s.metric === key,
             );
           // Which metrics are worth naming depends on the structure; these
-          // are the same headline measures the pooled paragraphs use.
-          const wanted =
-            res.cat === "trains"
+          // are the same headline measures the pooled paragraphs use. Gap
+          // levels name only their gap measures — every candidate is listed
+          // because selStat drops the ones this level does not carry.
+          const wanted = lvl.chunk
+            ? [
+                [lvl.chunk.prefix + "_dur_" + lvl.chunk.outSuffix, "a mean duration of", lvl.chunk.outSuffix, 1],
+                [lvl.chunk.prefix + "_sound_" + lvl.chunk.outSuffix, "of which sound", lvl.chunk.outSuffix, 1],
+                [lvl.chunk.prefix + "_silence_" + lvl.chunk.outSuffix, "and silence", lvl.chunk.outSuffix, 1],
+                [lvl.chunk.prefix + "_duty_pct", "a mean duty cycle of", "%", 1],
+                [lvl.chunk.prefix + "_gap_" + lvl.chunk.outSuffix, "a mean gap to the next of", lvl.chunk.outSuffix, 1],
+                [lvl.chunk.prefix + "_period_" + lvl.chunk.outSuffix, "a mean period of", lvl.chunk.outSuffix, 1],
+                [lvl.chunk.prefix + "_n_peaks", "a mean of", "peaks", 1],
+                [lvl.chunk.prefix + "_peak_freq_pmean_khz", "a mean carrier frequency of", "kHz", 3],
+              ]
+            : lvl.gap
+            ? [
+                ["train_gap_ms", "a mean gap of", "ms", 1],
+                ["train_period_ms", "a mean train period of", "ms", 1],
+                ["peak_period_ms", "a mean interval of", "ms", 2],
+                ["motif_gap_s", "a mean gap of", "s", 2],
+                ["motif_period_s", "a mean echeme period of", "s", 2],
+                ["seq_gap_s", "a mean gap of", "s", 2],
+              ]
+            : res.cat === "trains"
               ? [
                   ["train_dur_ms", "a mean duration of", "ms", 1],
                   ["peak_rate_pps", "a mean peak rate of", "peaks/s", 2],
@@ -12847,16 +13380,7 @@
           const bits = [];
           wanted.forEach(([key, lead, unit, d]) => {
             const s = selStat(key);
-            if (s)
-              bits.push(
-                lead +
-                  " " +
-                  s.mean.toFixed(d) +
-                  " ± " +
-                  s.sd.toFixed(d) +
-                  " " +
-                  unit,
-              );
+            if (s) bits.push(lead + " " + pm(s, d) + " " + unit);
           });
           paras.push(
             '"' +
@@ -12868,8 +13392,13 @@
               " of " +
               res.nBefore +
               " " +
-              SUMM_LABEL[res.cat].toLowerCase() +
-              " rows, across " +
+              // A gap selection is drawn from the gaps, not from the structure
+              // rows they were derived from, and the count must say so — "5 of
+              // 8 trains rows" would be the wrong denominator named twice over.
+              (lvl.gap || lvl.chunk
+                ? lvl.unit + "s"
+                : SUMM_LABEL[res.cat].toLowerCase() + " rows") +
+              ", across " +
               res.nGroups +
               " " +
               lvl.parent +
@@ -12940,6 +13469,101 @@
       // under exactly those names, so the shared builder below can find them.
       // The two extra columns are live formulas, not frozen text, so editing a
       // value updates the string.
+      // ── Temperature-corrected companions to the statistics ──────────────
+      // The target temperature used to matter only at workbook-save time, so
+      // the checkbox looked inert and, worse, the text report and the workbook
+      // could quote different numbers for the same merge without either saying
+      // which. These three feed one adjusted mean/SD alongside every observed
+      // one, so the table and the report read from the same place the
+      // Temp_Regression sheet does.
+
+      // The target, or null when the correction is off or the box is empty.
+      function _summAdjTarget() {
+        const on = $("summRegressOn") && $("summRegressOn").checked;
+        if (!on) return null;
+        const t = parseFloat($("summRegressTemp") && $("summRegressTemp").value);
+        return isFinite(t) ? t : null;
+      }
+
+      // Copies of `rows` with every fitted metric expressed at targetT.
+      //
+      // Rows with no temperature are dropped rather than passed through
+      // unchanged: leaving them in would mix raw and corrected values in one
+      // mean, which is the exact error the correction exists to remove. That
+      // makes the adjusted N smaller than the observed N whenever some
+      // recordings lack a reading, and the report says so.
+      //
+      // Metrics with no usable fit are simply absent from the copies, so they
+      // report an observed value and no adjusted one instead of an
+      // unadjusted number dressed up as corrected.
+      function _summAdjustRows(rows, targetT) {
+        if (!rows || !rows.length) return [];
+        const keys = new Set();
+        rows.forEach((r) =>
+          Object.keys(r).forEach((k) => {
+            if (!_summIsCategoricalKey(k)) keys.add(k);
+          }),
+        );
+        const fits = new Map();
+        keys.forEach((k) => {
+          const fit = _summFitTemp(
+            _summByRecording(rows, k).map(({ t, v }) => ({ t, v })),
+          );
+          // A line can be drawn through almost anything; that does not make it
+          // a thermal response. Without this gate a flat metric such as
+          // bandwidth acquires a zero slope, and the report prints
+          // "2.600 [2.600 at 25 °C]" — a corrected figure identical to the
+          // observed one, which reads as though temperature had been
+          // accounted for when nothing was. Same significance test the song
+          // thermometer uses, for the same reason.
+          if (fit && _tempCalibUsable(fit.r2, fit.n)) fits.set(k, fit);
+        });
+        if (!fits.size) return [];
+        const out = [];
+        rows.forEach((r) => {
+          const t = parseFloat(r.temp_c);
+          if (!isFinite(t)) return;
+          const o = {};
+          Object.keys(r).forEach((k) => {
+            if (_summIsCategoricalKey(k)) o[k] = r[k];
+          });
+          fits.forEach((fit, k) => {
+            const v = r[k];
+            if (typeof v === "number" && isFinite(v))
+              o[k] = v + fit.slope * (targetT - t);
+          });
+          out.push(o);
+        });
+        return out;
+      }
+
+      // Stamp adj_mean/adj_sd onto the statistics for one (selection,
+      // category) block, matched per specimen and per metric so the per-animal
+      // rows are corrected too — not just the pooled ones.
+      function _summAttachAdjusted(
+        statsRows,
+        rows,
+        catLabel,
+        individuals,
+        selection,
+        targetT,
+      ) {
+        const adjRows = _summAdjustRows(rows, targetT);
+        if (!adjRows.length) return;
+        const byKey = new Map();
+        _summStatsBlock(adjRows, catLabel, individuals, selection).forEach((a) =>
+          byKey.set(a.specimen_id + "" + a.metric, a),
+        );
+        statsRows.forEach((s) => {
+          if (s.selection !== selection || s.category !== catLabel) return;
+          const a = byKey.get(s.specimen_id + "" + s.metric);
+          if (!a) return;
+          s.adj_mean = a.mean;
+          s.adj_sd = a.sd;
+          s.adj_n = a.n;
+        });
+      }
+
       function _summWithFormulaCols(stats) {
         return _withFormulaCols(stats, ["mean", "sd", "min", "max"]);
       }
@@ -13062,6 +13686,182 @@
           unit: "motif sequence",
           parent: "recording",
         },
+
+        // ── Gap levels ────────────────────────────────────────────────────
+        // The silences, addressed in their own right. A gap is not a
+        // structure, so it cannot be selected by the levels above: asking for
+        // "the gap between trains 1 and 2" there means selecting TRAIN 1 and
+        // then knowing that its train_gap_ms happens to be the gap that
+        // follows it. That works, but the selection is labelled as being about
+        // trains, its mean duration and peak rate come along for the ride, and
+        // "1-2" typed in the positions box silently reads as the range 1..2.
+        //
+        // On a gap level the unit IS the gap. Within a parent holding k
+        // structures there are k-1 gaps; gap i sits between structures i and
+        // i+1, so positions address the pair the way it is written on paper.
+        // "1-2, 3-4, 5-6" (or simply "odd") is then the intra-syllable set,
+        // and "even" its inter-syllable complement.
+        //
+        // Dropping each group's last structure is what makes the arithmetic
+        // honest, and it matters most for peaks: peak_period_ms comes from the
+        // globally flattened peak list, so the last peak of every train
+        // carries the interval to the NEXT TRAIN rather than a pulse period.
+        // Selecting peak gaps within a train never sees those rows, so the
+        // mean is a pulse period throughout — the same correction
+        // _pkWithinTrainPeriods makes for the single-recording report.
+        gap_train_in_motif: {
+          cat: "trains",
+          label: "Gaps between trains within each echeme (motif)",
+          group: ["_rec", "motif_id"],
+          order: ["train_id"],
+          unit: "gap",
+          parent: "echeme",
+          gap: {
+            of: "train",
+            metrics: ["train_gap_ms", "train_period_ms"],
+            from: "train_end",
+            to: "train_start",
+          },
+        },
+        gap_peak_in_train: {
+          cat: "peaks",
+          label: "Intervals between peaks within each train",
+          group: ["_rec", "motif_id", "train_id"],
+          order: ["peak_id"],
+          unit: "interval",
+          parent: "train",
+          gap: {
+            of: "peak",
+            metrics: ["peak_period_ms"],
+            from: "peak_time",
+            to: "peak_time",
+          },
+        },
+        gap_motif_in_rec: {
+          cat: "motifs",
+          label: "Gaps between echemes (motifs) within each recording",
+          group: ["_rec"],
+          order: ["motif_id"],
+          unit: "gap",
+          parent: "recording",
+          gap: {
+            of: "echeme",
+            metrics: ["motif_gap_s", "motif_period_s"],
+            from: "motif_end",
+            to: "motif_start",
+          },
+        },
+        gap_motseq_in_rec: {
+          cat: "motseq",
+          label: "Gaps between motif sequences within each recording",
+          group: ["_rec"],
+          order: ["seq_id"],
+          unit: "gap",
+          parent: "recording",
+          gap: {
+            of: "motif sequence",
+            metrics: ["seq_gap_s"],
+            from: "seq_end",
+            to: "seq_start",
+          },
+        },
+
+        // ── Chunk levels ──────────────────────────────────────────────────
+        // A syllable in a disyllabic species is not a train and not a gap: it
+        // is a fixed run of consecutive trains taken as one sound, measured
+        // from the first one's onset to the last one's offset. Selecting
+        // "trains 1 and 2" cannot express it, because that yields two rows
+        // whose durations average to a train duration; the syllable's duration
+        // is the SPAN, silence in the middle included.
+        //
+        // So these levels partition each parent into consecutive runs of `size`
+        // structures and emit one row per run. Positions then number the
+        // syllables, not the trains: "1" is the first syllable of each echeme,
+        // "odd" every other one.
+        //
+        // A run must be complete. A motif of 5 trains read in pairs yields two
+        // syllables and one leftover train, and that train is dropped rather
+        // than emitted as a one-train syllable — its "duration" would be a
+        // train duration with no interior silence, biasing the mean downward
+        // by exactly the thing the level exists to measure. The count of
+        // dropped members is reported on the card so the loss is never silent.
+        syl_train_in_motif: {
+          cat: "trains",
+          label: "Syllables (runs of trains) within each echeme (motif)",
+          group: ["_rec", "motif_id"],
+          order: ["train_id"],
+          unit: "syllable",
+          parent: "echeme",
+          chunk: {
+            of: "train",
+            prefix: "syl",
+            start: "train_start",
+            end: "train_end",
+            // Member duration, and what to multiply it by to reach seconds —
+            // extents are in seconds but train_dur_ms is not.
+            memberDur: "train_dur_ms",
+            memberDurToSec: 0.001,
+            // Emitted durations are seconds × outScale, labelled outSuffix.
+            outScale: 1000,
+            outSuffix: "ms",
+            // Exact aggregations only. Each of these is already a sum over its
+            // own train (a peak count, an excursion), so summing over the
+            // trains of a syllable is the same quantity one level up.
+            sum: ["n_peaks", "tem_exc", "dyn_exc"],
+            // Intensive quantities, averaged with each train weighted by its
+            // duration — the longer stroke should count for more in a
+            // syllable's carrier frequency than a brief one.
+            wmean: [
+              "mean_amp",
+              "peak_freq_khz",
+              "peak_freq_pmean_khz",
+              "bw_20db_khz",
+              "bw_10db_khz",
+              "spec_centroid_khz",
+              "q_20db",
+            ],
+            // Extremes aggregate exactly.
+            min: ["peak_freq_pmin_khz"],
+            max: ["peak_freq_pmax_khz"],
+            // Peaks per second across the whole syllable, interior silence
+            // included — deliberately not the mean of the trains' own rates,
+            // which would describe the strokes rather than the syllable.
+            rateFrom: "n_peaks",
+            rateName: "peak_rate_pps",
+          },
+        },
+        syl_motif_in_rec: {
+          cat: "motifs",
+          label: "Groups of echemes (motifs) within each recording",
+          group: ["_rec"],
+          order: ["motif_id"],
+          unit: "group",
+          parent: "recording",
+          chunk: {
+            of: "echeme",
+            prefix: "grp",
+            start: "motif_start",
+            end: "motif_end",
+            memberDur: "motif_dur_s",
+            memberDurToSec: 1,
+            outScale: 1,
+            outSuffix: "s",
+            sum: ["n_trains"],
+            wmean: [
+              "duty_cycle_pct",
+              "peak_freq_khz",
+              "peak_freq_pmean_khz",
+              "bw_20db_khz",
+              "spec_centroid_khz",
+              "pci_syl",
+              "pci_agn",
+            ],
+            min: ["peak_freq_pmin_khz"],
+            max: ["peak_freq_pmax_khz"],
+            rateFrom: "n_trains",
+            rateName: "train_rate_tps",
+          },
+        },
       };
 
       // Which recording a merged row came from. source_file names the AUDIO
@@ -13085,7 +13885,14 @@
       //   odd, even    by parity of position
       //   every 2 from 1   every second, starting at the first
       //   all or blank     no positional restriction
-      function _summParsePositions(spec) {
+      //
+      // pairMode is set for the gap levels, where positions number the gaps
+      // and a gap is naturally named after the two structures it separates.
+      // There "1-2" is the gap between structures 1 and 2 — one gap, gap 1 —
+      // rather than the range 1..2. Ranges are still available on those
+      // levels, spelled with ".." ("1..4" is the first four gaps), and a
+      // hyphenated non-consecutive pair is rejected rather than guessed at.
+      function _summParsePositions(spec, pairMode) {
         const raw = String(spec == null ? "" : spec).trim();
         const allOf = { ok: true, label: "all", test: () => true };
         if (!raw || /^(all|\*)$/i.test(raw)) return allOf;
@@ -13115,21 +13922,32 @@
               };
             tests.push((i) => i >= s && (i - s) % k === 0);
           } else if (
-            (m = p.match(/^(\d+)\s*(?:-|\.\.|–)\s*(\d+|n|last|end)$/))
+            (m = p.match(/^(\d+)\s*(-|\.\.|–)\s*(\d+|n|last|end)$/))
           ) {
             const a = parseInt(m[1], 10);
+            const sep = m[2];
+            const rhs = m[3];
             if (a < 1)
               return { ok: false, err: `"${part}": positions start at 1.` };
-            if (/^\d+$/.test(m[2])) {
-              const b = parseInt(m[2], 10);
+            if (!/^\d+$/.test(rhs)) {
+              // "2-n" / "2..last": open-ended, a range under either spelling.
+              tests.push((i, n) => i >= a && i <= n);
+            } else if (pairMode && sep === "-") {
+              const b = parseInt(rhs, 10);
+              if (b !== a + 1)
+                return {
+                  ok: false,
+                  err: `"${part}": on a gap level "a-b" names the gap between two CONSECUTIVE structures, like 1-2 or 3-4. For a range of gaps write ${a}..${rhs}.`,
+                };
+              tests.push((i) => i === a);
+            } else {
+              const b = parseInt(rhs, 10);
               if (b < a)
                 return {
                   ok: false,
                   err: `"${part}": the range ends before it starts.`,
                 };
               tests.push((i) => i >= a && i <= b);
-            } else {
-              tests.push((i, n) => i >= a && i <= n);
             }
           } else if ((m = p.match(/^-(\d+)$/))) {
             const k = parseInt(m[1], 10);
@@ -13250,10 +14068,16 @@
       // survived filtering", which for a filter like train_dur_ms > 20 quietly
       // promotes a second or third train into the first position. Positions
       // therefore always refer to the structure's real place in the song.
+      //
+      // The derived levels run the same machinery over the same structure
+      // rows — the grouping and the ordering are what define which gaps and
+      // runs exist at all — but positions count gaps or syllables rather than
+      // structures, and what comes out is a row built by _summGapRow or
+      // _summChunkRow.
       function summApplySelection(merged, sel) {
         const lvl = SUMM_SEL_LEVELS[sel.level];
         if (!lvl) return { ok: false, err: "Unknown structure level." };
-        const pos = _summParsePositions(sel.positions);
+        const pos = _summParsePositions(sel.positions, !!lvl.gap);
         if (!pos.ok) return { ok: false, err: pos.err, cat: lvl.cat };
         const flt = _summParseFilters(sel.filters);
         if (!flt.ok) return { ok: false, err: flt.err, cat: lvl.cat };
@@ -13265,6 +14089,9 @@
           lvl,
           pos,
           flt,
+          // Recomputed below for the derived levels, where the population is
+          // the gaps between these rows, or the complete runs formed from
+          // them, rather than the rows themselves.
           nBefore: all.length,
         };
         if (!all.length)
@@ -13291,6 +14118,20 @@
           return isFinite(v) ? v : Infinity;
         };
         const rows = [];
+        let nGapsTotal = 0;
+        // Parents that enclose no gap at all are not part of the population a
+        // gap selection is drawn from, so they are left out of the "across N
+        // echemes" count as well as out of the rows.
+        let nGapGroups = 0;
+        // Chunk levels: the run size, and how many leading members to skip
+        // before the first run starts (a species with a lead-in stroke pairs
+        // from the second train on). Defaulted here rather than at creation so
+        // selections made before these levels existed still resolve.
+        const chunkSize = Math.max(2, Math.round(+sel.chunkSize || 2));
+        const chunkOffset = Math.max(0, Math.round(+sel.chunkOffset || 0));
+        let nChunksTotal = 0;
+        let nChunkGroups = 0;
+        let nDropped = 0;
         groups.forEach((g) => {
           g.sort((a, b) => {
             for (const k of lvl.order) {
@@ -13299,6 +14140,64 @@
             }
             return a.i - b.i;
           });
+          if (lvl.gap) {
+            // k structures enclose k-1 gaps, so a parent holding a single
+            // structure contributes none.
+            const nGaps = g.length - 1;
+            if (nGaps < 1) return;
+            nGapsTotal += nGaps;
+            nGapGroups++;
+            for (let i = 1; i <= nGaps; i++) {
+              const prev = g[i - 1].r;
+              if (!pos.test(i, nGaps)) continue;
+              // Conditions are read against the structure the gap FOLLOWS,
+              // with all of its columns — that row is where the gap's own
+              // measure lives (train_gap_ms and friends are stored on it), so
+              // both "gaps longer than 5 ms" and "gaps that follow a train of
+              // at least 3 peaks" work, and neither needs the gap row to carry
+              // columns it has no business carrying.
+              if (flt.filters.length && !_summRowPasses(prev, flt.filters))
+                continue;
+              rows.push(_summGapRow(lvl, prev, g[i].r, i, nGaps));
+            }
+            return;
+          }
+          if (lvl.chunk) {
+            const avail = g.length - chunkOffset;
+            const nChunks = avail > 0 ? Math.floor(avail / chunkSize) : 0;
+            // Everything the runs do not cover: the skipped lead-in and the
+            // incomplete tail.
+            nDropped += g.length - nChunks * chunkSize;
+            if (nChunks < 1) return;
+            nChunkGroups++;
+            nChunksTotal += nChunks;
+            // Materialised up front because a run's gap and period are
+            // measured to the NEXT run, which has to exist before the current
+            // one can be written.
+            const runs = [];
+            for (let c = 0; c < nChunks; c++)
+              runs.push(
+                g
+                  .slice(chunkOffset + c * chunkSize, chunkOffset + (c + 1) * chunkSize)
+                  .map((e) => e.r),
+              );
+            runs.forEach((members, c) => {
+              const i = c + 1;
+              if (!pos.test(i, nChunks)) return;
+              const row = _summChunkRow(lvl, members, runs[c + 1] || null, i, nChunks);
+              // Conditions see the syllable's own measures laid over the full
+              // columns of its FIRST member, so "syl_dur_ms > 30" and
+              // "n_peaks >= 3" both work. The syllable wins on a name clash,
+              // since that is the level being selected.
+              if (
+                flt.filters.length &&
+                !_summRowPasses(Object.assign({}, members[0], row), flt.filters)
+              )
+                return;
+              rows.push(row);
+            });
+            return;
+          }
           const n = g.length;
           g.forEach((e, i) => {
             if (!pos.test(i + 1, n)) return;
@@ -13308,7 +14207,174 @@
             );
           });
         });
-        return Object.assign({ rows, nGroups: groups.size }, base);
+        if (lvl.gap) base.nBefore = nGapsTotal;
+        if (lvl.chunk) {
+          base.nBefore = nChunksTotal;
+          base.dropped = nDropped;
+          base.chunkSize = chunkSize;
+          base.chunkOffset = chunkOffset;
+        }
+        return Object.assign(
+          {
+            rows,
+            nGroups: lvl.gap
+              ? nGapGroups
+              : lvl.chunk
+                ? nChunkGroups
+                : groups.size,
+          },
+          base,
+        );
+      }
+
+      // One row describing the gap between two consecutive structures.
+      //
+      // Deliberately NOT a copy of the preceding structure with extra columns.
+      // Only the gap measures are carried across as numbers: a table of gaps
+      // that also held train_dur_ms and peak_rate_pps would report a mean
+      // duration for "the intra-syllable gaps", which is the duration of the
+      // trains that happen to precede them and answers a question nobody
+      // asked. Everything else kept is categorical — the tags, the ids and the
+      // extents — so it locates the gap without ever entering a mean.
+      function _summGapRow(lvl, prev, next, i, nGaps) {
+        const out = {
+          sel_position: i,
+          sel_group_n: nGaps,
+          gap_between: i + "-" + (i + 1),
+        };
+        // The preceding structure's own start/end are replaced by the gap's,
+        // below — carrying both would put two different meanings of "where"
+        // in one row.
+        const extents = new Set([lvl.gap.from, lvl.gap.to]);
+        Object.keys(prev).forEach((k) => {
+          if (_summIsCategoricalKey(k) && !extents.has(k.toLowerCase()))
+            out[k] = prev[k];
+        });
+        const from = _summNum(prev, lvl.gap.from);
+        const to = _summNum(next, lvl.gap.to);
+        if (from !== null) out.gap_start = from;
+        if (to !== null) out.gap_end = to;
+        lvl.gap.metrics.forEach((k) => {
+          const v = _summPick(prev, k);
+          if (v !== undefined) out[k] = v;
+        });
+        return out;
+      }
+
+      // Case-insensitive column read, for merged workbooks of different
+      // vintages that do not agree on header case.
+      function _summPick(row, key) {
+        if (key in row) return row[key];
+        const kl = key.toLowerCase();
+        const rk = Object.keys(row).find((x) => x.toLowerCase() === kl);
+        return rk === undefined ? undefined : row[rk];
+      }
+      function _summNum(row, key) {
+        const v = _summPick(row, key);
+        return typeof v === "number" && isFinite(v) ? v : null;
+      }
+
+      // One row describing a run of consecutive structures taken as a single
+      // sound — the syllable of a disyllabic species being two trains.
+      //
+      // The duration is the SPAN, first member's onset to last member's
+      // offset, which is the whole reason the level exists: it includes the
+      // silence between the strokes, where summing the members' own durations
+      // would not. That silence is reported separately too, so a syllable can
+      // be described as sound + interior gap without going back to the trains.
+      //
+      // Only aggregations that are exact or explicitly weighted are carried
+      // across (see the level's sum/wmean/min/max lists). Columns outside
+      // those lists are dropped rather than averaged blindly: a mean of two
+      // spectral entropies or of two frequency SDs is not the entropy or the
+      // SD of the pair, and emitting one would put a number in the table that
+      // reads like a measurement but is not.
+      function _summChunkRow(lvl, members, nextMembers, i, nChunks) {
+        const c = lvl.chunk;
+        const first = members[0];
+        const last = members[members.length - 1];
+        const P = c.prefix;
+        const U = c.outSuffix;
+        const out = {
+          sel_position: i,
+          sel_group_n: nChunks,
+          [P + "_members"]: members
+            .map((r) => _summPick(r, lvl.order[0]) ?? "?")
+            .join("-"),
+        };
+        // Tags, ids and the like come from the first member; its own extents
+        // are replaced by the run's.
+        const extents = new Set([c.start, c.end]);
+        Object.keys(first).forEach((k) => {
+          if (_summIsCategoricalKey(k) && !extents.has(k.toLowerCase()))
+            out[k] = first[k];
+        });
+
+        const t0 = _summNum(first, c.start);
+        const t1 = _summNum(last, c.end);
+        if (t0 !== null) out[P + "_start"] = t0;
+        if (t1 !== null) out[P + "_end"] = t1;
+        out[P + "_n_" + c.of.replace(/\s+/g, "_") + "s"] = members.length;
+
+        const span = t0 !== null && t1 !== null ? t1 - t0 : null;
+        if (span !== null) out[P + "_dur_" + U] = round4(span * c.outScale);
+
+        // Sound vs silence inside the run.
+        const durs = members.map((r) => _summNum(r, c.memberDur));
+        if (durs.every((v) => v !== null)) {
+          const soundSec = durs.reduce((s, v) => s + v, 0) * c.memberDurToSec;
+          out[P + "_sound_" + U] = round4(soundSec * c.outScale);
+          if (span !== null) {
+            out[P + "_silence_" + U] = round4((span - soundSec) * c.outScale);
+            if (span > 0)
+              out[P + "_duty_pct"] = round4((soundSec / span) * 100);
+          }
+        }
+
+        // Gap and period to the next run in the same parent. Null on the last
+        // run, exactly as the structure tables treat their own last row.
+        if (nextMembers && t1 !== null) {
+          const n0 = _summNum(nextMembers[0], c.start);
+          if (n0 !== null) {
+            out[P + "_gap_" + U] = round4((n0 - t1) * c.outScale);
+            if (t0 !== null)
+              out[P + "_period_" + U] = round4((n0 - t0) * c.outScale);
+          }
+        }
+
+        (c.sum || []).forEach((k) => {
+          const vals = members.map((r) => _summNum(r, k));
+          if (vals.every((v) => v !== null))
+            out[P + "_" + k] = round4(vals.reduce((s, v) => s + v, 0));
+        });
+        (c.min || []).forEach((k) => {
+          const vals = members.map((r) => _summNum(r, k)).filter((v) => v !== null);
+          if (vals.length) out[P + "_" + k] = round4(Math.min(...vals));
+        });
+        (c.max || []).forEach((k) => {
+          const vals = members.map((r) => _summNum(r, k)).filter((v) => v !== null);
+          if (vals.length) out[P + "_" + k] = round4(Math.max(...vals));
+        });
+        (c.wmean || []).forEach((k) => {
+          let num = 0;
+          let den = 0;
+          members.forEach((r, mi) => {
+            const v = _summNum(r, k);
+            const w = durs[mi];
+            if (v === null || w === null || w <= 0) return;
+            num += v * w;
+            den += w;
+          });
+          if (den > 0) out[P + "_" + k] = round4(num / den);
+        });
+        if (c.rateFrom && span > 0) {
+          const tot = members.map((r) => _summNum(r, c.rateFrom));
+          if (tot.every((v) => v !== null))
+            out[P + "_" + c.rateName] = round4(
+              tot.reduce((s, v) => s + v, 0) / span,
+            );
+        }
+        return out;
       }
 
       // Mean / SD / min / max for every numeric column, pooled and then per
@@ -13316,6 +14382,24 @@
       // summary and every selection go through it, so they cannot drift.
       // SD uses the population divisor (n), matching what the summary has
       // always reported.
+      // Mean and SD of one column over an arbitrary row subset — the
+      // per-recording lines group by recording, which is not one of the
+      // groupings _summStatsBlock produces. Population divisor (n), matching
+      // it exactly so the two never disagree on the same numbers.
+      function _summMeanSd(rows, key) {
+        const vals = (rows || [])
+          .map((r) => r[key])
+          .filter((v) => typeof v === "number" && isFinite(v));
+        if (!vals.length) return null;
+        const n = vals.length;
+        const mean = vals.reduce((s, v) => s + v, 0) / n;
+        const sd =
+          n > 1
+            ? Math.sqrt(vals.reduce((s, v) => s + (v - mean) ** 2, 0) / n)
+            : 0;
+        return { n, mean, sd };
+      }
+
       function _summStatsBlock(rows, catLabel, individuals, selection) {
         const out = [];
         if (!rows || !rows.length) return out;
@@ -13368,8 +14452,28 @@
           res && res.flt && res.flt.filters.length
             ? ` with ${res.flt.label}`
             : "";
-        const which =
-          res && res.pos && res.pos.label !== "all"
+        const named = res && res.pos && res.pos.label !== "all";
+        // "gaps between trains 1-2, 3-4, 5-6 of each echeme" — the phrasing a
+        // reader would use, so the rule reads the same on screen and on paper.
+        if (lvl.chunk) {
+          // The run size and phase ARE the definition here: "syllables of 2
+          // trains" says what a syllable is, and without it the numbers cannot
+          // be interpreted, let alone reproduced.
+          const k = (res && res.chunkSize) || 2;
+          const off = (res && res.chunkOffset) || 0;
+          const which = named
+            ? `${lvl.unit}s at position ${res.pos.label}`
+            : `all ${lvl.unit}s`;
+          const skip = off
+            ? `, after skipping the first ${off} ${lvl.chunk.of}${off === 1 ? "" : "s"}`
+            : "";
+          return `${which} of each ${lvl.parent}, each one a run of ${k} consecutive ${lvl.chunk.of}s${skip}${where}`;
+        }
+        const which = lvl.gap
+          ? named
+            ? `gaps between ${lvl.gap.of}s ${res.pos.label}`
+            : `all gaps between ${lvl.gap.of}s`
+          : named
             ? `${lvl.unit}s at position ${res.pos.label}`
             : `all ${lvl.unit}s`;
         return `${which} of each ${lvl.parent}${where}`;
@@ -13492,6 +14596,14 @@
           syy += dv * dv;
         }
         if (!(sxx > 0)) return null;
+        // A response that never varies is not a perfect fit, it is no fit at
+        // all: there is nothing for temperature to explain. Reporting r² = 1
+        // here — as this did — put constants such as an analysis setting at
+        // the very top of any "which metrics track temperature" reading, let
+        // them pass every significance gate, and had the report print a
+        // corrected value identical to the observed one, which reads as
+        // though temperature had been accounted for when nothing was.
+        if (!(syy > 0)) return null;
         const slope = sxy / sxx;
         return {
           n,
@@ -13499,7 +14611,7 @@
           tMax,
           slope,
           intercept: mv - slope * mt,
-          r2: syy > 0 ? (sxy * sxy) / (sxx * syy) : 1,
+          r2: (sxy * sxy) / (sxx * syy),
         };
       }
 
