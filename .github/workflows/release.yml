@@ -35,22 +35,49 @@ jobs:
           fi
           echo "Using tag: $tag"
 
+          # The release body comes from RELEASE_NOTES.md, which is rewritten
+          # for each version. Pasting it into the GitHub UI by hand was the one
+          # manual step left in the release, and the one most likely to be
+          # forgotten or done with the previous version's text.
+          notes="See the assets below to download this version."
+          if [ -f RELEASE_NOTES.md ]; then
+            notes="$(cat RELEASE_NOTES.md)"
+
+            # The notes are written before the tag exists, so nothing otherwise
+            # ties the two together — shipping 0.4.0 with 0.3.1's text is a
+            # quiet, entirely plausible mistake. Warn rather than fail: the
+            # release is a draft that a human still has to publish, and the
+            # annotation is right there on the run when they go to do it.
+            version="${tag#v}"
+            if ! grep -qF "$version" RELEASE_NOTES.md; then
+              echo "::warning::RELEASE_NOTES.md does not mention $version — check it describes this release before publishing."
+            fi
+          else
+            echo "::warning::No RELEASE_NOTES.md found; using placeholder body."
+          fi
+
           # Reuse an existing draft for this tag if one is already there, so a
           # re-run does not add a second release alongside the first.
           id=$(gh api "repos/${{ github.repository }}/releases?per_page=100" \
                  --jq ".[] | select(.tag_name == \"$tag\") | .id" | head -1)
 
           if [ -z "$id" ]; then
-            id=$(gh api --method POST "repos/${{ github.repository }}/releases" \
-                   -f tag_name="$tag" \
-                   -f name="Rthoptera $tag" \
-                   -f body="See the assets below to download this version." \
-                   -F draft=true \
-                   -F prerelease=false \
-                   --jq .id)
-            echo "Created release $id"
+            # Built with jq rather than repeated -f flags: the body is
+            # multi-line markdown, and jq is what guarantees the quotes,
+            # newlines and backticks in it survive as a single JSON string.
+            id=$(jq -n \
+                   --arg tag "$tag" \
+                   --arg name "Rthoptera $tag" \
+                   --arg body "$notes" \
+                   '{tag_name:$tag, name:$name, body:$body, draft:true, prerelease:false}' \
+                 | gh api --method POST "repos/${{ github.repository }}/releases" \
+                     --input - --jq .id)
+            echo "Created release $id with notes from RELEASE_NOTES.md"
           else
-            echo "Reusing existing release $id"
+            # Deliberately left alone. A re-run reaching this branch means the
+            # draft already exists, and its body may have been edited by hand
+            # since; overwriting it would throw that away silently.
+            echo "Reusing existing release $id — body left as it is."
           fi
 
           echo "release_id=$id" >> "$GITHUB_OUTPUT"
