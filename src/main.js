@@ -13044,25 +13044,59 @@
               s.specimen_id === "ALL" &&
               s.metric === key,
           );
-        // Observed value first, always. The corrected one follows in brackets
-        // where a fit exists, so a reader can see both and the report can
-        // never quote a corrected number without saying it is corrected.
+        // Observed and corrected values are never interleaved. Square
+        // brackets are the conventional notation for a RANGE in this
+        // literature, so they cannot also mean "the same figure at another
+        // temperature" without making every number ambiguous. Corrected
+        // values are collected per block and stated in their own sentence,
+        // which also makes it plain at a glance how much was corrected —
+        // where a scattering of bracketed figures buried it.
         const adjT = _summAdjTarget();
-        const pm = (s, d) => {
-          if (!s) return null;
-          const base = s.mean.toFixed(d) + " ± " + s.sd.toFixed(d);
-          if (adjT === null || s.adj_mean == null) return base;
+        const pm = (s, d) =>
+          s ? s.mean.toFixed(d) + " ± " + s.sd.toFixed(d) : null;
+        // The corrected figure never travels alone: the slope that produced
+        // it, that slope's standard error, r² and the number of recordings
+        // behind it come too, and a weak fit says so in words. A corrected
+        // number with no evidence attached is worth less than the observed one.
+        const adjOf = (s, d) =>
+          s && adjT !== null && s.adj_mean != null
+            ? s.adj_mean.toFixed(d) + " ± " + s.adj_sd.toFixed(d)
+            : null;
+        // The fit behind a correction, appended after the unit so the value
+        // reads as a measurement first. Slope decimals follow the metric's own
+        // precision, since a slope is in the metric's units per °C.
+        const adjFit = (s, d) => {
+          if (!s || s.adj_slope == null) return "";
+          const se =
+            s.adj_slope_se != null ? " ± " + s.adj_slope_se.toFixed(d) : "";
           return (
-            base +
-            " [" +
-            s.adj_mean.toFixed(d) +
-            " ± " +
-            s.adj_sd.toFixed(d) +
-            " at " +
-            adjT +
-            " °C]"
+            " (slope " +
+            s.adj_slope.toFixed(d) +
+            se +
+            " per °C, r² = " +
+            s.adj_r2.toFixed(2) +
+            ", n = " +
+            s.adj_fit_n +
+            (s.adj_supported === "no" ? ", not significant at p < 0.05" : "") +
+            ")"
           );
         };
+        // Builds the observed phrase and, when the metric was corrected, the
+        // matching corrected phrase — in lockstep, so the two sentences read
+        // the same way and cannot drift apart.
+        //
+        // withFit is off for the per-specimen lines: the slope is fitted
+        // across recordings and is the same for every animal, so repeating it
+        // on each line adds length without adding information.
+        const phraseInto =
+          (obs, adj, withFit = true) =>
+          (s, lead, unit, d) => {
+            if (!s) return;
+            const tail = unit ? " " + unit : "";
+            obs.push(lead + " " + pm(s, d) + tail);
+            const a = adjOf(s, d);
+            if (a) adj.push(lead + " " + a + tail + (withFit ? adjFit(s, d) : ""));
+          };
 
         // Stated before any number is quoted. A corrected value that appears
         // without its target temperature, its method and the range it was
@@ -13089,18 +13123,43 @@
           } else {
             const lo = temps[0];
             const hi = temps[temps.length - 1];
+            // The number of RECORDINGS carrying a temperature is what the fit
+            // rests on, and at small n the significance test is severe: with
+            // four recordings a metric needs r² ≥ 0.90 to clear p < 0.05.
+            // Stating the threshold is what stops a reader concluding the
+            // song has no thermal response, when the truth is that four
+            // temperatures cannot demonstrate one.
+            const recsAll = new Set();
+            const recsTemp = new Set();
+            SUMM_CATS.forEach((cat) =>
+              (merged[cat] || []).forEach((r) => {
+                const k = _summRecKey(r);
+                recsAll.add(k);
+                if (isFinite(parseFloat(r.temp_c))) recsTemp.add(k);
+              }),
+            );
+            const nT = recsTemp.size;
             paras.push(
-              "Values are given as observed, followed in brackets by the same " +
-                "measurement expressed at " +
+              "Measurements are reported as observed. Where a metric could be " +
+                "fitted against temperature, the same measurement expressed " +
+                "at " +
                 adjT +
-                " °C. The correction fits each metric against recording " +
-                "temperature by least squares, one observation per recording, " +
-                "and shifts every value along that line. Only metrics whose " +
-                "thermal response is statistically supported (r² ≥ 0.25 and " +
-                "significant at p < 0.05) are corrected; the rest carry no " +
-                "bracketed figure, and the workbook's Temp_Regression sheet " +
-                "gives the slope and r² behind each one. Recordings were made " +
-                "between " +
+                " °C is given in a separate sentence that names the " +
+                "temperature, together with the fitted slope, its standard " +
+                "error, r² and the number of recordings behind it. The fit is " +
+                "least squares against recording temperature, one observation " +
+                "per recording; " +
+                nT +
+                " of " +
+                recsAll.size +
+                " recordings carry a temperature. A fit is reported whether " +
+                "or not it reaches significance, so that a weak thermal " +
+                "response is visible and can be judged rather than silently " +
+                "dropped — but at this sample size a response needs r² ≥ " +
+                _summMinR2ForN(nT).toFixed(2) +
+                " to clear p < 0.05, and any correction below that is marked " +
+                "as not significant. Treat those as indicative only. " +
+                "Recordings were made between " +
                 lo +
                 " and " +
                 hi +
@@ -13108,12 +13167,11 @@
                 (adjT < lo || adjT > hi
                   ? ", so " +
                     adjT +
-                    " °C lies outside the range actually observed and the " +
-                    "corrected values are extrapolations"
+                    " °C lies outside the range observed and the corrected " +
+                    "values are extrapolations"
                   : "") +
-                ". Only observations carrying a temperature contribute to the " +
-                "corrected figures, so their N can be smaller than the " +
-                "observed N.",
+                ". The workbook's Temp_Regression sheet gives the full fit for " +
+                "every metric.",
             );
           }
         }
@@ -13134,21 +13192,25 @@
         const trainPf = pfStat("trains");
         const trainBw = statFor("trains", "bw_20db_khz");
         const bits = [];
-        if (rate)
-          bits.push("a mean peak rate of " + pm(rate, 2) + " peaks/s");
-        if (trainDur)
-          bits.push("a mean train duration of " + pm(trainDur, 1) + " ms");
-        if (meanAmp)
-          bits.push("a mean amplitude of " + pm(meanAmp, 3) + " (normalized)");
-        if (trainGap)
-          bits.push("a mean gap between trains of " + pm(trainGap, 1) + " ms");
-        if (trainPf)
-          bits.push("a mean peak frequency of " + pm(trainPf, 3) + " kHz");
-        if (trainBw)
-          bits.push("a mean -20 dB bandwidth of " + pm(trainBw, 3) + " kHz");
+        const abits = [];
+        const addTrain = phraseInto(bits, abits);
+        addTrain(rate, "a mean peak rate of", "peaks/s", 2);
+        addTrain(trainDur, "a mean train duration of", "ms", 1);
+        addTrain(meanAmp, "a mean amplitude of", "(normalized)", 3);
+        addTrain(trainGap, "a mean gap between trains of", "ms", 1);
+        addTrain(trainPf, "a mean peak frequency of", "kHz", 3);
+        addTrain(trainBw, "a mean -20 dB bandwidth of", "kHz", 3);
         if (bits.length)
           paras.push(
             "Across all trains, recordings showed " + bits.join("; ") + ".",
+          );
+        if (abits.length)
+          paras.push(
+            "Expressed at " +
+              adjT +
+              " °C, trains showed " +
+              abits.join("; ") +
+              ".",
           );
 
         if (merged.motifs.length) {
@@ -13164,32 +13226,32 @@
           const temExc = statFor("motifs", "tem_exc_mean");
           const dynExc = statFor("motifs", "dyn_exc_mean");
           const mbits = [];
-          if (mDur) mbits.push("a mean duration of " + pm(mDur, 2) + " s");
-          if (mGap)
-            mbits.push(
-              "a mean gap between motifs of " + pm(mGap, 2) + " s",
-            );
-          if (duty) mbits.push("a mean duty cycle of " + pm(duty, 1) + " %");
-          if (pciSyl)
-            mbits.push(
-              "a mean syllable-based Pattern Complexity Index (PCI-syl) of " +
-                pm(pciSyl, 3),
-            );
-          if (pciAgn)
-            mbits.push(
-              "a mean behaviour-agnostic Pattern Complexity Index (PCI-agn) of " +
-                pm(pciAgn, 3),
-            );
-          if (temExc)
-            mbits.push("a mean temporal excursion of " + pm(temExc, 2));
-          if (dynExc)
-            mbits.push("a mean dynamic excursion of " + pm(dynExc, 2));
-          const mPf = pfStat("motifs");
-          const mBw = statFor("motifs", "bw_20db_khz");
-          if (mPf)
-            mbits.push("a mean peak frequency of " + pm(mPf, 3) + " kHz");
-          if (mBw)
-            mbits.push("a mean -20 dB bandwidth of " + pm(mBw, 3) + " kHz");
+          const mabits = [];
+          const addMotif = phraseInto(mbits, mabits);
+          addMotif(mDur, "a mean duration of", "s", 2);
+          addMotif(mGap, "a mean gap between motifs of", "s", 2);
+          addMotif(duty, "a mean duty cycle of", "%", 1);
+          addMotif(
+            pciSyl,
+            "a mean syllable-based Pattern Complexity Index (PCI-syl) of",
+            "",
+            3,
+          );
+          addMotif(
+            pciAgn,
+            "a mean behaviour-agnostic Pattern Complexity Index (PCI-agn) of",
+            "",
+            3,
+          );
+          addMotif(temExc, "a mean temporal excursion of", "", 2);
+          addMotif(dynExc, "a mean dynamic excursion of", "", 2);
+          addMotif(pfStat("motifs"), "a mean peak frequency of", "kHz", 3);
+          addMotif(
+            statFor("motifs", "bw_20db_khz"),
+            "a mean -20 dB bandwidth of",
+            "kHz",
+            3,
+          );
           if (mbits.length)
             paras.push(
               "Across all motifs (n=" +
@@ -13198,24 +13260,42 @@
                 mbits.join("; ") +
                 ".",
             );
+          if (mabits.length)
+            paras.push(
+              "Expressed at " +
+                adjT +
+                " °C, motifs showed " +
+                mabits.join("; ") +
+                ".",
+            );
         }
 
         if (merged.spectral.length) {
-          const pf = statFor("spectral", "peak_freq_khz");
-          const bw20 = statFor("spectral", "bw_20db_khz");
-          const cent = statFor("spectral", "spec_centroid_khz");
           const sbits = [];
-          if (pf) sbits.push("a peak frequency of " + pm(pf, 3) + " kHz");
-          if (bw20)
-            sbits.push("a -20 dB bandwidth of " + pm(bw20, 3) + " kHz");
-          if (cent)
-            sbits.push("a spectral centroid of " + pm(cent, 3) + " kHz");
+          const sabits = [];
+          const addSpec = phraseInto(sbits, sabits);
+          addSpec(statFor("spectral", "peak_freq_khz"), "a peak frequency of", "kHz", 3);
+          addSpec(statFor("spectral", "bw_20db_khz"), "a -20 dB bandwidth of", "kHz", 3);
+          addSpec(
+            statFor("spectral", "spec_centroid_khz"),
+            "a spectral centroid of",
+            "kHz",
+            3,
+          );
           if (sbits.length)
             paras.push(
               "Pooled spectral measurements (n=" +
                 merged.spectral.length +
                 ") had " +
                 sbits.join("; ") +
+                ".",
+            );
+          if (sabits.length)
+            paras.push(
+              "Expressed at " +
+                adjT +
+                " °C, those measurements had " +
+                sabits.join("; ") +
                 ".",
             );
         }
@@ -13232,11 +13312,16 @@
                   s.specimen_id === ind &&
                   s.metric === metric,
               );
-            const s = indStat("peak_rate_pps");
-            const pf = indStat("peak_freq_khz") || indStat("peak_freq_pmean_khz");
             const ibits = [];
-            if (s) ibits.push("mean peak rate " + pm(s, 2) + " peaks/s");
-            if (pf) ibits.push("mean peak frequency " + pm(pf, 3) + " kHz");
+            const iabits = [];
+            const addInd = phraseInto(ibits, iabits, false);
+            addInd(indStat("peak_rate_pps"), "mean peak rate", "peaks/s", 2);
+            addInd(
+              indStat("peak_freq_khz") || indStat("peak_freq_pmean_khz"),
+              "mean peak frequency",
+              "kHz",
+              3,
+            );
             if (ibits.length)
               paras.push(
                 ind +
@@ -13244,7 +13329,10 @@
                   indRows.length +
                   " trains, " +
                   ibits.join(", ") +
-                  ".",
+                  "." +
+                  (iabits.length
+                    ? " At " + adjT + " °C: " + iabits.join(", ") + "."
+                    : ""),
               );
           });
         }
@@ -13378,10 +13466,11 @@
                       ["n_motifs", "a mean of", "motifs", 1],
                     ];
           const bits = [];
-          wanted.forEach(([key, lead, unit, d]) => {
-            const s = selStat(key);
-            if (s) bits.push(lead + " " + pm(s, d) + " " + unit);
-          });
+          const abits = [];
+          const addSel = phraseInto(bits, abits);
+          wanted.forEach(([key, lead, unit, d]) =>
+            addSel(selStat(key), lead, unit, d),
+          );
           paras.push(
             '"' +
               res.sel.name +
@@ -13405,7 +13494,10 @@
               (res.nGroups === 1 ? "" : "s") +
               ")" +
               (bits.length ? ", showing " + bits.join("; ") : "") +
-              ".",
+              "." +
+              (abits.length
+                ? " Expressed at " + adjT + " °C: " + abits.join("; ") + "."
+                : ""),
           );
         });
 
@@ -13496,7 +13588,7 @@
       // Metrics with no usable fit are simply absent from the copies, so they
       // report an observed value and no adjusted one instead of an
       // unadjusted number dressed up as corrected.
-      function _summAdjustRows(rows, targetT) {
+      function _summAdjustRows(rows, targetT, fitsOut) {
         if (!rows || !rows.length) return [];
         const keys = new Set();
         rows.forEach((r) =>
@@ -13509,16 +13601,19 @@
           const fit = _summFitTemp(
             _summByRecording(rows, k).map(({ t, v }) => ({ t, v })),
           );
-          // A line can be drawn through almost anything; that does not make it
-          // a thermal response. Without this gate a flat metric such as
-          // bandwidth acquires a zero slope, and the report prints
-          // "2.600 [2.600 at 25 °C]" — a corrected figure identical to the
-          // observed one, which reads as though temperature had been
-          // accounted for when nothing was. Same significance test the song
-          // thermometer uses, for the same reason.
-          if (fit && _tempCalibUsable(fit.r2, fit.n)) fits.set(k, fit);
+          // Every fit is kept, weak ones included, and each is reported with
+          // its slope, that slope's standard error, r² and n. Discarding a
+          // metric that failed a significance test left the thermal bias in
+          // the pooled mean and said nothing about why — which is worse than
+          // a correction the reader can see the evidence for and discount.
+          //
+          // The degenerate cases are still refused inside _summFitTemp: fewer
+          // than three recordings, no spread in temperature, no variance in
+          // the response. Those are not weak fits, they are absent ones.
+          if (fit) fits.set(k, fit);
         });
         if (!fits.size) return [];
+        if (fitsOut) fits.forEach((f, k) => fitsOut.set(k, f));
         const out = [];
         rows.forEach((r) => {
           const t = parseFloat(r.temp_c);
@@ -13548,7 +13643,8 @@
         selection,
         targetT,
       ) {
-        const adjRows = _summAdjustRows(rows, targetT);
+        const fits = new Map();
+        const adjRows = _summAdjustRows(rows, targetT, fits);
         if (!adjRows.length) return;
         const byKey = new Map();
         _summStatsBlock(adjRows, catLabel, individuals, selection).forEach((a) =>
@@ -13561,6 +13657,16 @@
           s.adj_mean = a.mean;
           s.adj_sd = a.sd;
           s.adj_n = a.n;
+          // The evidence behind the correction travels with the number, so a
+          // reader can weigh it instead of trusting it.
+          const f = fits.get(s.metric);
+          if (f) {
+            s.adj_slope = round4(f.slope);
+            s.adj_slope_se = isFinite(f.seSlope) ? round4(f.seSlope) : null;
+            s.adj_r2 = round4(f.r2);
+            s.adj_fit_n = f.n;
+            s.adj_supported = _tempCalibUsable(f.r2, f.n) ? "yes" : "no";
+          }
         });
       }
 
@@ -14605,6 +14711,17 @@
         // though temperature had been accounted for when nothing was.
         if (!(syy > 0)) return null;
         const slope = sxy / sxx;
+        // Residual spread about the line, and from it the slope's own standard
+        // error. Carrying these is what lets a weak fit be REPORTED with its
+        // uncertainty instead of being accepted or thrown away — a coin-flip
+        // decision that discards a real if noisy response, and hides how good
+        // the surviving ones actually are.
+        //
+        // ssRes = syy - slope*sxy is the algebraic identity for Σ(y - ŷ)²;
+        // clamped at 0 because floating point can take it slightly negative
+        // on a near-perfect fit.
+        const ssRes = Math.max(0, syy - slope * sxy);
+        const se = n > 2 ? Math.sqrt(ssRes / (n - 2)) : NaN;
         return {
           n,
           tMin,
@@ -14612,6 +14729,11 @@
           slope,
           intercept: mv - slope * mt,
           r2: (sxy * sxy) / (sxx * syy),
+          se, // residual standard error of the fit
+          seSlope: n > 2 ? se / Math.sqrt(sxx) : NaN,
+          // Kept for prediction intervals: the predictor's mean and spread.
+          mx: mt,
+          sxx,
         };
       }
 
@@ -14727,6 +14849,52 @@
       // a thermometer worth trusting.
       const TEMP_CALIB_MIN_R2 = 0.25;
 
+      // Standard error of predicting a single new observation at x0 from this
+      // fit. Three terms under the root: the residual scatter itself, the
+      // uncertainty in the line's height, and the penalty for predicting far
+      // from the centre of the data — which is what makes an extrapolation
+      // report a wide interval rather than a confident wrong answer.
+      function _summPredSE(fit, x0) {
+        if (!fit || !isFinite(fit.se) || !(fit.sxx > 0)) return NaN;
+        return (
+          fit.se *
+          Math.sqrt(1 + 1 / fit.n + ((x0 - fit.mx) * (x0 - fit.mx)) / fit.sxx)
+        );
+      }
+
+      // Two-tailed t at 95% by degrees of freedom, stepping to the nearest
+      // SMALLER df so a borderline case widens the interval rather than
+      // narrowing it. Falls back to the normal approximation past the table.
+      const T_CRIT_975 = [
+        [1, 12.706], [2, 4.303], [3, 3.182], [4, 2.776], [5, 2.571],
+        [6, 2.447], [7, 2.365], [8, 2.306], [9, 2.262], [10, 2.228],
+        [12, 2.179], [15, 2.131], [20, 2.086], [25, 2.06], [30, 2.042],
+        [40, 2.021], [60, 2.0], [120, 1.98],
+      ];
+      function _tCrit975(df) {
+        if (df < 1) return NaN;
+        let t = T_CRIT_975[0][1];
+        for (const [d, v] of T_CRIT_975) {
+          if (df >= d) t = v;
+          else break;
+        }
+        return df > 120 ? 1.96 : t;
+      }
+
+      // The r² a fit must reach at this sample size to pass _tempCalibUsable —
+      // the significance threshold expressed as the number the report and the
+      // Temp_Regression sheet actually show, so a reader can see why a metric
+      // was left uncorrected instead of guessing.
+      function _summMinR2ForN(n) {
+        if (n < 3) return 1;
+        let crit = PEARSON_CRIT_05[0][1];
+        for (const [size, c] of PEARSON_CRIT_05) {
+          if (n >= size) crit = c;
+          else break;
+        }
+        return Math.max(TEMP_CALIB_MIN_R2, crit * crit);
+      }
+
       function _tempCalibUsable(r2, n) {
         if (!(r2 >= TEMP_CALIB_MIN_R2) || n < 3) return false;
         let crit = PEARSON_CRIT_05[0][1];
@@ -14762,11 +14930,21 @@
             const byRec = _summByRecording(rows, k);
             const pairs = byRec.map(({ t, v }) => ({ t: v, v: t }));
             const fit = _summFitTemp(pairs);
-            if (fit && _tempCalibUsable(fit.r2, fit.n))
+            // Every calibration is kept. A hard significance gate here means
+            // recordings with no temperature get NO estimate at all rather
+            // than a rough one — and a rough estimate carrying its own error
+            // bar is more useful than a blank, provided the error bar is
+            // honest. Inverse-variance weighting below does the job the gate
+            // was doing, continuously: a metric that predicts temperature
+            // poorly has a wide prediction interval and is weighted towards
+            // nothing, instead of being included or excluded by a threshold
+            // it happens to sit either side of.
+            if (fit)
               calib.push({
                 cat,
                 metric: k,
                 fit,
+                supported: _tempCalibUsable(fit.r2, fit.n),
                 nRowsTotal: byRec.reduce((s, r) => s + r.nRows, 0),
               });
           });
@@ -14796,7 +14974,7 @@
         const detail = [];
         groups.forEach((g) => {
           const votes = [];
-          calib.forEach(({ cat, metric, fit, nRowsTotal }) => {
+          calib.forEach(({ cat, metric, fit, nRowsTotal, supported }) => {
             const rows = g.byCat[cat];
             if (!rows || !rows.length) return;
             const vals = rows
@@ -14808,7 +14986,14 @@
             // fit.tMin/tMax are the METRIC values seen during calibration,
             // since the metric is the predictor here.
             const outside = meanVal < fit.tMin || meanVal > fit.tMax;
-            votes.push({ est, w: fit.r2, outside });
+            // Weight by 1/SE², the inverse of this line's prediction variance
+            // at this recording's value. A vague metric contributes in
+            // proportion to how little it knows, and the extrapolation
+            // penalty inside _summPredSE means a vote cast far outside the
+            // calibration range quietly counts for less as well.
+            const seP = _summPredSE(fit, meanVal);
+            const w = isFinite(seP) && seP > 0 ? 1 / (seP * seP) : 0;
+            votes.push({ est, w, seP, outside, supported, n: fit.n });
             detail.push({
               source_file: g.key,
               specimen_id: g.specimen_id,
@@ -14826,32 +15011,58 @@
               // extrapolation flag compares like with like.
               calib_n_recordings: fit.n,
               calib_n_rows: nRowsTotal,
+              // What this single metric's estimate is worth on its own.
+              se_c: isFinite(seP) ? round4(seP) : null,
+              significant: supported ? "yes" : "no",
               extrapolated: outside ? "YES" : "",
             });
           });
-          if (!votes.length) return;
-          const wsum = votes.reduce((s, v) => s + v.w, 0) || votes.length;
-          const est =
-            votes.reduce((s, v) => s + v.est * v.w, 0) / wsum;
-          const ests = votes.map((v) => v.est);
+          const usable = votes.filter((v) => v.w > 0);
+          if (!usable.length) return;
+          const wsum = usable.reduce((s, v) => s + v.w, 0);
+          const est = usable.reduce((s, v) => s + v.est * v.w, 0) / wsum;
+          const ests = usable.map((v) => v.est);
+          // Two different uncertainties, and both are worth having.
+          //
+          // se_combined is the inverse-variance standard error: how precise
+          // the pooled estimate is, given how noisy each calibration line is.
+          // It shrinks as more metrics agree.
+          //
+          // sd_across_metrics is the plain disagreement between the metrics.
+          // A small combined SE next to a large spread is the warning sign —
+          // it means the lines are individually confident and mutually
+          // contradictory, which no single number can express.
+          const seCombined = Math.sqrt(1 / wsum);
           const sd =
             ests.length > 1
               ? Math.sqrt(
                   ests.reduce((s, v) => s + (v - est) ** 2, 0) / ests.length,
                 )
               : 0;
+          // Degrees of freedom from the metric with the most calibration
+          // points; conservative, since the votes are not independent — they
+          // are different measurements of the same recordings.
+          const df = Math.max(
+            1,
+            Math.max(...usable.map((v) => v.n || 0), 3) - 2,
+          );
+          const half = _tCrit975(df) * seCombined;
           estimates.push({
             source_file: g.key,
             specimen_id: g.specimen_id,
             species: g.species,
-            metrics_used: votes.length,
+            metrics_used: usable.length,
+            metrics_significant: usable.filter((v) => v.supported).length,
             temp_estimate_c: round4(est),
+            se_c: round4(seCombined),
+            ci95_low_c: round4(est - half),
+            ci95_high_c: round4(est + half),
             sd_across_metrics_c: round4(sd),
             lowest_metric_estimate_c: round4(Math.min(...ests)),
             highest_metric_estimate_c: round4(Math.max(...ests)),
             // Any vote drawn from outside its calibration range makes the
             // whole estimate a guess beyond the evidence.
-            extrapolated: votes.some((v) => v.outside) ? "YES" : "",
+            extrapolated: usable.some((v) => v.outside) ? "YES" : "",
           });
         });
         return { estimates, detail, nCalib: calib.length };

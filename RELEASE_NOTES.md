@@ -1,86 +1,109 @@
-# Rthoptera Desk 0.3.1
+# Rthoptera Desk 0.4.0
 
-A correctness fix to the temperature features introduced in 0.3.0. If you
-used the temperature regression or the estimation of missing temperatures in
-0.3.0, those results are worth recomputing.
+A data-correctness fix in the Excel reader, a rethink of how temperature
+evidence is reported, and new ways to summarize song structure.
 
-## Temperature fits now use one observation per recording
+**If you produced any merged summary with 0.3.1 or earlier, recompute it.**
+The reader silently dropped data, and the values it produced are plausible
+rather than obviously wrong — which is the kind that reaches a manuscript.
 
-Temperature is a property of the **recording** — every train in a file
-carries that file's single reading. The fits were built from raw rows, which
-counted one measurement many times over: fifty trains from one recording
-were treated as fifty independent observations rather than one.
+## Empty cells silently blanked the next column
 
-This skewed the two acceptance gates in opposite directions at once.
+Empty cells are written self-closing (`<c r="B2"/>`). The cell parser matched
+attributes greedily, so it swallowed the trailing slash, read the cell as an
+*opening* tag, and consumed the following cell whole.
 
-- **Sample size was inflated**, so the significance test passed almost
-  anything. Ten recordings of fifty trains were judged against the critical
-  correlation for n = 500.
-- **r² was deflated**, because the denominator carried the train-to-train
-  scatter within each recording that temperature cannot explain. Genuine
-  thermal responses failed the r² ≥ 0.25 floor and were discarded.
+Every column immediately after an empty one was read as blank. In practice:
 
-Both fits now collapse each recording to one mean per metric before fitting.
-In testing against synthetic data with a known 0.5 °C⁻¹ response:
+- `specimen_id` was blank in **every row** of any export where no temperature
+  was entered, because `temp_c` sits immediately before it. Summarize then
+  fell back to the file name for grouping, so **individual counts and every
+  per-specimen statistic were wrong** in those merges.
+- `train_period_ms` and `peak_freq_khz` were lost on the last train of each
+  motif, where `train_gap_ms` is null by design.
+- Several means in the per-file Summary sheet were lost the same way.
 
-| Case | Before | After |
-|---|---|---|
-| Real response, 10 recordings × 50 trains | rejected (r² = 0.22) | accepted (r² = 0.94) |
-| Only two recordings | **accepted** with n = 100 | correctly refused |
-| Pure noise, no response | rejected | rejected |
+Measured on one real 998-row workbook: `specimen_id` blank in all 998 Peaks
+rows and all 52 Trains rows, plus five Summary means and a real
+`peak_freq_khz` value.
 
-The slope itself is unchanged when recordings hold similar numbers of rows;
-what was wrong was the assessment of the evidence. Where row counts differ
-the slope changes too, since a 200-train recording previously carried forty
-times the weight of a 5-train one.
+Hardened alongside it: self-closing `<row/>` elements, empty shared strings
+(`<si/>`, which shifted every later string index and could rewrite an entire
+sheet as someone else's text), header whitespace and byte-order marks, and
+duplicate header columns where a blank copy erased a populated one.
 
-Two consequences worth noting:
+## A constant metric scored a perfect temperature fit
 
-- Fitting now genuinely requires **three recordings** with temperatures. It
-  previously required three *rows*, so a line through two temperatures could
-  be accepted.
-- The `extrapolated` flag now works. Calibration used row-level extremes
-  while prediction fed the line a per-recording mean, so the range check
-  compared a mean against a spread it could never reach and almost never
-  fired. Both sides now use the same units, which also means
-  `calib_value_min` / `calib_value_max` are no longer comparable to the
-  values 0.3.0 wrote.
+r² was reported as **1** when a metric had zero variance. A constant is the
+one thing that certainly does not track temperature, yet it outranked every
+real thermal response and passed every acceptance test. Zero-variance
+responses are now refused outright, as are fits with fewer than three
+recordings or no spread in temperature.
 
-## Position columns excluded from summary statistics
+## Temperature: evidence is reported, not filtered
 
-`peak_time`, `train_start`, `train_end`, `motif_start` and `motif_end` record
-*where* a structure sits in the recording, not what it sounds like. They were
-being averaged into the summary statistics and offered to the temperature
-fits as if they were measurements.
+Previously a metric had to clear r² ≥ 0.25 *and* p < 0.05 to be used at all.
+Below that it was silently discarded — so a recording with no temperature got
+no estimate rather than a rough one, and a pooled mean kept its thermal bias
+with nothing said about why. At small sample sizes the bar is severe: with
+four recordings a response must reach r² ≥ 0.90 to clear p < 0.05.
 
-Their mean says only when the recorder happened to be started: roll ten
-seconds earlier and every one of them shifts while the song is identical. A
-lead-in time that drifts across a warming afternoon can even correlate with
-temperature without being caused by it, which let it qualify as a
-thermometer for estimating missing temperatures.
+Fits are now applied wherever one exists, and each is reported with its own
+uncertainty:
 
-They remain in the Peak, Train and Motif tables, where they are needed for
-locating a row back in the audio and for rebuilding annotations from a saved
-table on import.
+- **Corrected values** carry the fitted slope, that slope's standard error, r²
+  and the number of recordings behind it. A correction that does not reach
+  significance says so in place, and is marked as indicative only.
+- **Estimated temperatures** for recordings with no reading now combine the
+  metrics by inverse-variance weighting rather than by a threshold. A metric
+  that predicts temperature poorly has a wide prediction interval and is
+  weighted towards nothing, instead of being admitted or rejected by a cutoff
+  it happens to sit either side of. The same interval carries an
+  extrapolation penalty, so a vote cast outside the calibration range counts
+  for less automatically.
+- Estimates report a standard error and a 95% confidence interval beside the
+  value, plus how many metrics voted and how many of those were individually
+  significant.
 
-## Changed columns
+Two uncertainties are reported for each estimate, because they answer
+different questions: the inverse-variance standard error says how precise the
+pooled estimate is, while the spread across metrics says how much the metrics
+disagree. A small standard error beside a wide spread is the warning case.
 
-| Sheet | Was | Now |
-|---|---|---|
-| `Temp_Regression` | `n` | `n_recordings`, `n_rows_total` |
-| `Temp_Estimated_Detail` | `calib_n` | `calib_n_recordings`, `calib_n_rows` |
+## Gaps and syllables can be summarized directly
 
-The old `n` counted rows, which overstated the evidence behind a fit. The
-pair now reports the honest sample size and how much audio stands behind it.
+Two new families of structure selection:
 
-## Other fixes
+- **Gaps between structures** — the silences as units in their own right,
+  named after the pair they separate. `1-2, 3-4, 5-6` (or simply `odd`) on
+  "Gaps between trains within each echeme" gives the intra-syllable gaps;
+  `even` gives the inter-syllable ones. Selecting peak intervals this way also
+  excludes the inter-train jump that `peak_period_ms` carries on each train's
+  last peak, which previously inflated any mean taken over that column.
+- **Runs of structures (syllables)** — a fixed run of consecutive structures
+  measured as one sound, for disyllabic and trisyllabic songs. Duration is the
+  **span**, first onset to last offset, so it includes the silence between the
+  strokes. Sound, silence and duty cycle are reported separately. Incomplete
+  runs are reported as left over rather than counted as short syllables.
 
-- The LaTeX and Word convenience columns addressed their mean/sd/min/max by
-  spreadsheet column letter, so adding any column to their left would have
-  silently repointed them one column over. They now resolve the column from
-  the field name when the sheet is written.
-- Release builds no longer split their installers across two GitHub releases.
-  Each of the four platform jobs was creating the release independently, and
-  two of them racing produced two release objects for the same tag — which is
-  why v0.3.0 initially published without its Windows and Apple Silicon
-  builds. The release is now created once and all four jobs upload into it.
+Only exact or explicitly weighted aggregations are carried up to a syllable:
+counts and excursions are summed, frequencies are averaged weighted by stroke
+duration, and extremes are taken as extremes. Columns with no defensible
+aggregation are omitted rather than averaged into a number that reads like a
+measurement.
+
+## Text report
+
+- Peak frequency and -20 dB bandwidth at train and motif level.
+- One line per recording, with its temperature, train count, mean peak rate
+  and mean peak frequency. Temperature is a property of the recording, so it
+  is stated there rather than on the per-specimen lines.
+- Corrected values appear in their own sentence naming the target temperature,
+  never interleaved with the observed ones. Square brackets are left free for
+  range notation.
+- The temperature range is stated up front whether or not the correction is
+  in use.
+
+The summary table gains matching N / Mean / SD columns at the target
+temperature, and the temperature controls now update the view immediately
+instead of only at export time.
