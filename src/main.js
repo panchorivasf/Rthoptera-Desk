@@ -1848,12 +1848,13 @@
         for (const id of audioLibBatchSelected) if (!liveIds.has(id)) audioLibBatchSelected.delete(id);
         updateBatchEditStatus();
 
-        // Other panes (Osc. Stack/Zoom, Habitus) each keep their own
+        // Other panes (Osc. Stack/Zoom, Auto-coded Oscillogram, Habitus) keep their
         // "pick from Loaded Audio" checklist in sync with this one library
         // — refresh them here so a fresh import/removal shows up everywhere
         // without each pane re-polling.
         if (typeof oscRenderLibPicker === "function") oscRenderLibPicker();
         if (typeof ozRenderLibPicker === "function") ozRenderLibPicker();
+        if (typeof ceRenderLibPicker === "function") ceRenderLibPicker();
         if (typeof habRenderLibPicker === "function") habRenderLibPicker();
       }
 
@@ -6403,7 +6404,7 @@
         if (k) k.style.display = name === "peaks" ? "flex" : "none";
         if (plotBar) plotBar.style.display = name === "plotting" ? "flex" : "none";
         if (sm) sm.style.display = name === "summarize" ? "flex" : "none";
-        ["plot", "oscstack", "osczoom", "habitus"].forEach((n) => {
+        ["plot", "oscstack", "osczoom", "cetpe", "habitus"].forEach((n) => {
           const v = $("mainview-" + n);
           if (v) v.style.display = name === "plotting" && n === plotActiveSubtab ? "flex" : "none";
         });
@@ -6492,7 +6493,7 @@
         if (plotBar) plotBar.style.display = "none";
         if (sb) sb.style.display = "none";
         if (sm) sm.style.display = "none";
-        ["plot", "oscstack", "osczoom", "habitus"].forEach((n) => {
+        ["plot", "oscstack", "osczoom", "cetpe", "habitus"].forEach((n) => {
           const v = $("mainview-" + n);
           if (v) v.style.display = "none";
         });
@@ -6501,7 +6502,7 @@
 
       function switchPlotSubtab(name, el) {
         plotActiveSubtab = name;
-        ["plot", "oscstack", "osczoom", "habitus"].forEach((n) => {
+        ["plot", "oscstack", "osczoom", "cetpe", "habitus"].forEach((n) => {
           const t = $("plotsubtab-" + n);
           if (t) t.classList.toggle("active", n === name);
           const v = $("mainview-" + n);
@@ -6511,6 +6512,7 @@
         // catch it up here too, in case audio was imported on another tab.
         if (name === "oscstack" && typeof oscRenderLibPicker === "function") oscRenderLibPicker();
         if (name === "osczoom" && typeof ozRenderLibPicker === "function") ozRenderLibPicker();
+        if (name === "cetpe" && typeof ceRenderLibPicker === "function") ceRenderLibPicker();
         if (name === "habitus" && typeof habRenderLibPicker === "function") habRenderLibPicker();
       }
 
