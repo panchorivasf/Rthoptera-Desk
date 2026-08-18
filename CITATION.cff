@@ -1,0 +1,41 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "Rthoptera Desk"
+abstract: >-
+  Cross-platform desktop application for insect bioacoustics analysis:
+  spectral and temporal measurement of insect calls, annotation of motifs
+  with per-species frequency bands, and publication-quality oscillogram
+  and spectrogram figures. Desktop counterpart to the Rthoptera R package.
+authors:
+  - family-names: Rivas
+    given-names: Francisco
+    orcid: "https://orcid.org/0000-0002-1256-2225"
+version: "0.5.1"
+date-released: "2026-08-18"
+url: "https://github.com/panchorivasf/Rthoptera-Desk"
+repository-code: "https://github.com/panchorivasf/Rthoptera-Desk"
+license: PolyForm-Noncommercial-1.0.0
+keywords:
+  - bioacoustics
+  - entomology
+  - Orthoptera
+  - acoustic analysis
+  - spectrogram
+  - animal communication
+references:
+  # The Auto-coded Oscillogram implements this method; cite it alongside
+  # Rthoptera Desk in any work that uses that module.
+  - type: article
+    title: >-
+      Colour Enhanced Time/Pressure Envelope (CETPE), a novel on-screen
+      rendering of digital sound
+    authors:
+      - family-names: Brizio
+        given-names: C.
+    year: 2023
+    journal: "Rivista Italiana di Acustica"
+    volume: 48
+    issue: 2
+    start: 63
+    end: 71

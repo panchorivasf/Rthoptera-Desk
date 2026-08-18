@@ -1,8 +1,9 @@
 [package]
 name = "rthoptera"
 version = "0.5.1"
-description = "A Tauri App"
-authors = ["you"]
+description = "Desktop application for insect bioacoustics analysis"
+authors = ["Francisco Rivas"]
+license = "PolyForm-Noncommercial-1.0.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
