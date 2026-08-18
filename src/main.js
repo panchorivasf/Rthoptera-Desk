@@ -1278,6 +1278,7 @@
         // Snapshots hold times on the pre-edit timeline — restoring them onto
         // the edited audio would put annotations over the wrong sound.
         if (typeof annotResetUndo === "function") annotResetUndo();
+        if (typeof anInvalidate === "function") anInvalidate();
         if (typeof refreshAnnotList === "function") refreshAnnotList();
         const sx = $("btnSaveSpectralExcel");
         if (sx) sx.disabled = true;
@@ -1302,6 +1303,7 @@
         // selection goes for the same reason — after a cut it would point at
         // a stretch the user never selected.
         if (typeof annotResetUndo === "function") annotResetUndo();
+        if (typeof anInvalidate === "function") anInvalidate();
         ppSel = null;
         if (typeof updatePpSelReadout === "function") updatePpSelReadout();
         // ── Annotations ──────────────────────────────────────────────────
@@ -1560,6 +1562,7 @@
         // Same reasoning as pkResetUndo below: these snapshots describe the
         // recording just left, not the one coming in.
         annotResetUndo();
+        if (typeof anInvalidate === "function") anInvalidate();
         detections = [];
         clearMeasurements();
         spectrogramData = null;
@@ -1856,6 +1859,7 @@
         if (typeof ozRenderLibPicker === "function") ozRenderLibPicker();
         if (typeof ceRenderLibPicker === "function") ceRenderLibPicker();
         if (typeof habRenderLibPicker === "function") habRenderLibPicker();
+        if (typeof mwRenderLibPicker === "function") mwRenderLibPicker();
       }
 
       // ── Batch edit: apply one filter to every checked Loaded Audio entry ──
@@ -6387,7 +6391,7 @@
         // for good.
         const landing = $("mainview-landing");
         if (landing) landing.style.display = "none";
-        ["preprocess", "peaks", "analyzer", "plotting", "summarize"].forEach(
+        ["preprocess", "merge", "peaks", "analyzer", "annotate", "plotting", "summarize"].forEach(
           (n) => {
             const t = $("maintab-" + n);
             if (t) t.classList.toggle("active", n === name);
@@ -6396,12 +6400,16 @@
         const pp = $("mainview-preprocess");
         const a = $("mainview-analyzer");
         const k = $("mainview-peaks");
+        const an = $("mainview-annotate");
+        const mw = $("mainview-merge");
         const plotBar = $("plotSubtabBar");
         const sb = $("sidebar");
         const sm = $("mainview-summarize");
         if (pp) pp.style.display = name === "preprocess" ? "flex" : "none";
         if (a) a.style.display = name === "analyzer" ? "flex" : "none";
         if (k) k.style.display = name === "peaks" ? "flex" : "none";
+        if (an) an.style.display = name === "annotate" ? "flex" : "none";
+        if (mw) mw.style.display = name === "merge" ? "flex" : "none";
         if (plotBar) plotBar.style.display = name === "plotting" ? "flex" : "none";
         if (sm) sm.style.display = name === "summarize" ? "flex" : "none";
         ["plot", "oscstack", "osczoom", "cetpe", "habitus"].forEach((n) => {
@@ -6416,6 +6424,11 @@
           setTimeout(() => {
             if (pkEnv) pkDrawEnvelope();
           }, 50);
+        // The Annotator owns its own canvases, view window and rules; it
+        // only needs telling that it is now on screen (a canvas inside a
+        // display:none panel has zero width, so it defers its first draw).
+        if (name === "annotate" && typeof anEnter === "function") anEnter();
+        if (name === "merge" && typeof mwEnter === "function") mwEnter();
         if (name === "analyzer" || name === "preprocess")
           setTimeout(() => {
             render();

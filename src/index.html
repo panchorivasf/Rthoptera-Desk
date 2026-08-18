@@ -485,6 +485,14 @@
           </div>
           <div
             class="tab"
+            id="maintab-merge"
+            onclick="switchMainTab('merge', this)"
+            style="font-size: 12px; padding: 4px 14px"
+          >
+            Merge
+          </div>
+          <div
+            class="tab"
             id="maintab-peaks"
             onclick="switchMainTab('peaks', this)"
             style="font-size: 12px; padding: 4px 14px"
@@ -498,6 +506,14 @@
             style="font-size: 12px; padding: 4px 14px"
           >
             Spectral Analysis
+          </div>
+          <div
+            class="tab"
+            id="maintab-annotate"
+            onclick="switchMainTab('annotate', this)"
+            style="font-size: 12px; padding: 4px 14px"
+          >
+            Annotate
           </div>
           <div
             class="tab"
@@ -3549,6 +3565,525 @@
         </div>
         <!-- /mainview-plot -->
 
+        <!-- ═══ ANNOTATE ═══════════════════════════════════════════════════════════
+             Time is chosen on the waveform, frequency on the power spectrum of that
+             span, and the resulting box is only DISPLAYED on the spectrogram — a
+             spectrogram is one fixed time/frequency compromise, so a box dragged on
+             it records that compromise as much as it records the animal. The band is
+             a per-species decision, locked and saved to <species>.band.json so it can
+             be reused across recordings. See annotate.js. Selections live in the
+             shared `annotations` list, so they export through the usual Raven
+             writer. ═══ -->
+        <div
+          id="mainview-annotate"
+          style="
+            flex: 1;
+            display: none;
+            flex-direction: column;
+            gap: 7px;
+            padding: 9px;
+            overflow: hidden;
+            min-height: 0;
+          "
+        >
+          <!-- ── Species and band ─────────────────────────────────────────── -->
+          <div class="panel" style="flex-shrink: 0">
+            <div
+              class="row"
+              style="gap: 9px; flex-wrap: wrap; align-items: center"
+            >
+              <span style="font-size: 10px; color: var(--txt2)">Species:</span>
+              <span
+                id="anSwatch"
+                style="
+                  width: 11px;
+                  height: 11px;
+                  border-radius: 2px;
+                  background: #56b4e9;
+                  flex-shrink: 0;
+                "
+              ></span>
+              <input
+                id="anLabel"
+                type="text"
+                list="anLabelList"
+                value="motif"
+                onchange="anOnLabel()"
+                style="
+                  width: 168px;
+                  background: var(--bg3);
+                  border: 1px solid var(--border2);
+                  color: var(--txt);
+                  padding: 3px 6px;
+                  border-radius: var(--rad);
+                  font-size: 12px;
+                  font-family: inherit;
+                  outline: none;
+                "
+                title="The species this selection is of. Typed once, then offered from the list."
+              />
+              <datalist id="anLabelList"></datalist>
+
+              <span class="sep"></span>
+
+              <span style="font-size: 10px; color: var(--txt2)"
+                >Search Hz:</span
+              >
+              <input
+                id="anFMin"
+                type="number"
+                value="0"
+                step="100"
+                onchange="anOnRange()"
+                style="width: 76px"
+                title="Wind and handling noise routinely exceed an insect call in absolute level. Set this above the rumble or it will capture the peak and drag the band down to DC."
+              />
+              <span style="font-size: 10px; color: var(--txt2)">–</span>
+              <input
+                id="anFMax"
+                type="number"
+                value="24000"
+                step="100"
+                onchange="anOnRange()"
+                style="width: 82px"
+              />
+
+              <span class="sep"></span>
+
+              <span style="font-size: 10px; color: var(--txt2)">Threshold:</span>
+              <input
+                id="anThreshold"
+                type="number"
+                value="20"
+                step="1"
+                onchange="anOnThreshold()"
+                style="width: 60px"
+                title="Band edges this many dB below the spectrum's peak. 20 dB is the usual bioacoustics convention."
+              />
+              <span style="font-size: 10px; color: var(--txt2)">dB</span>
+
+              <select
+                id="anMode"
+                onchange="anOnMode()"
+                style="width: 128px"
+                title="outer — outermost crossings, harmonics included (and any neighbour calling in the same window). around peak — the one lobe around the carrier."
+              >
+                <option value="outer">edges: outer</option>
+                <option value="contiguous">edges: around peak</option>
+              </select>
+
+              <label class="chk" title="Re-derive the band from the threshold whenever the selection changes."
+                ><input
+                  type="checkbox"
+                  id="anAuto"
+                  checked
+                  onchange="anOnAuto()"
+                />auto</label
+              >
+              <label class="chk" title="Freeze the band across every later selection and every later recording. What makes 'auto' safe to leave on."
+                ><input type="checkbox" id="anLock" onchange="anOnLock()" />lock</label
+              >
+
+              <span class="sep"></span>
+
+              <span style="font-size: 10px; color: var(--txt2)">Spectrum:</span>
+              <select
+                id="anPsdFft"
+                onchange="anOnPsdFft()"
+                style="width: 78px"
+                title="Power-spectrum window. Deliberately not the finest available: fine structure from one individual or one microphone does not generalise, and the band should describe the species."
+              >
+                <option value="256">256</option>
+                <option value="512">512</option>
+                <option value="1024" selected>1024</option>
+                <option value="2048">2048</option>
+                <option value="4096">4096</option>
+                <option value="8192">8192</option>
+              </select>
+              <select
+                id="anScale"
+                onchange="anRedraw()"
+                style="width: 84px"
+                title="Display only — neither scale changes a number that gets saved. Linear makes the carrier read as a spike; dB makes the shoulders visible."
+              >
+                <option value="dB">dB</option>
+                <option value="linear">linear</option>
+              </select>
+
+              <span class="sep"></span>
+
+              <span style="font-size: 10px; color: var(--txt2)">Colour:</span>
+              <select id="anCmap" onchange="anRedraw()" style="width: 88px">
+                <option value="inferno">inferno</option>
+                <option value="viridis">viridis</option>
+                <option value="hot">hot</option>
+                <option value="cyan">cyan</option>
+                <option value="gray">gray</option>
+              </select>
+              <span style="font-size: 10px; color: var(--txt2)">Range:</span>
+              <input
+                id="anDbRange"
+                type="number"
+                value="70"
+                step="5"
+                min="20"
+                max="120"
+                onchange="anRedraw()"
+                style="width: 60px"
+                title="Spectrogram dynamic range, in dB below the loudest bin in view."
+              />
+            </div>
+          </div>
+
+          <!-- ── The three panes ──────────────────────────────────────────── -->
+          <div
+            style="
+              flex: 1;
+              display: flex;
+              flex-direction: column;
+              gap: 5px;
+              min-height: 0;
+            "
+          >
+            <canvas
+              id="anWave"
+              class="vizwrap"
+              style="width: 100%; height: 96px; flex-shrink: 0"
+              title="Drag to set the time span. Shift+drag to pan. Wheel to zoom. Click to clear."
+            ></canvas>
+            <canvas
+              id="anSpec"
+              class="vizwrap"
+              style="width: 100%; flex: 1; min-height: 130px"
+              title="Display only. Click a box to select it and adopt its label and band. Wheel to zoom time, Ctrl+wheel to zoom frequency."
+            ></canvas>
+            <canvas
+              id="anPsd"
+              class="vizwrap"
+              style="width: 100%; height: 148px; flex-shrink: 0"
+              title="Power spectrum of the marked span. Drag horizontally to set the band by hand."
+            ></canvas>
+          </div>
+
+          <!-- ── Readout and actions ──────────────────────────────────────── -->
+          <div class="panel" style="flex-shrink: 0; padding: 7px 8px">
+            <div
+              id="anReadout"
+              style="
+                font-size: 11px;
+                color: var(--txt3);
+                margin-bottom: 6px;
+                white-space: nowrap;
+                overflow-x: auto;
+              "
+            >
+              No audio loaded.
+            </div>
+            <div class="row" style="gap: 6px; flex-wrap: wrap">
+              <button
+                class="pri"
+                onclick="anAdd()"
+                title="Commit the pending box (Enter / A)"
+              >
+                ✚ Add selection
+              </button>
+              <button onclick="anUndo()" title="Undo (Ctrl+Z)">↶ Undo</button>
+              <button onclick="anClearSpan()" title="Drop the time span, keep the band (Esc)">
+                ○ Clear span
+              </button>
+              <button onclick="anDeleteSelected()" class="warn" title="Delete the selected box (Del)">
+                ✕ Delete
+              </button>
+              <button onclick="anZoomToSpan()">⤢ Zoom to span</button>
+              <button onclick="anZoomBy(0.5)">＋</button>
+              <button onclick="anZoomBy(2)">－</button>
+              <button onclick="anZoomAll()">↔ All</button>
+
+              <span class="sep"></span>
+
+              <span style="font-size: 10px; color: var(--txt2)">Band Hz:</span>
+              <input id="anBandLo" type="number" step="1" style="width: 84px" />
+              <input id="anBandHi" type="number" step="1" style="width: 84px" />
+              <button onclick="anApplyTypedBand()">Apply</button>
+              <button
+                onclick="anSaveBand()"
+                title="Write <species>.band.json. Refused for a band derived from the whole view — in a recording holding two species that is neither species' band."
+              >
+                💾 Save band
+              </button>
+              <button onclick="anLoadBand()" title="Adopt a saved band: same edges, locked.">
+                📂 Load band…
+              </button>
+              <input
+                type="file"
+                id="anBandFile"
+                accept=".json,application/json"
+                style="display: none"
+              />
+
+              <span
+                id="anNote"
+                style="font-size: 11px; color: var(--green); margin-left: 4px"
+              ></span>
+            </div>
+          </div>
+
+          <!-- ── Detection and the selection table ────────────────────────── -->
+          <div
+            style="
+              flex-shrink: 0;
+              height: 196px;
+              display: flex;
+              gap: 7px;
+              min-height: 0;
+            "
+          >
+            <div
+              class="panel"
+              style="width: 380px; flex-shrink: 0; overflow-y: auto"
+            >
+              <h2>Detect motifs in the band</h2>
+              <div class="row" style="gap: 6px; flex-wrap: wrap">
+                <span style="font-size: 10px; color: var(--txt2)">Smooth ms</span>
+                <input id="anSmooth" type="number" value="1" step="0.5" style="width: 60px" />
+                <span style="font-size: 10px; color: var(--txt2)">Peak win ms</span>
+                <input id="anPeakWin" type="number" value="1" step="0.5" style="width: 60px" />
+                <span style="font-size: 10px; color: var(--txt2)">Peak thr %</span>
+                <input id="anPeakThr" type="number" value="10" step="1" style="width: 56px" />
+                <span style="font-size: 10px; color: var(--txt2)">Det thr %</span>
+                <input id="anDetThr" type="number" value="5" step="1" style="width: 56px" />
+                <span style="font-size: 10px; color: var(--txt2)">Peak gap ms</span>
+                <input id="anPeakGap" type="number" value="30" step="5" style="width: 62px" />
+                <span style="font-size: 10px; color: var(--txt2)">Train gap ms</span>
+                <input id="anTrainGap" type="number" value="200" step="10" style="width: 62px" />
+              </div>
+              <div class="row" style="gap: 6px; margin-top: 6px; flex-wrap: wrap">
+                <button onclick="anDetectView()">▶ Detect in view</button>
+                <button onclick="anDetectSelection()">▶ Detect in span</button>
+              </div>
+              <div
+                style="
+                  font-size: 10px;
+                  color: var(--txt2);
+                  margin-top: 6px;
+                  line-height: 1.5;
+                "
+              >
+                Peak gap splits one train from the next; train gap splits one motif
+                from the next — the same meanings as Temporal Analysis, but measured
+                on the band-limited envelope, so a second species elsewhere in the
+                spectrum cannot fuse its pulses into these trains. Re-running tops up
+                rather than duplicates: a motif more than half covered by an existing
+                selection of the same species is skipped, and overlap with a
+                <em>different</em> species is not a conflict.
+              </div>
+              <h2 style="margin-top: 9px">Rename a species</h2>
+              <div class="row" style="gap: 6px; flex-wrap: wrap">
+                <select id="anRelabelFrom" style="width: 160px"></select>
+                <span style="font-size: 10px; color: var(--txt2)">→ Species box</span>
+                <button onclick="anRelabelAll()">Rename all</button>
+              </div>
+              <div
+                style="
+                  font-size: 10px;
+                  color: var(--txt2);
+                  margin-top: 5px;
+                  line-height: 1.5;
+                "
+              >
+                Also how selections that arrived from Spectral Analysis or a Raven
+                import get a real species name attached.
+              </div>
+            </div>
+
+            <div class="panel" style="flex: 1; overflow-y: auto; min-width: 0">
+              <div
+                class="row"
+                style="justify-content: space-between; align-items: baseline"
+              >
+                <h2 style="margin: 0">Selections</h2>
+                <span id="anCount" style="font-size: 11px; color: var(--txt2)"></span>
+              </div>
+              <div id="anLegend" style="margin: 4px 0 6px"></div>
+              <div id="anList"></div>
+            </div>
+          </div>
+        </div>
+        <!-- /mainview-annotate -->
+
+        <!-- ═══ MERGE ══════════════════════════════════════════════════════════════
+             Concatenate loaded recordings end to end into one. Port of the R
+             package's merge_waves(); see merge_waves.js for what it adds to it
+             (explicit order, a sample-rate check, one normalisation at the end).
+             The result enters the shared Loaded Audio library like any import. ═══ -->
+        <div
+          id="mainview-merge"
+          style="
+            flex: 1;
+            display: none;
+            flex-direction: column;
+            gap: 8px;
+            padding: 10px;
+            overflow: hidden;
+            min-height: 0;
+          "
+        >
+          <div style="display: flex; gap: 8px; flex: 1; min-height: 0">
+            <!-- ── Pick ── -->
+            <div class="panel" style="width: 268px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0">
+              <h2>1 &nbsp;Loaded audio</h2>
+              <div
+                id="mwLibPicker"
+                style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; font-size: 11px; min-height: 0"
+              ></div>
+              <div class="row" style="gap: 6px; margin-top: 7px; flex-shrink: 0">
+                <button class="pri" onclick="mwAddChecked()">Add ▸</button>
+                <button onclick="mwClear()">Clear list</button>
+              </div>
+            </div>
+
+            <!-- ── Order and merge ── -->
+            <div class="panel" style="flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0">
+              <div class="row" style="justify-content: space-between; align-items: baseline">
+                <h2 style="margin: 0">2 &nbsp;Merge list — top plays first</h2>
+                <span id="mwStatus" style="font-size: 11px; color: var(--txt3)"></span>
+              </div>
+              <div id="mwList" style="flex: 1; overflow-y: auto; margin-top: 5px; min-height: 0"></div>
+
+              <div
+                id="mwRateWarn"
+                style="
+                  display: none;
+                  flex-shrink: 0;
+                  margin-top: 6px;
+                  padding: 6px 8px;
+                  border: 1px solid var(--amber);
+                  background: #1f1a0d;
+                  border-radius: var(--rad);
+                  font-size: 11px;
+                  color: var(--amber);
+                  line-height: 1.5;
+                "
+              >
+                These recordings do not share a sample rate. Concatenating them as-is
+                would replay the odd ones at the wrong rate — stretching them in time
+                and shifting every frequency by the same proportion. Choose a rate to
+                resample to, or take the odd one out.
+              </div>
+
+              <!-- ── Options ── -->
+              <div class="row" style="gap: 8px; flex-wrap: wrap; margin-top: 8px; flex-shrink: 0; align-items: center">
+                <span style="font-size: 10px; color: var(--txt2)">Sample rate:</span>
+                <select
+                  id="mwRatePolicy"
+                  onchange="mwOnPolicyChange()"
+                  style="width: 178px"
+                  title="What to do when the pieces disagree. Resampling low-passes before any downsample, so it cannot alias."
+                >
+                  <option value="refuse">must already match</option>
+                  <option value="highest">resample to the highest</option>
+                  <option value="lowest">resample to the lowest</option>
+                  <option value="first">resample to the first (tuneR)</option>
+                </select>
+
+                <span class="sep"></span>
+
+                <span style="font-size: 10px; color: var(--txt2)">Gap between:</span>
+                <input
+                  id="mwGap"
+                  type="number"
+                  value="0"
+                  step="50"
+                  min="0"
+                  onchange="mwRenderList()"
+                  style="width: 68px"
+                  title="Silence inserted between pieces, never before the first or after the last. 0 reproduces merge_waves() exactly."
+                />
+                <span style="font-size: 10px; color: var(--txt2)">ms</span>
+
+                <span class="sep"></span>
+
+                <label class="chk" title="Subtract the mean of the whole merged signal, as tuneR's normalize(center = TRUE) does."
+                  ><input type="checkbox" id="mwCenter" checked />centre</label
+                >
+                <label class="chk" title="Peak-normalize the merged signal. NOTE: this destroys the relative levels between the source recordings."
+                  ><input type="checkbox" id="mwNormalize" checked />normalize to</label
+                >
+                <input id="mwNormDb" type="number" value="0" step="1" style="width: 58px" />
+                <span style="font-size: 10px; color: var(--txt2)">dBFS</span>
+              </div>
+
+              <div
+                style="font-size: 10px; color: var(--txt2); margin-top: 6px; line-height: 1.5; flex-shrink: 0"
+              >
+                Normalizing scales the whole concatenation to one peak, so amplitudes
+                are no longer comparable <em>between</em> the source recordings — turn
+                it off if that comparison matters. Unlike the R version, it is applied
+                once at the end rather than after every append.
+              </div>
+
+              <!-- ── Act ── -->
+              <div class="row" style="gap: 6px; margin-top: 8px; flex-wrap: wrap; flex-shrink: 0; align-items: center">
+                <span style="font-size: 10px; color: var(--txt2)">Name:</span>
+                <input
+                  id="mwName"
+                  type="text"
+                  onchange="mwRenderList()"
+                  style="
+                    width: 210px;
+                    background: var(--bg3);
+                    border: 1px solid var(--border2);
+                    color: var(--txt);
+                    padding: 3px 6px;
+                    border-radius: var(--rad);
+                    font-size: 12px;
+                    font-family: inherit;
+                    outline: none;
+                  "
+                />
+                <span id="mwNamePlaceholder" style="font-size: 10px; color: var(--txt2)"></span>
+                <button id="btnMwMerge" class="pri" onclick="mwMerge()" disabled>
+                  ⇄ Merge
+                </button>
+                <button id="btnMwExport" onclick="mwExport()" disabled title="Write the merged audio as a 16-bit mono WAV.">
+                  💾 Export WAV
+                </button>
+                <button
+                  id="btnMwExportBounds"
+                  onclick="mwExportBounds()"
+                  disabled
+                  title="Write where each source recording landed, as a Raven selection table."
+                >
+                  ⤓ Export piece boundaries
+                </button>
+                <span id="mwNote" style="font-size: 11px; color: var(--green)"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── Result ── -->
+          <div class="panel" style="flex-shrink: 0">
+            <h2>3 &nbsp;Result</h2>
+            <canvas
+              id="mwPreview"
+              style="
+                width: 100%;
+                height: 104px;
+                border: 1px solid var(--border);
+                border-radius: var(--rad);
+                background: #000;
+              "
+            ></canvas>
+            <div style="font-size: 10px; color: var(--txt2); margin-top: 5px; line-height: 1.5">
+              Dashed lines mark each join. The merged recording is added to Loaded
+              Audio and becomes the active one, so Preprocessing, Spectral Analysis,
+              Temporal Analysis and Annotate all see it immediately.
+            </div>
+          </div>
+        </div>
+        <!-- /mainview-merge -->
+
+
         <!-- ═══ OSCILLOGRAM STACK VIEW ════════════════════════════════════════════ -->
         <div
           id="mainview-oscstack"
@@ -4827,5 +5362,7 @@
     <script src="oscillogram_zoom.js"></script>
     <script src="auto_coded_oscillogram.js"></script>
     <script src="habitus_plot.js"></script>
+    <script src="annotate.js"></script>
+    <script src="merge_waves.js"></script>
   </body>
 </html>
