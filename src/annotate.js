@@ -6,7 +6,7 @@
 // Port of rthoptera-detect's annotation GUI (rthoptera_detect/gui.py and
 // band.py), which was built to feed the training set and never shipped
 // inside the app. Rthoptera Desk already owns the annotation store, the
-// Raven round-trip, and the peak→train→motif grouping, so what crosses
+// Raven round-trip, and the envelope peak→pulse→motif grouping, so what crosses
 // over is the part it lacked: the interaction model, and the rules that
 // decide what a selection *is*.
 //
@@ -47,8 +47,8 @@
 //
 // The `annotations` array, `annotSnapshot`/`undoAnnot`, `refreshAnnotList`,
 // `exportAnnotations`, `applyBandpass`, `fft`, `cmap`, and
-// pkFindPeaks/pkGroupTrains/pkGroupMotifs all come from main.js. A change
-// to how Rthoptera groups peaks changes this module too, and the two can
+// pkFindEnvPeaks/pkGroupPulses/pkGroupMotifs all come from main.js. A change
+// to how Rthoptera groups envelope peaks changes this module too, and the two can
 // never drift. The only local numerics are the ones that did not already
 // exist: the Welch spectrum, the threshold band, a view-local
 // spectrogram, and a band-limited envelope (pkComputeEnv reads the global
@@ -67,7 +67,7 @@
   // per file. Insect recordings run from 44.1 to 384 kHz, so a fixed
   // n_fft is a different analysis on every recorder: 1024 samples is
   // 2.7 ms at 384 kHz and 23 ms at 44.1 kHz, and the second is long
-  // enough to fuse the pulses inside a train into one smear. 4 ms sits
+  // enough to fuse the pulses inside a pulse into one smear. 4 ms sits
   // below a typical inter-pulse interval while still resolving a carrier.
   const AN_WINDOW_S = 0.004;
   const AN_MAX_TIME_BINS = 1400;
@@ -294,7 +294,7 @@
   // Carrier frequency to better than one bin. argmax can only ever name
   // a bin centre, so it is wrong by up to half a bin — 23 Hz at 1024
   // points and 48 kHz, the same order as the gap between two congeneric
-  // species. Fitting a parabola through the peak bin and its neighbours
+  // species. Fitting a parabola through the envelope peak bin and its neighbours
   // recovers the true maximum to a few Hz.
   //
   // The fit is on the dB values, not linear power, and that is not
@@ -338,7 +338,7 @@
   //                band that spans them — but so does a band that
   //                happens to catch a different animal calling in the
   //                same window.
-  //   "contiguous" walk out from the peak and stop at the first crossing
+  //   "contiguous" walk out from the envelope peak and stop at the first crossing
   //                each side: the one lobe around the carrier, with
   //                harmonics and unrelated neighbours excluded. What you
   //                want when the carrier alone is diagnostic, or when
@@ -350,7 +350,7 @@
   //
   // fMin/fMax bound the search and matter more than they look:
   // low-frequency wind and handling noise routinely exceed an insect's
-  // call in absolute level, and would otherwise capture the peak and
+  // call in absolute level, and would otherwise capture the envelope peak and
   // drag the band down to DC.
   function anBandFromThreshold(power, freqs, thrDb, mode, fMin, fMax) {
     if (!power || !power.length || power.length !== freqs.length) return null;
@@ -359,18 +359,18 @@
       if (freqs[i] >= fMin && freqs[i] <= fMax) idx.push(i);
     if (!idx.length) return null;
 
-    let peak = idx[0];
-    for (const i of idx) if (power[i] > power[peak]) peak = i;
-    const cutoff = power[peak] - Math.abs(thrDb);
+    let envPeak = idx[0];
+    for (const i of idx) if (power[i] > power[envPeak]) envPeak = i;
+    const cutoff = power[envPeak] - Math.abs(thrDb);
     const above = (i) => power[i] >= cutoff;
     const first = idx[0],
       last = idx[idx.length - 1];
 
     let loI, hiI;
     if (mode === "contiguous") {
-      loI = peak;
+      loI = envPeak;
       while (loI > first && above(loI - 1)) loI--;
-      hiI = peak;
+      hiI = envPeak;
       while (hiI < last && above(hiI + 1)) hiI++;
     } else {
       const hits = idx.filter(above);
@@ -414,7 +414,7 @@
   // Min/max envelope of sig[lo..hi) for drawing. Plotting every sample
   // of a 384 kHz recording is both slow and a lie — the renderer decides
   // which samples survive. Taking the min and max of each bucket keeps
-  // every peak visible at any zoom level, which is what the time
+  // every envelope peak visible at any zoom level, which is what the time
   // selection is made against.
   function anDecimate(sig, lo, hi, maxPoints) {
     const n = hi - lo;
@@ -918,12 +918,12 @@
     if (!anReady() || !anWaveCache) return;
 
     const mid = h / 2;
-    let peak = 1e-9;
+    let envPeak = 1e-9;
     const { lows, highs } = anWaveCache;
     for (let i = 0; i < lows.length; i++) {
-      peak = Math.max(peak, Math.abs(lows[i]), Math.abs(highs[i]));
+      envPeak = Math.max(envPeak, Math.abs(lows[i]), Math.abs(highs[i]));
     }
-    const sc = (mid - 2) / peak;
+    const sc = (mid - 2) / envPeak;
 
     // The marked span is drawn under the trace, not over it: the point
     // of this pane is judging onsets, and a translucent wash across them
@@ -1090,13 +1090,13 @@
     let vTop = -Infinity;
     for (const i of idx) if (anPsd.power[i] > vTop) vTop = anPsd.power[i];
 
-    // Linear is drawn as a fraction of the peak: raw power density is
+    // Linear is drawn as a fraction of the envelope peak: raw power density is
     // ~1e-4 and renders as unreadable tick labels, and the number that
     // matters here is relative anyway — the -20 dB cutoff sits at 0.01.
     //
     // dB compresses the vertical range so a 40 dB-down noise floor still
     // occupies half the plot and every species looks like a broad hump;
-    // linear puts everything 20 dB down at 1% of peak height, so the
+    // linear puts everything 20 dB down at 1% of envelope peak height, so the
     // carrier reads as a spike and the shoulders are unmistakable.
     // Neither changes a single number that gets saved.
     const linear = $("anScale")?.value === "linear";
@@ -1185,7 +1185,7 @@
         h - 4,
       );
     }
-    g.fillText(linear ? "power / peak" : "dB", 4, 11);
+    g.fillText(linear ? "power / envelope peak" : "dB", 4, 11);
     g.fillText(
       st.span
         ? "spectrum of the marked span — drag to set the band"
@@ -1557,39 +1557,39 @@
       : rawSamples.slice(lo, hi);
     const filtered = applyBandpass(slice, sampleRate, st.band[0], st.band[1]);
     const env = anEnvelope(filtered, anNum("anSmooth", 1));
-    const peaks = pkFindPeaks(
+    const envPeaks = pkFindEnvPeaks(
       env,
-      anNum("anPeakWin", 1),
-      anNum("anPeakThr", 10),
+      anNum("anEnvPeakWin", 1),
+      anNum("anEnvPeakThr", 10),
       anNum("anDetThr", 5),
       null,
       0,
     );
-    if (!peaks.length) {
-      anSay("no peaks inside this band — lower the detection threshold", false);
+    if (!envPeaks.length) {
+      anSay("no envelope peaks inside this band — lower the detection threshold", false);
       return;
     }
-    const trains = pkGroupTrains(
-      peaks,
-      anNum("anPeakGap", 30),
+    const pulses = pkGroupPulses(
+      envPeaks,
+      anNum("anEnvPeakGap", 30),
       null,
       false,
       0,
       0,
     );
-    const motifs = pkGroupMotifs(trains, anNum("anTrainGap", 200));
-    // Peak times are relative to the slice handed to pkFindPeaks.
+    const motifs = pkGroupMotifs(pulses, anNum("anPulseGap", 200));
+    // Envelope peak times are relative to the slice handed to pkFindEnvPeaks.
     const t0 = lo / sampleRate;
-    const pad = typeof pkTrainPadSec === "function" ? pkTrainPadSec() : 0.0005;
+    const pad = typeof pkPulsePadSec === "function" ? pkPulsePadSec() : 0.0005;
 
     const spans = motifs
       .map((m) => {
-        const lastTrain = m[m.length - 1];
+        const lastPulse = m[m.length - 1];
         return [
           Math.max(0, t0 + m[0][0].time - pad),
           Math.min(
             duration || Infinity,
-            t0 + lastTrain[lastTrain.length - 1].time + pad,
+            t0 + lastPulse[lastPulse.length - 1].time + pad,
           ),
         ];
       })

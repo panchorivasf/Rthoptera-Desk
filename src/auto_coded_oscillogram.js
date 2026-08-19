@@ -344,7 +344,7 @@
   // ═══════════════════════════════════════════════════════════════════
   // Everything the rendering needs is reduced during this single pass:
   //   • per column, the min/max of the samples it subsumes (the envelope);
-  //   • per column, the overall peak in dBFS (for the optional Pressure Range);
+  //   • per column, the overall envelope peak in dBFS (for the optional Pressure Range);
   //   • per column and BAND, the strongest bin in dBFS (for the FRPT test);
   //   • a fixed-size TFSI raster for the reference spectrogram panel.
   // Only the per-band dB values are kept, not the full spectrogram, so memory
@@ -1356,7 +1356,7 @@
 
     const mask = ceMaskAtTime(cePlayhead);
     // The DOM is only touched when the answer changes: at 60 fps over a fast
-    // echeme train this is the difference between a few writes and a few
+    // echeme pulse this is the difference between a few writes and a few
     // hundred per second.
     if (mask !== ceLastLightMask) {
       ceLastLightMask = mask;
@@ -1391,7 +1391,7 @@
     const el = $("cePlaySpeed");
     const pct = el ? parseFloat(el.value) : 100;
     if (!isFinite(pct) || pct <= 0) return 1;
-    return clamp(pct, 5, 400) / 100;
+    return clamp(pct, 1, 400) / 100; // 1% floor, matching the main transport
   }
 
   function ceSetSpeed() {
@@ -1430,7 +1430,7 @@
   // -48 dB per octave past the corner). An FIR would have a tighter
   // transition band, but this runs over every sample of a multi-million
   // sample recording and the octave-and-up rejection is what matters for
-  // keeping an ultrasonic peak out of the audible band.
+  // keeping an ultrasonic envelope peak out of the audible band.
   function ceLowPass(src, rate, cutoff, order) {
     const out = Float32Array.from(src);
     const w0 = (2 * Math.PI * cutoff) / rate;
@@ -1722,7 +1722,7 @@
       o = clamp(o, 0, draw.nOut - 1);
       const mask = draw.outMask[o];
       let txt =
-        `t = ${t.toFixed(4)} s · peak ` +
+        `t = ${t.toFixed(4)} s · envelope peak ` +
         `${toDb(Math.max(Math.abs(draw.outMin[o]), draw.outMax[o])).toFixed(1)} dBFS · `;
       if (!mask) {
         txt += "no band above the FRPT";
@@ -1870,7 +1870,7 @@
       ceStatus("Draw an Auto-coded Oscillogram first.", true);
       return;
     }
-    const rows = [["start_s", "end_s", "duration_s", "peak_dbfs", "rgb", "bands_hz"]];
+    const rows = [["start_s", "end_s", "duration_s", "env_peak_dbfs", "rgb", "bands_hz"]];
     let c = 0;
     while (c < a.nCols) {
       if (!col.masks[c]) {
@@ -1879,10 +1879,10 @@
       }
       const start = c;
       let mask = 0;
-      let peak = DB_FLOOR;
+      let envPeak = DB_FLOOR;
       while (c < a.nCols && col.masks[c]) {
         mask |= col.masks[c];
-        if (a.colPeakDb[c] > peak) peak = a.colPeakDb[c];
+        if (a.colPeakDb[c] > envPeak) envPeak = a.colPeakDb[c];
         c++;
       }
       const t0 = ((start * a.hop) / ceRate).toFixed(6);
@@ -1895,7 +1895,7 @@
         t0,
         t1,
         (parseFloat(t1) - parseFloat(t0)).toFixed(6),
-        peak.toFixed(2),
+        envPeak.toFixed(2),
         a.twoColour ? "" : maskToHex(mask),
         bands.join(" "),
       ]);

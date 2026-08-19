@@ -244,7 +244,7 @@
       // ═══════════════════════════════════════════════════════════════════
       let currentAudioFileName = "";
       // Manually-entered specimen tag for the active recording — carried
-      // into every exported table (Peaks/Trains/Motifs/Spectral) as their
+      // into every exported table (Envelope peaks/Pulses/Motifs/Spectral) as their
       // first column, and used by Summarize to count individuals correctly
       // instead of guessing from file names.
       let currentSpecimenId = "";
@@ -434,7 +434,7 @@
 
       // Shared tail of every import path (native Tauri dialog OR the HTML
       // file-input fallback): decode → mono-mix → add to the library. Every
-      // pane (Analyzer, Peaks, Multiplot, Osc. Stack/Zoom, Habitus) reads
+      // pane (Analyzer, Envelope peaks, Multiplot, Osc. Stack/Zoom, Habitus) reads
       // from the shared `audioLibrary`, so this is the single place new
       // recordings enter it.
       async function _ingestDecodedAudio(displayName, folder, decoded) {
@@ -723,16 +723,16 @@
         renderMinimap();
 
         // Temporal Analysis works on its own envelope, built at the smoothing
-        // set in that pane. Build it here rather than inside Detect Peaks, so
+        // set in that pane. Build it here rather than inside Detect Envelope peaks, so
         // the trace is on screen as soon as audio is loaded — you can see what
-        // you are about to detect on, and peaks can be imported from a saved
+        // you are about to detect on, and envelope peaks can be imported from a saved
         // table without running detection first.
         pkRefreshEnvelope();
       }
 
       // Rebuild the Temporal Analysis envelope from the current audio and the
-      // current smoothing, then redraw. Existing peaks are left alone: this is
-      // also the hook for the Smoothing box, where the peaks on screen should
+      // current smoothing, then redraw. Existing envelope peaks are left alone: this is
+      // also the hook for the Smoothing box, where the envelope peaks on screen should
       // survive a change of trace.
       function pkRefreshEnvelope() {
         if (!rawSamples) {
@@ -829,7 +829,7 @@
         return p || 1;
       }
 
-      // Peak-normalizes sig so its max absolute sample sits at `target`
+      // Envelope peak-normalizes sig so its max absolute sample sits at `target`
       // (linear, 0–1). Pass target = 10**(dB/20) to normalize to a dBFS level.
       function applyNormalize(sig, target) {
         const gain = target / peakAbs(sig);
@@ -888,7 +888,7 @@
         const mag = new Float64Array(H + 1),
           anaPh = new Float64Array(H + 1);
         const expct = (2 * Math.PI * Ha) / N;
-        const peaks = [];
+        const envPeaks = [];
 
         for (let m = 0; m < nFrames; m++) {
           const ta = Math.round(m * Ha);
@@ -902,7 +902,7 @@
             mag[k] = Math.hypot(re[k], im[k]);
             anaPh[k] = Math.atan2(im[k], re[k]);
           }
-          peaks.length = 0;
+          envPeaks.length = 0;
           for (let k = 2; k <= H - 2; k++) {
             if (
               mag[k] > mag[k - 1] &&
@@ -910,22 +910,22 @@
               mag[k] > mag[k - 2] &&
               mag[k] > mag[k + 2]
             )
-              peaks.push(k);
+              envPeaks.push(k);
           }
-          if (!peaks.length) peaks.push(0);
-          for (const k of peaks) {
+          if (!envPeaks.length) envPeaks.push(0);
+          for (const k of envPeaks) {
             const dp = _princarg(anaPh[k] - lastPhase[k] - k * expct);
             sumPhase[k] += Hs * ((k * 2 * Math.PI) / N + dp / Ha);
           }
-          // Each bin follows its nearest peak, keeping the partial rigid.
+          // Each bin follows its nearest envelope peak, keeping the partial rigid.
           let pi = 0;
           for (let k = 0; k <= H; k++) {
             while (
-              pi + 1 < peaks.length &&
-              Math.abs(peaks[pi + 1] - k) < Math.abs(peaks[pi] - k)
+              pi + 1 < envPeaks.length &&
+              Math.abs(envPeaks[pi + 1] - k) < Math.abs(envPeaks[pi] - k)
             )
               pi++;
-            const p = peaks[pi];
+            const p = envPeaks[pi];
             const ph =
               k === p ? sumPhase[p] : sumPhase[p] + (anaPh[k] - anaPh[p]);
             if (k !== p) sumPhase[k] = ph;
@@ -1140,9 +1140,9 @@
         }
         const hadWork =
           (detections && detections.length) ||
-          (typeof pkPeaks !== "undefined" && pkPeaks && pkPeaks.length) ||
+          (typeof pkEnvPeaks !== "undefined" && pkEnvPeaks && pkEnvPeaks.length) ||
           (annotations && annotations.length);
-        // If a trim already existed, the in-memory peaks/detections live on the
+        // If a trim already existed, the in-memory envelope peaks/detections live on the
         // PREVIOUSLY trimmed timeline, so they can't be reliably remapped across
         // a fresh original-timeline cut — clear them. With no prior trim, the
         // times match the original timeline and we keep whatever falls inside.
@@ -1250,13 +1250,13 @@
         log("Frequency drop removed", "ok");
       }
 
-      // Trim changes the timeline, invalidating peak detections, measurement
+      // Trim changes the timeline, invalidating envelope peak detections, measurement
       // detections, and imported annotations. Clear them so stale times don't
       // point at the wrong audio.
       function clearTimeDependentWork() {
-        if (typeof pkPeaks !== "undefined") {
-          pkPeaks = [];
-          pkTrains = [];
+        if (typeof pkEnvPeaks !== "undefined") {
+          pkEnvPeaks = [];
+          pkPulses = [];
           pkMotifs = [];
           if (typeof pkConfirmed !== "undefined") pkConfirmed = false;
           if (typeof pkEnv !== "undefined") pkEnv = null;
@@ -1265,7 +1265,7 @@
           const ps = $("pkStatus");
           if (ps)
             ps.textContent =
-              "Audio edited — set parameters and click Detect Peaks";
+              "Audio edited — set parameters and click Detect Envelope peaks";
         }
         detections = [];
         detMeasurements = [];
@@ -1291,8 +1291,8 @@
       // After a trim that keeps the block [t0, t1] (seconds, original timeline),
       // remap existing work into the trimmed timeline instead of discarding it:
       //   • annotations / detections overlapping the block are clipped and shifted
-      //   • peaks inside the block are shifted; their sample idx/amp are refreshed
-      //     against the freshly-recomputed peak envelope
+      //   • envelope peaks inside the block are shifted; their sample idx/amp are refreshed
+      //     against the freshly-recomputed envelope peak envelope
       // MUST be called AFTER rebuildAudioFromEdits() so sampleRate/rawSamples are
       // already the trimmed signal.
       function remapTimeDependentWork(t0, t1) {
@@ -1343,9 +1343,9 @@
             if (trB) trB.disabled = true;
           }
         }
-        // ── Temporal-analysis peaks ──────────────────────────────────────
-        if (typeof pkPeaks !== "undefined" && pkPeaks && pkPeaks.length) {
-          // Recompute the peak-pane envelope on the trimmed signal so peak
+        // ── Temporal-analysis envelope peaks ──────────────────────────────────────
+        if (typeof pkEnvPeaks !== "undefined" && pkEnvPeaks && pkEnvPeaks.length) {
+          // Recompute the envelope peak-pane envelope on the trimmed signal so envelope peak
           // amplitudes/indices can be refreshed.
           let env = null;
           try {
@@ -1355,7 +1355,7 @@
           pkEnv = env;
           const n = rawSamples ? rawSamples.length : 0;
           const kept = [];
-          pkPeaks.forEach((p) => {
+          pkEnvPeaks.forEach((p) => {
             if (p.time >= t0 - eps && p.time <= t1 + eps) {
               const nt = p.time - t0;
               const idx = Math.max(0, Math.min(n - 1, Math.round(nt * sampleRate)));
@@ -1367,27 +1367,27 @@
               });
             }
           });
-          // The last surviving peak necessarily ends its train.
+          // The last surviving envelope peak necessarily ends its pulse.
           if (kept.length) kept[kept.length - 1].splitAfter = true;
-          pkPeaks = kept;
-          // Segmentation was frozen on the old peak set; it remains valid for the
+          pkEnvPeaks = kept;
+          // Segmentation was frozen on the old envelope peak set; it remains valid for the
           // kept subset, but metrics must be recomputed — require a re-Confirm.
           if (typeof pkConfirmed !== "undefined") pkConfirmed = false;
           const pr = $("pkResults");
           if (pr) pr.style.display = "none";
           const ps = $("pkStatus");
           if (ps)
-            ps.textContent = pkPeaks.length
-              ? pkPeaks.length +
-                " peaks kept after trim — click Confirm to recompute metrics"
-              : "Audio trimmed — set parameters and click Detect Peaks";
-          if (typeof pkLiveUpdate === "function" && pkPeaks.length) {
+            ps.textContent = pkEnvPeaks.length
+              ? pkEnvPeaks.length +
+                " envelope peaks kept after trim — click Confirm to recompute metrics"
+              : "Audio trimmed — set parameters and click Detect Envelope peaks";
+          if (typeof pkLiveUpdate === "function" && pkEnvPeaks.length) {
             pkLiveUpdate("trimmed");
           } else if (typeof pkDrawEnvelope === "function") {
             pkDrawEnvelope();
           }
           const applyBtn = $("btnPkApplySpectral");
-          if (applyBtn) applyBtn.disabled = !pkPeaks.length;
+          if (applyBtn) applyBtn.disabled = !pkEnvPeaks.length;
         }
       }
 
@@ -1539,13 +1539,13 @@
       // Drops all per-recording state and blanks every view that shows it —
       // Preprocessing's info panel + waveform/spectrogram viewer, Spectral
       // Analysis (annotations/detections/measurements), and Temporal
-      // Analysis (envelope/peaks/tables) — back to their empty "no audio"
+      // Analysis (envelope/envelope peaks/tables) — back to their empty "no audio"
       // state. Used when the active Loaded Audio entry is deleted.
       // Everything that describes ONE recording: selections, detections,
-      // measurements, peaks, trains, motifs, and the fitted parameters derived
+      // measurements, envelope peaks, pulses, motifs, and the fitted parameters derived
       // from them. None of it is meaningful against different audio, so it is
       // cleared both when the last file closes AND when the active file
-      // changes — switching used to leave the previous recording's peaks and
+      // changes — switching used to leave the previous recording's envelope peaks and
       // selections on screen, where they would be drawn over the new envelope
       // and exported under the new file's name.
       //
@@ -1568,8 +1568,8 @@
         spectrogramData = null;
 
         pkEnv = null;
-        pkPeaks = [];
-        // Undo snapshots describe peaks from the recording just left —
+        pkEnvPeaks = [];
+        // Undo snapshots describe envelope peaks from the recording just left —
         // pressing Ctrl+Z afterwards would restore them onto other audio.
         pkResetUndo();
         // Fitted parameters belong to that recording too, and Apply would
@@ -1578,8 +1578,8 @@
         spectralMetricsRows = null;
         pkViewStart = 0;
         pkViewEnd = null;
-        pkPeakData = [];
-        pkTrainData = [];
+        pkEnvPeakData = [];
+        pkPulseData = [];
         pkMotifData = [];
         pkMotifSeqData = [];
         pkSummaryData = null;
@@ -1724,7 +1724,7 @@
         audioEdits = [];
         $("infoCh").textContent = 1; // library entries are already mono-mixed
         $("pkStatus").textContent =
-          "Audio loaded — set parameters and click Detect Peaks";
+          "Audio loaded — set parameters and click Detect Envelope peaks";
 
         resetEditUiForNewFile();
         rebuildAudioFromEdits({ resetView: true });
@@ -1946,7 +1946,7 @@
         );
       }
 
-      // Peak-normalizes every checked entry independently, each to the same
+      // Envelope peak-normalizes every checked entry independently, each to the same
       // target dBFS level, in place. Same "batch touches the library
       // directly" model as applyBatchBandpass.
       function applyBatchNormalize() {
@@ -1980,7 +1980,7 @@
         if (touchedActive) selectLibraryAudio(audioLibActiveId);
 
         renderAudioLibraryPanel();
-        log(`Batch peak-normalize applied to ${count} recording(s), each to ${targetDb} dBFS.`, "ok");
+        log(`Batch envelope peak-normalize applied to ${count} recording(s), each to ${targetDb} dBFS.`, "ok");
       }
 
       async function applyBatchFreqDrop() {
@@ -3160,7 +3160,7 @@
         $("specI").style.cursor = cursor;
       }
       // True while Spectral Analysis is the visible tab. Ctrl+Z is claimed by
-      // both this module and Temporal Analysis's peak undo, so each defers to
+      // both this module and Temporal Analysis's envelope peak undo, so each defers to
       // the other based on which tab the user is actually looking at.
       function isAnalyzerTabActive() {
         const t = $("maintab-analyzer");
@@ -3555,7 +3555,7 @@
       // ═══════════════════════════════════════════════════════════════════
 
       // ── Undo ───────────────────────────────────────────────────────────
-      // Snapshot-based, mirroring the Temporal Analysis peak undo
+      // Snapshot-based, mirroring the Temporal Analysis envelope peak undo
       // (pkSnapshot/pkUndo). Every action that changes the annotation set
       // stores the state as it was BEFORE the change.
       //
@@ -3820,7 +3820,7 @@
           );
       }
       // ═══════════════════════════════════════════════════════════════════
-      // EXCEL SELECTION IMPORT (Train / Motif table → selections)
+      // EXCEL SELECTION IMPORT (Pulse / Motif table → selections)
       // ═══════════════════════════════════════════════════════════════════
       $("xlsxSelFile").onchange = async (e) => {
         const f = e.target.files[0];
@@ -3840,13 +3840,13 @@
           return;
         }
 
-        // Identify which sheets look like Train / Motif tables (by their columns).
+        // Identify which sheets look like Pulse / Motif tables (by their columns).
         const classify = (name) => {
           const rows = workbook[name];
           if (!rows || !rows.length) return null;
           const cols = Object.keys(rows[0]).map((c) => c.toLowerCase());
           const has = (a, b) => cols.includes(a) && cols.includes(b);
-          if (has("train_start", "train_end")) return "train";
+          if (has("pulse_start", "pulse_end")) return "pulse";
           if (has("motif_start", "motif_end")) return "motif";
           return null;
         };
@@ -3856,7 +3856,7 @@
 
         if (!candidates.length) {
           log(
-            "No Train or Motif table found (need train_start/train_end or motif_start/motif_end columns).",
+            "No Pulse or Motif table found (need pulse_start/pulse_end or motif_start/motif_end columns).",
             "err",
           );
           return;
@@ -3875,7 +3875,7 @@
         _importXlsxSelections(workbook[chosen.name], chosen.kind, chosen.name);
       };
 
-      // Modal asking which table (Train vs Motif) to import.
+      // Modal asking which table (Pulse vs Motif) to import.
       function _pickSheetDialog(candidates) {
         return new Promise((resolve) => {
           const msg = document.createElement("div");
@@ -3887,7 +3887,7 @@
           let btns = "";
           candidates.forEach((c, i) => {
             const lbl =
-              (c.kind === "train" ? "Train table" : "Motif table") +
+              (c.kind === "pulse" ? "Pulse table" : "Motif table") +
               " — \u201c" +
               c.name +
               "\u201d";
@@ -3921,10 +3921,10 @@
         });
       }
 
-      // Turn rows of a Train/Motif table into annotations.
+      // Turn rows of a Pulse/Motif table into annotations.
       function _importXlsxSelections(rows, kind, sheetName) {
-        const startKey = kind === "train" ? "train_start" : "motif_start";
-        const endKey = kind === "train" ? "train_end" : "motif_end";
+        const startKey = kind === "pulse" ? "pulse_start" : "motif_start";
+        const endKey = kind === "pulse" ? "pulse_end" : "motif_end";
         // tolerant key lookup (case-insensitive)
         const realKey = (row, want) =>
           Object.keys(row).find((k) => k.toLowerCase() === want);
@@ -3949,11 +3949,11 @@
             skipped++;
             return;
           }
-          const idCol = kind === "train" ? "train_id" : "motif_id";
+          const idCol = kind === "pulse" ? "pulse_id" : "motif_id";
           const ik = realKey(row, idCol);
           const label =
-            kind === "train"
-              ? "train" + (ik ? " " + row[ik] : "")
+            kind === "pulse"
+              ? "pulse" + (ik ? " " + row[ik] : "")
               : "motif" + (ik ? " " + row[ik] : "");
           annotations.push({
             start,
@@ -4703,7 +4703,7 @@
         }
         if (frames > 1) for (let b = 0; b < bins; b++) spec[b] /= frames;
 
-        // Peak bin + parabolic sub-bin refinement
+        // Envelope peak bin + parabolic sub-bin refinement
         let peakBin = 0,
           peakPow = 0;
         for (let b = 0; b < bins; b++)
@@ -4757,7 +4757,7 @@
         // about the centroid.
         //   spread    — spectral standard deviation, in kHz
         //   skewness  — 0 symmetric, >0 tail toward high frequency
-        //   kurtosis  — RAW, so 3 is Gaussian; higher means a sharper peak
+        //   kurtosis  — RAW, so 3 is Gaussian; higher means a sharper envelope peak
         //               with heavier tails
         // These are computed over the whole spectrum, the standard definition.
         // That makes them sensitive to the noise floor: broadband background
@@ -5028,7 +5028,7 @@
         const gaps = detMeasurements
           .map((m) => m.gap_ms)
           .filter((v) => v !== null);
-        const peaks = detMeasurements.map((m) => m.peak_freq_khz);
+        const envPeaks = detMeasurements.map((m) => m.peak_freq_khz);
         const fmins = detMeasurements.map((m) => m.freq_min_khz);
         const fmaxs = detMeasurements.map((m) => m.freq_max_khz);
         const ents = detMeasurements.map((m) => m.spec_entropy);
@@ -5063,7 +5063,7 @@
           },
           {
             lbl: "Mean peak freq (kHz)",
-            v: mean(peaks),
+            v: mean(envPeaks),
             fmt: (v) => v.toFixed(3),
           },
           { lbl: "SD peak freq (kHz)", v: sd(peaks), fmt: (v) => v.toFixed(3) },
@@ -5207,11 +5207,11 @@
             //
             // The results tables are all emitted as "Rthoptera_<table>_data",
             // so they are matched on that whole shape rather than on the table
-            // word alone — a locality called "Peak District" would otherwise
-            // tag a cross-recording summary as a peak table.
+            // word alone — a locality called "Envelope peak District" would otherwise
+            // tag a cross-recording summary as a envelope peak table.
             const stem = defaultFilename.replace(/\.[^/.]+$/, "");
             const table = stem.match(
-              /(^|_)(peak|train|motif|motseq|summ)_data(_|$)/i,
+              /(^|_)(envPeak|pulse|motif|motseq|summ)_data(_|$)/i,
             );
             let appendix = "";
             if (/(^|_)spec(_|$)/i.test(stem)) appendix = "_spec";
@@ -5368,7 +5368,13 @@
         const el = $("playSpeed");
         const pct = el ? parseFloat(el.value) : 100;
         if (!isFinite(pct) || pct <= 0) return 1;
-        return Math.min(400, Math.max(5, pct)) / 100;
+        // Floor of 1%, not 5%: a 100x slowdown is what it takes to bring the
+        // top of an ultrasonic recording into hearing range — 5% leaves a
+        // 120 kHz carrier at 6 kHz, still shrill, while 1% puts it at 1.2 kHz.
+        // Web Audio interpolates rather than time-stretches, so very low rates
+        // sound progressively more watery; that is a quality trade the
+        // listener can hear and judge, not a reason to refuse the setting.
+        return Math.min(400, Math.max(1, pct)) / 100;
       }
 
       // Restart from the current position so the elapsed-time arithmetic
@@ -5392,19 +5398,26 @@
           try {
             sourceNode.stop();
           } catch (e) {}
-        sourceNode = audioCtx.createBufferSource();
+        const node = audioCtx.createBufferSource();
+        sourceNode = node;
         // The dropped buffer when one is ready, the real audio otherwise —
         // so a press during the (~200 ms) render just plays undropped rather
         // than failing.
-        sourceNode.buffer = _pbBuffer || audioBuffer;
+        node.buffer = _pbBuffer || audioBuffer;
         playRate = currentPlayRate();
-        sourceNode.playbackRate.value = playRate;
-        sourceNode.connect(audioCtx.destination);
+        node.playbackRate.value = playRate;
+        node.connect(audioCtx.destination);
         playOff = playPos;
         playT0 = audioCtx.currentTime;
-        sourceNode.start(0, Math.max(0, playOff));
-        sourceNode.onended = () => {
-          if (isPlaying) stopPb();
+        node.start(0, Math.max(0, playOff));
+        // Only the node that is still the current one may stop playback.
+        // Replacing a node — seeking, or changing the speed mid-play — calls
+        // stop() on the outgoing one, but its onended fires a turn LATER, by
+        // which time the replacement is already running and isPlaying is true
+        // again. An unguarded handler therefore killed the playback it had
+        // just been restarted for, so seeking while playing stopped the sound.
+        node.onended = () => {
+          if (sourceNode === node && isPlaying) stopPb();
         };
         isPlaying = true;
         $("btnPlay").textContent = "⏸ Pause";
@@ -6391,7 +6404,7 @@
         // for good.
         const landing = $("mainview-landing");
         if (landing) landing.style.display = "none";
-        ["preprocess", "merge", "peaks", "analyzer", "annotate", "plotting", "summarize"].forEach(
+        ["preprocess", "merge", "envpeaks", "analyzer", "annotate", "plotting", "summarize"].forEach(
           (n) => {
             const t = $("maintab-" + n);
             if (t) t.classList.toggle("active", n === name);
@@ -6399,7 +6412,7 @@
         );
         const pp = $("mainview-preprocess");
         const a = $("mainview-analyzer");
-        const k = $("mainview-peaks");
+        const k = $("mainview-envpeaks");
         const an = $("mainview-annotate");
         const mw = $("mainview-merge");
         const plotBar = $("plotSubtabBar");
@@ -6407,7 +6420,7 @@
         const sm = $("mainview-summarize");
         if (pp) pp.style.display = name === "preprocess" ? "flex" : "none";
         if (a) a.style.display = name === "analyzer" ? "flex" : "none";
-        if (k) k.style.display = name === "peaks" ? "flex" : "none";
+        if (k) k.style.display = name === "envpeaks" ? "flex" : "none";
         if (an) an.style.display = name === "annotate" ? "flex" : "none";
         if (mw) mw.style.display = name === "merge" ? "flex" : "none";
         if (plotBar) plotBar.style.display = name === "plotting" ? "flex" : "none";
@@ -6420,7 +6433,7 @@
         // settings) is only relevant for the Analyzer's own visualization.
         if (sb) sb.style.display = name === "analyzer" ? "flex" : "none";
         _placeSharedViewer(name);
-        if (name === "peaks")
+        if (name === "envpeaks")
           setTimeout(() => {
             if (pkEnv) pkDrawEnvelope();
           }, 50);
@@ -6488,7 +6501,7 @@
       function goHome() {
         const landing = $("mainview-landing");
         if (landing) landing.style.display = "flex";
-        ["preprocess", "peaks", "analyzer", "plotting", "summarize"].forEach(
+        ["preprocess", "envpeaks", "analyzer", "plotting", "summarize"].forEach(
           (n) => {
             const t = $("maintab-" + n);
             if (t) t.classList.remove("active");
@@ -6496,7 +6509,7 @@
         );
         const pp = $("mainview-preprocess");
         const a = $("mainview-analyzer");
-        const k = $("mainview-peaks");
+        const k = $("mainview-envpeaks");
         const plotBar = $("plotSubtabBar");
         const sb = $("sidebar");
         const sm = $("mainview-summarize");
@@ -6920,8 +6933,8 @@
       // TEMPORAL ANALYSIS
       // ═══════════════════════════════════════════════════════════════════
       let pkEnv = null;
-      let pkPeaks = [];
-      let pkTrains = [];
+      let pkEnvPeaks = [];
+      let pkPulses = [];
       let pkMotifs = [];
       let pkMotifSeqs = [];
       // ids of annotations most recently pushed by pkApplyDetectionsToSpectral
@@ -6929,12 +6942,12 @@
       // (correct edits + chronological renumbering) instead of piling up
       // stale duplicates alongside freshly-numbered ones.
       let pkAppliedAnnotationIds = [];
-      let pkPeakData = [];
-      let pkTrainData = [];
+      let pkEnvPeakData = [];
+      let pkPulseData = [];
       let pkMotifData = [];
       let pkMotifSeqData = [];
       let pkSummaryData = null;
-      let pkCurrentTable = "peak";
+      let pkCurrentTable = "envpeak";
       let pkConfirmed = false;
       let pkLastMouseTime = null;
       // Zoom/pan state
@@ -6948,20 +6961,20 @@
       let pkEditMode = "select"; // 'select' | 'add'
       let pkDidDrag = false; // distinguishes a pan from a click
       let pkHoverTime = null; // for add-mode preview guide
-      // Train segmentation is FROZEN after detection: each peak carries a boolean
-      // `splitAfter` meaning "a train boundary follows this peak". All manual edits
+      // Pulse segmentation is FROZEN after detection: each envelope peak carries a boolean
+      // `splitAfter` meaning "a pulse boundary follows this envelope peak". All manual edits
       // toggle these flags locally — the grouping algorithm never re-runs.
-      const pkSelection = new Set(); // selected peak objects (references)
+      const pkSelection = new Set(); // selected envelope peak objects (references)
       let pkBand = null; // {x0,y0,x1,y1} rubber-band in canvas px
       let pkDidBand = false; // suppress the click after a band drag
 
-      // Wire motif-seq checkbox + live regrouping of trains/motifs/sequences.
+      // Wire motif-seq checkbox + live regrouping of pulses/motifs/sequences.
       document.addEventListener("DOMContentLoaded", () => {
-        // Recompute trains -> motifs -> sequences from the FROZEN peak
+        // Recompute pulses -> motifs -> sequences from the FROZEN envelope peak
         // segmentation and redraw immediately, with no need to re-run Detect
-        // Peaks. Only fires once peaks already exist.
+        // Envelope peaks. Only fires once envelope peaks already exist.
         const regroup = (note) => {
-          if (pkPeaks && pkPeaks.length) pkLiveUpdate(note);
+          if (pkEnvPeaks && pkEnvPeaks.length) pkLiveUpdate(note);
         };
         const cb = $("pkMotifSeq");
         if (cb)
@@ -6970,29 +6983,29 @@
             regroup("motif sequences");
           });
         [
-          ["pkMaxTrainGap", "max train gap"],
-          ["pkMinPeaks", "min peaks/train"],
+          ["pkMaxPulseGap", "max pulse gap"],
+          ["pkMinEnvPeaks", "min envelope peaks/pulse"],
           ["pkMaxMotifGap", "max motif gap"],
         ].forEach(([id, note]) => {
           const el = $(id);
           if (el) el.addEventListener("input", () => regroup(note));
         });
-        // "Max peak gap" / "Max amp diff" (the Train Grouping panel) drive
-        // peak-to-train segmentation itself, one level below the trio above.
-        // Re-derive splitAfter for ALL peaks from the new threshold — this
-        // never adds, removes, or moves a peak (manually added/removed peaks
-        // stay exactly as they are), it only redraws train boundaries around
-        // the peaks that already exist. Any hand-toggled split/merge/assign
+        // "Max envelope peak gap" / "Max amp diff" (the Pulse Grouping panel) drive
+        // envelope peak-to-pulse segmentation itself, one level below the trio above.
+        // Re-derive splitAfter for ALL envelope peaks from the new threshold — this
+        // never adds, removes, or moves a envelope peak (manually added/removed envelope peaks
+        // stay exactly as they are), it only redraws pulse boundaries around
+        // the envelope peaks that already exist. Any hand-toggled split/merge/assign
         // is a boundary edit too, so a threshold change here supersedes it,
         // same as it does at detection time.
         const regroupBoundaries = (note) => {
-          if (pkPeaks && pkPeaks.length) {
+          if (pkEnvPeaks && pkEnvPeaks.length) {
             pkInitBoundaries();
             pkLiveUpdate(note);
           }
         };
         [
-          ["pkMaxGap", "max peak gap"],
+          ["pkMaxGap", "max envelope peak gap"],
           ["pkMaxDiff", "max amp diff"],
         ].forEach(([id, note]) => {
           const el = $(id);
@@ -7028,7 +7041,7 @@
       // typical 44.1kHz recording). Real bioacoustic envelopes find their
       // true valley/wall long before this; it only bounds the pathological
       // case of a long, near-monotonic stretch (e.g. a slowly decaying
-      // train tail) so a single call can't degrade toward O(n) — once a dip
+      // pulse tail) so a single call can't degrade toward O(n) — once a dip
       // this deep has been scanned without finding a taller point, the
       // measured prominence already exceeds any realistic percentage
       // threshold, so capping here doesn't change real outcomes.
@@ -7039,7 +7052,7 @@
       // hitting a strictly taller sample (the "wall") or the signal edge.
       // Prominence = cv minus the HIGHER of the two sides' lowest points —
       // i.e. the shallower of the two dips is what actually limits how much
-      // this peak stands out (matches scipy.signal.peak_prominences).
+      // this envelope peak stands out (matches scipy.signal.env_peak_prominences).
       function pkProminenceAt(env, idx, cv, cap) {
         const n = env.length;
         let leftMin = cv;
@@ -7063,23 +7076,23 @@
         return cv - Math.max(leftMin, rightMin);
       }
 
-      // ── Local peak detection ────────────────────────────────────────────
-      // detThrPct  : strong floor — peaks above this are always accepted ("seeds").
-      // linkThrPct : optional lower floor (hysteresis). Weak peaks whose amplitude is
+      // ── Local envelope peak detection ────────────────────────────────────────────
+      // detThrPct  : strong floor — envelope peaks above this are always accepted ("seeds").
+      // linkThrPct : optional lower floor (hysteresis). Weak envelope peaks whose amplitude is
       //              between linkThr and detThr are accepted ONLY if they fall within
-      //              `linkMs` of an accepted (strong) peak. This recovers the quiet
-      //              onset/offset peaks of a train while rejecting isolated inter-train
+      //              `linkMs` of an accepted (strong) envelope peak. This recovers the quiet
+      //              onset/offset envelope peaks of a pulse while rejecting isolated inter-pulse
       //              noise of the same height. Pass null to disable.
-      function pkFindPeaks(
+      function pkFindEnvPeaks(
         env,
         winMs,
-        peakThrPct,
+        env_peakThrPct,
         detThrPct,
         linkThrPct,
         linkMs,
       ) {
         const winSamp = Math.max(1, Math.round((sampleRate * winMs) / 1000));
-        const peakThr = peakThrPct / 100;
+        const env_peakThr = env_peakThrPct / 100;
         const detThr = detThrPct / 100;
         const linkThr =
           linkThrPct != null && linkThrPct < detThrPct
@@ -7094,8 +7107,8 @@
 
         // Pass 1 — collect every prominent local maximum above the lowest floor.
         // Plateau-aware: a flat or flat-topped maximum is detected ONCE and the
-        // marker is placed at the centre of the flat top. After emitting a peak we
-        // jump past its plateau so a single broad top can't spawn several peaks.
+        // marker is placed at the centre of the flat top. After emitting a envelope peak we
+        // jump past its plateau so a single broad top can't spawn several envelope peaks.
         const cands = [];
         let i = winSamp;
         while (i < n - winSamp) {
@@ -7107,9 +7120,9 @@
 
           // Is i the start of a maximal run of equal values (the plateau top)?
           // First require that nothing in the window strictly exceeds cv. This
-          // ±winSamp check is purely about peak WIDTH/spacing — confirming i is
+          // ±winSamp check is purely about envelope peak WIDTH/spacing — confirming i is
           // locally the tallest point so closely-packed samples don't each
-          // register as their own peak — and is intentionally decoupled from
+          // register as their own envelope peak — and is intentionally decoupled from
           // prominence (see below), which needs to look arbitrarily far out.
           let isMax = true;
           for (let j = i - winSamp; j <= i + winSamp; j++) {
@@ -7124,8 +7137,8 @@
           }
 
           // Extend across the flat top. Real envelopes are never exactly flat, so
-          // treat samples within a small tolerance of the peak value as "on the top".
-          // Tolerance scales with the peak height (and a tiny absolute floor) so it
+          // treat samples within a small tolerance of the envelope peak value as "on the top".
+          // Tolerance scales with the envelope peak height (and a tiny absolute floor) so it
           // works for both tall and faint plateaus.
           const flatTol = Math.max(cv * 0.02, 1e-6);
           let pStart = i,
@@ -7149,11 +7162,11 @@
           // hold — measured by walking outward until a taller point (or the
           // signal edge) is found on each side, not just within ±winSamp. A
           // narrow window here was the actual bug: it under-measured prominence
-          // for peaks with a gradual approach (missing genuine train-onset
-          // peaks) while over-crediting tiny noise wiggles sitting close to a
-          // strong peak (spurious detections in quiet trailing tails).
+          // for envelope peaks with a gradual approach (missing genuine pulse-onset
+          // envelope peaks) while over-crediting tiny noise wiggles sitting close to a
+          // strong envelope peak (spurious detections in quiet trailing tails).
           const centre = Math.round((pStart + pEnd) / 2);
-          if (pkProminenceAt(env, centre, cv, PK_PROMINENCE_SCAN_CAP) >= peakThr) {
+          if (pkProminenceAt(env, centre, cv, PK_PROMINENCE_SCAN_CAP) >= env_peakThr) {
             cands.push({
               idx: centre,
               time: centre / sampleRate,
@@ -7170,11 +7183,11 @@
         }
 
         // Pass 2 — keep weak candidates only if linked (within linkSamp) to a strong one.
-        const peaks = [];
+        const envPeaks = [];
         for (let k = 0; k < cands.length; k++) {
           const c = cands[k];
           if (c.strong) {
-            peaks.push({ idx: c.idx, time: c.time, amp: c.amp });
+            envPeaks.push({ idx: c.idx, time: c.time, amp: c.amp });
             continue;
           }
           let linked = false;
@@ -7194,56 +7207,56 @@
               }
             }
           }
-          if (linked) peaks.push({ idx: c.idx, time: c.time, amp: c.amp });
+          if (linked) envPeaks.push({ idx: c.idx, time: c.time, amp: c.amp });
         }
-        return peaks;
+        return envPeaks;
       }
 
-      // ── Arch (valley) train splitting ───────────────────────────────────
-      // Some species run their trains back to back: the silence between two
-      // trains is no longer than the spacing between peaks inside one, so the
+      // ── Arch (valley) pulse splitting ───────────────────────────────────
+      // Some species run their pulses back to back: the silence between two
+      // pulses is no longer than the spacing between envelope peaks inside one, so the
       // gap rule can never separate them. What still separates them by eye is
       // the ARCH — amplitude climbs to a crest, falls away, climbs again — and
       // the boundary is the VALLEY between two crests.
       //
-      // This is a SECOND pass, applied to the trains the gap rule has already
-      // produced. A train the gap rule got right, holding a single arch, has
+      // This is a SECOND pass, applied to the pulses the gap rule has already
+      // produced. A pulse the gap rule got right, holding a single arch, has
       // no qualifying valley and passes through untouched.
       //
-      // Everything works on the peak contour — the line through the peak tops,
-      // indexed by peak rather than by sample. That is the curve the eye
+      // Everything works on the envelope peak contour — the line through the envelope peak tops,
+      // indexed by envelope peak rather than by sample. That is the curve the eye
       // actually follows, and it is far cheaper and quieter than the envelope.
       //
       // Two properties matter, and both are places the previous slope-based
       // arch splitter went wrong:
       //   • The cut lands at the MIDDLE of the valley floor, not at the point
       //     where the descent first passes some threshold. Cutting on the
-      //     falling limb hands the tail of each train to the next one.
+      //     falling limb hands the tail of each pulse to the next one.
       //   • Valley depth is measured as a FRACTION of the adjacent crests, so
-      //     a quiet train and a loud one are judged alike. An absolute slope
+      //     a quiet pulse and a loud one are judged alike. An absolute slope
       //     or drop is either unreachable in quiet passages or tripped by
       //     jitter in loud ones.
 
-      // Peaks within this fraction of a train's amplitude range count as "the
+      // Envelope peaks within this fraction of a pulse's amplitude range count as "the
       // same level" and merge into one basin — valley floors are rarely a
-      // single peak wide.
+      // single envelope peak wide.
       const PK_VALLEY_FLAT_TOL = 0.05;
-      // Under this many peaks a train cannot hold two arches worth splitting.
-      const PK_VALLEY_MIN_PEAKS = 5;
+      // Under this many envelope peaks a pulse cannot hold two arches worth splitting.
+      const PK_VALLEY_MIN_TEETH = 5;
       // Depth at which a valley is unmistakable. Used only to seed the
       // automatic minimum-duration estimate, never as the user's threshold.
       const PK_VALLEY_CLEAR_DEPTH = 0.6;
-      // Automatic minimum train duration, as a fraction of the median duration
+      // Automatic minimum pulse duration, as a fraction of the median duration
       // the unmistakable valleys produce.
       const PK_VALLEY_DUR_FRAC = 0.5;
 
-      // Candidate valleys inside one train: flat-bottomed local minima, each
+      // Candidate valleys inside one pulse: flat-bottomed local minima, each
       // scored by how deep it sits relative to the crests immediately beside
       // it. Returns [{mid, depth}] where `mid` is the index to cut after.
-      function pkTrainValleys(train) {
-        const n = train.length;
-        if (n < PK_VALLEY_MIN_PEAKS) return [];
-        const amps = train.map((p) => p.amp);
+      function pkPulseValleys(pulse) {
+        const n = pulse.length;
+        if (n < PK_VALLEY_MIN_TEETH) return [];
+        const amps = pulse.map((p) => p.amp);
         let lo = Infinity,
           hi = -Infinity;
         for (const a of amps) {
@@ -7252,12 +7265,12 @@
         }
         const tol = (hi - lo) * PK_VALLEY_FLAT_TOL;
 
-        // Basins: interior floors walled in by a clearly higher peak on each
-        // side. Seeded on a true local minimum, then widened across peaks
+        // Basins: interior floors walled in by a clearly higher envelope peak on each
+        // side. Seeded on a true local minimum, then widened across envelope peaks
         // within tol of the bottom on EITHER side.
         //
         // The two-sided widening is load-bearing. A one-sided "keep going
-        // while the next peak is no higher than the running minimum" test is
+        // while the next envelope peak is no higher than the running minimum" test is
         // satisfied by any descent, so a basin swallows the whole falling limb
         // from the crest down and its midpoint lands halfway down the slope —
         // reintroducing the very mid-slope cut this rewrite exists to avoid.
@@ -7276,7 +7289,7 @@
           }
         }
 
-        // Depth against the ADJACENT crest on each side, not the train's
+        // Depth against the ADJACENT crest on each side, not the pulse's
         // overall maximum: in a run of arches of unequal height, measuring
         // against a distant tall arch would inflate every valley beside a
         // short one.
@@ -7289,24 +7302,24 @@
           for (let k = b.e + 1; k <= rEnd; k++)
             if (amps[k] > rMax) rMax = amps[k];
           const crest = Math.min(lMax, rMax);
-          // Where to cut. For a floor several peaks wide, its middle.
+          // Where to cut. For a floor several envelope peaks wide, its middle.
           //
-          // For a floor exactly ONE peak wide the midpoint rule always hands
-          // that peak to the train on its left, even when it sits much closer
-          // in time to the one on its right. That misassigns the peak, and it
+          // For a floor exactly ONE envelope peak wide the midpoint rule always hands
+          // that envelope peak to the pulse on its left, even when it sits much closer
+          // in time to the one on its right. That misassigns the envelope peak, and it
           // also drops the boundary into the NARROWER of the two gaps, where
-          // train edge padding then makes the two trains overlap. So a lone
-          // valley peak goes to whichever side its nearest peak is on — which
+          // pulse edge padding then makes the two pulses overlap. So a lone
+          // valley envelope peak goes to whichever side its nearest envelope peak is on — which
           // is the same thing as putting the cut in the wider gap.
           let mid = Math.floor((b.s + b.e) / 2);
           if (b.s === b.e) {
             const m = b.s;
-            const toLeft = train[m].time - train[m - 1].time;
-            const toRight = train[m + 1].time - train[m].time;
-            // Move it only when the right side is MEANINGFULLY closer. Peak
+            const toLeft = pulse[m].time - pulse[m - 1].time;
+            const toRight = pulse[m + 1].time - pulse[m].time;
+            // Move it only when the right side is MEANINGFULLY closer. Envelope peak
             // times carry floating-point noise, and a bare `<` flips the
             // assignment on differences of ~1e-17 — which is no difference at
-            // all. On a genuine tie the peak stays left, as it always did.
+            // all. On a genuine tie the envelope peak stays left, as it always did.
             if (toLeft - toRight > (toLeft + toRight) * 1e-6) mid = m - 1;
           }
           return { mid, depth: crest > 0 ? 1 - b.mn / crest : 0 };
@@ -7315,11 +7328,11 @@
 
       // Accept valleys deepest-first, refusing any cut that would leave a
       // segment shorter than minDurSec. Deepest-first is what makes this
-      // stable: the real inter-train valleys are claimed before shallow
-      // within-train modulation gets a chance at the same stretch.
-      function pkAcceptValleys(train, cands, minDepth, minDurSec) {
-        const n = train.length;
-        const bounds = [-1, n - 1]; // sorted last-peak index of each segment
+      // stable: the real inter-pulse valleys are claimed before shallow
+      // within-pulse modulation gets a chance at the same stretch.
+      function pkAcceptValleys(pulse, cands, minDepth, minDurSec) {
+        const n = pulse.length;
+        const bounds = [-1, n - 1]; // sorted last-envelope peak index of each segment
         const cuts = [];
         const ranked = cands
           .filter((c) => c.depth >= minDepth)
@@ -7331,8 +7344,8 @@
             hiB = bounds[li + 1];
           if (c.mid <= loB || c.mid >= hiB) continue; // stretch already cut
           if (minDurSec > 0) {
-            const leftDur = train[c.mid].time - train[loB + 1].time;
-            const rightDur = train[hiB].time - train[c.mid + 1].time;
+            const leftDur = pulse[c.mid].time - pulse[loB + 1].time;
+            const rightDur = pulse[hiB].time - pulse[c.mid + 1].time;
             if (leftDur < minDurSec || rightDur < minDurSec) continue;
           }
           bounds.splice(li + 1, 0, c.mid);
@@ -7341,30 +7354,30 @@
         return cuts.sort((a, b) => a - b);
       }
 
-      function pkCutTrain(train, cuts) {
+      function pkCutPulse(pulse, cuts) {
         const out = [];
         let start = 0;
         for (const c of cuts) {
-          out.push(train.slice(start, c + 1));
+          out.push(pulse.slice(start, c + 1));
           start = c + 1;
         }
-        out.push(train.slice(start));
+        out.push(pulse.slice(start));
         return out;
       }
 
-      // minDurMs null ⇒ derive it from the recording itself: take the trains
+      // minDurMs null ⇒ derive it from the recording itself: take the pulses
       // the unmistakable valleys carve out, and call half their median
-      // duration the shortest believable train. This is the "average train
+      // duration the shortest believable pulse. This is the "average pulse
       // duration" guard, without asking for a number that differs per species.
-      function pkSplitByValleys(trains, minDepthPct, minDurMs) {
+      function pkSplitByValleys(pulses, minDepthPct, minDurMs) {
         const minDepth = minDepthPct / 100;
-        const cands = trains.map(pkTrainValleys);
+        const cands = pulses.map(pkPulseValleys);
         let minDurSec = minDurMs != null ? minDurMs / 1000 : null;
         if (minDurSec == null) {
           const durs = [];
-          trains.forEach((t, i) => {
+          pulses.forEach((t, i) => {
             const cuts = pkAcceptValleys(t, cands[i], PK_VALLEY_CLEAR_DEPTH, 0);
-            pkCutTrain(t, cuts).forEach((seg) => {
+            pkCutPulse(t, cuts).forEach((seg) => {
               if (seg.length) durs.push(seg[seg.length - 1].time - seg[0].time);
             });
           });
@@ -7375,8 +7388,8 @@
           minDurSec = med * PK_VALLEY_DUR_FRAC;
         }
         const out = [];
-        trains.forEach((t, i) => {
-          pkCutTrain(t, pkAcceptValleys(t, cands[i], minDepth, minDurSec)).forEach(
+        pulses.forEach((t, i) => {
+          pkCutPulse(t, pkAcceptValleys(t, cands[i], minDepth, minDurSec)).forEach(
             (seg) => {
               if (seg.length) out.push(seg);
             },
@@ -7385,50 +7398,50 @@
         return out;
       }
 
-      // ── Group peaks into trains ─────────────────────────────────────────
+      // ── Group envelope peaks into pulses ─────────────────────────────────────────
       // Pass 1 is the gap/amplitude-drop rule and always runs. Pass 2 is the
       // arch splitter, and only subdivides what pass 1 produced — it can add
       // boundaries, never remove one the gap rule found.
-      function pkGroupTrains(
-        peaks,
+      function pkGroupPulses(
+        envPeaks,
         maxGapMs,
         maxDiffPct,
         archEnable,
         archDepthPct,
         archMinDurMs,
       ) {
-        if (!peaks.length) return [];
+        if (!envPeaks.length) return [];
         const maxGap = maxGapMs / 1000;
         const maxDiff = maxDiffPct != null ? maxDiffPct / 100 : null;
 
-        const trains = [];
-        let cur = [peaks[0]];
-        for (let i = 1; i < peaks.length; i++) {
-          const prev = peaks[i - 1],
-            curr = peaks[i];
+        const pulses = [];
+        let cur = [envPeaks[0]];
+        for (let i = 1; i < envPeaks.length; i++) {
+          const prev = envPeaks[i - 1],
+            curr = envPeaks[i];
           const ampDrop =
             maxDiff != null &&
             prev.amp > curr.amp &&
             prev.amp - curr.amp > maxDiff;
           if (curr.time - prev.time > maxGap || ampDrop) {
-            trains.push(cur);
+            pulses.push(cur);
             cur = [curr];
           } else cur.push(curr);
         }
-        if (cur.length) trains.push(cur);
+        if (cur.length) pulses.push(cur);
 
         return archEnable
-          ? pkSplitByValleys(trains, archDepthPct, archMinDurMs)
-          : trains;
+          ? pkSplitByValleys(pulses, archDepthPct, archMinDurMs)
+          : pulses;
       }
 
-      // ── Group trains into motifs ────────────────────────────────────────
-      // Edge padding (seconds) added to EACH side of every train (and thus
-      // every motif/sequence) to account for the offset between a peak's true
+      // ── Group pulses into motifs ────────────────────────────────────────
+      // Edge padding (seconds) added to EACH side of every pulse (and thus
+      // every motif/sequence) to account for the offset between a envelope peak's true
       // acoustic onset and its amplitude maximum. Read live from the UI;
       // default 0.5 ms per side. Falls back to 0.5 ms if the input is absent.
-      function pkTrainPadSec() {
-        const ms = parseFloat($("pkTrainPad")?.value);
+      function pkPulsePadSec() {
+        const ms = parseFloat($("pkPulsePad")?.value);
         return (isFinite(ms) && ms >= 0 ? ms : 0.5) / 1000;
       }
       // Clamp a time (seconds) to the valid signal range [0, duration].
@@ -7437,19 +7450,19 @@
         return Math.max(0, Math.min(d, t));
       }
 
-      function pkGroupMotifs(trains, maxTrainGapMs) {
-        if (!trains.length) return [];
-        const maxGap = maxTrainGapMs / 1000;
+      function pkGroupMotifs(pulses, maxPulseGapMs) {
+        if (!pulses.length) return [];
+        const maxGap = maxPulseGapMs / 1000;
         const motifs = [];
-        let cur = [trains[0]];
-        for (let i = 1; i < trains.length; i++) {
-          const prevEnd = trains[i - 1][trains[i - 1].length - 1].time;
-          const currStart = trains[i][0].time;
+        let cur = [pulses[0]];
+        for (let i = 1; i < pulses.length; i++) {
+          const prevEnd = pulses[i - 1][pulses[i - 1].length - 1].time;
+          const currStart = pulses[i][0].time;
           if (currStart - prevEnd > maxGap) {
             motifs.push(cur);
-            cur = [trains[i]];
+            cur = [pulses[i]];
           } else {
-            cur.push(trains[i]);
+            cur.push(pulses[i]);
           }
         }
         if (cur.length) motifs.push(cur);
@@ -7487,16 +7500,16 @@
         "pkDetThr",
         "pkLinkThr",
         "pkFalseDiff",
-        "pkSpecResPeak",
-        "pkSpecResTrain",
+        "pkSpecResEnvPeak",
+        "pkSpecResPulse",
         "pkSpecResMotif",
         "pkMaxGap",
         "pkMaxDiff",
-        "pkMinPeaks",
+        "pkMinEnvPeaks",
         "pkArchEnable",
         "pkArchDepth",
         "pkArchMinDur",
-        "pkMaxTrainGap",
+        "pkMaxPulseGap",
         "pkMotifSeq",
         "pkMaxMotifGap",
       ];
@@ -7536,19 +7549,31 @@
         // Spectral windows used to be stored as durations. Convert an old
         // preset's milliseconds into the resolution it was really asking for,
         // so a saved parameter set keeps meaning the same thing.
-        if ("pkSpecWin" in data && !("pkSpecResPeak" in data))
+        if ("pkSpecWin" in data && !("pkSpecResEnvPeak" in data))
           data = {
             ...data,
-            pkSpecResPeak: String(
+            pkSpecResEnvPeak: String(
               Math.round(1000 / Math.max(0.1, parseFloat(data.pkSpecWin) || 0.667)),
             ),
           };
-        if ("pkSpecTrainWin" in data && !("pkSpecResTrain" in data))
+        // Element ids renamed with train -> pulse. A preset saved before
+        // that carries the old names; map them across so a saved parameter
+        // set survives the rename.
+        [
+          ["pkSpecResTrain", "pkSpecResPulse"],
+          ["pkMaxTrainGap", "pkMaxPulseGap"],
+          ["pkTrainPad", "pkPulsePad"],
+          ["pkSpecTrainWin", "pkSpecPulseWin"],
+        ].forEach(([oldId, newId]) => {
+          if (oldId in data && !(newId in data))
+            data = { ...data, [newId]: data[oldId] };
+        });
+        if ("pkSpecPulseWin" in data && !("pkSpecResPulse" in data))
           data = {
             ...data,
-            pkSpecResTrain: String(
+            pkSpecResPulse: String(
               Math.round(
-                1000 / Math.max(1, parseFloat(data.pkSpecTrainWin) || 20),
+                1000 / Math.max(1, parseFloat(data.pkSpecPulseWin) || 20),
               ),
             ),
           };
@@ -7656,7 +7681,7 @@
           _pkPresetStatus(
             '✔ Loaded "' +
               (data._name || "Preset " + n) +
-              '" — click Detect Peaks to apply.',
+              '" — click Detect Envelope peaks to apply.',
           );
         } catch (e) {
           _pkPresetStatus("Load error: " + e.message, true);
@@ -7760,39 +7785,39 @@
         return {
           smoothMs: Math.max(0.5, parseFloat($("pkSmooth").value) || 1),
           winMs: Math.max(0.05, parseFloat($("pkWin").value) || 5),
-          peakThr: parseFloat($("pkThresh").value) || 0.5,
+          env_peakThr: parseFloat($("pkThresh").value) || 0.5,
           detThr: parseFloat($("pkDetThr").value) || 15,
           linkThr: linkRaw === "" ? null : parseFloat(linkRaw),
           maxGapMs: parseFloat($("pkMaxGap").value) || 10,
           maxDiff: maxDiffRaw === "" ? null : parseFloat(maxDiffRaw),
           archEnable: $("pkArchEnable").checked,
           archDepth: parseFloat($("pkArchDepth").value) || 40,
-          // Blank ⇒ derive the shortest believable train from the recording.
+          // Blank ⇒ derive the shortest believable pulse from the recording.
           archMinDur:
             $("pkArchMinDur").value.trim() === ""
               ? null
               : parseFloat($("pkArchMinDur").value),
-          maxTrainGapMs: parseFloat($("pkMaxTrainGap").value) || 300,
-          minPeaks: parseInt($("pkMinPeaks").value) || 3,
+          maxPulseGapMs: parseFloat($("pkMaxPulseGap").value) || 300,
+          minEnvPeaks: parseInt($("pkMinEnvPeaks").value) || 3,
           useMotifSeq: $("pkMotifSeq").checked,
           maxMotifGapMs: parseFloat($("pkMaxMotifGap").value) || 800,
         };
       }
 
-      // ── Stage 1: fit grouping parameters to hand-corrected trains ───────
+      // ── Stage 1: fit grouping parameters to hand-corrected pulses ───────
       // The boundaries you have already fixed by hand ARE the training target.
       // pkInitBoundaries freezes the algorithm into splitAfter flags and every
       // manual edit only moves those flags, so the current state of a selected
       // span is already a labelled example — no separate annotation step.
       //
-      // Only the GROUPING parameters are fitted: Max peak gap, Max amp diff,
-      // and the arch splitter's on/off + valley depth + min train. Peak
-      // DETECTION is held fixed. It decides which peaks exist, so refitting it
+      // Only the GROUPING parameters are fitted: Max envelope peak gap, Max amp diff,
+      // and the arch splitter's on/off + valley depth + min pulse. Envelope peak
+      // DETECTION is held fixed. It decides which envelope peaks exist, so refitting it
       // would move the target and the reference at the same time, and would
       // mean recomputing the envelope once per candidate.
       let pkFitBest = null;
 
-      // The span to train on: the peaks you selected, else whatever is on
+      // The span to pulse on: the envelope peaks you selected, else whatever is on
       // screen. Selection is the deliberate choice; the visible range is the
       // convenient fallback.
       function pkFitWindow() {
@@ -7807,7 +7832,7 @@
         const t1 = pkViewEnd == null ? duration : pkViewEnd;
         let lo = -1,
           hi = -1;
-        pkPeaks.forEach((p, i) => {
+        pkEnvPeaks.forEach((p, i) => {
           if (p.time >= t0 && p.time <= t1) {
             if (lo < 0) lo = i;
             hi = i;
@@ -7816,20 +7841,20 @@
         return lo < 0 ? null : { lo, hi, source: "visible range" };
       }
 
-      // Boundaries are compared as TIMES, not peak indices, so a score stays
-      // meaningful even if the peak set later shifts under it.
+      // Boundaries are compared as TIMES, not envelope peak indices, so a score stays
+      // meaningful even if the envelope peak set later shifts under it.
       function pkRefBoundaries(lo, hi) {
         const out = [];
         for (let i = lo; i < hi; i++)
-          if (pkPeaks[i].splitAfter)
-            out.push((pkPeaks[i].time + pkPeaks[i + 1].time) / 2);
+          if (pkEnvPeaks[i].splitAfter)
+            out.push((pkEnvPeaks[i].time + pkEnvPeaks[i + 1].time) / 2);
         return out;
       }
-      function pkTrainBoundaryTimes(trains) {
+      function pkPulseBoundaryTimes(pulses) {
         const out = [];
-        for (let i = 0; i + 1 < trains.length; i++) {
-          const a = trains[i][trains[i].length - 1];
-          const b = trains[i + 1][0];
+        for (let i = 0; i + 1 < pulses.length; i++) {
+          const a = pulses[i][pulses[i].length - 1];
+          const b = pulses[i + 1][0];
           out.push((a.time + b.time) / 2);
         }
         return out;
@@ -7862,24 +7887,24 @@
       }
 
       // ── Amplitude-shape agreement ────────────────────────────────────────
-      // How well a train's amplitudes form ONE arc. Find the crest, then total
+      // How well a pulse's amplitudes form ONE arc. Find the crest, then total
       // every move that contradicts a single rise-then-fall — a dip before the
       // crest, a climb after it — as a share of the profile's total movement.
-      // 1 means a clean arc; a train holding two arches scores well below.
+      // 1 means a clean arc; a pulse holding two arches scores well below.
       //
-      // Note this measures unimodality, not "must rise then fall": a train
+      // Note this measures unimodality, not "must rise then fall": a pulse
       // that only decays is still one arc, and correctly scores 1. What it
-      // punishes is UNDER-splitting, where two arches sit in one train.
-      function pkArcUnimodality(train) {
-        const n = train.length;
+      // punishes is UNDER-splitting, where two arches sit in one pulse.
+      function pkArcUnimodality(pulse) {
+        const n = pulse.length;
         if (n < 3) return 1;
         let imax = 0;
         for (let i = 1; i < n; i++)
-          if (train[i].amp > train[imax].amp) imax = i;
+          if (pulse[i].amp > pulse[imax].amp) imax = i;
         let viol = 0,
           tv = 0;
         for (let i = 0; i + 1 < n; i++) {
-          const d = train[i + 1].amp - train[i].amp;
+          const d = pulse[i + 1].amp - pulse[i].amp;
           tv += Math.abs(d);
           if (i < imax ? d < 0 : d > 0) viol += Math.abs(d);
         }
@@ -7887,12 +7912,12 @@
       }
 
       // Shape + size summary of a segmentation, for comparing a candidate's
-      // behaviour against the hand-corrected trains.
-      function pkSegStats(trains) {
+      // behaviour against the hand-corrected pulses.
+      function pkSegStats(pulses) {
         const durs = [];
         let wsum = 0,
           w = 0;
-        trains.forEach((t) => {
+        pulses.forEach((t) => {
           if (t.length < 2) return;
           durs.push(t[t.length - 1].time - t[0].time);
           wsum += pkArcUnimodality(t) * t.length;
@@ -7907,8 +7932,8 @@
 
       // Unimodality alone would happily reward chopping every arc into
       // fragments — each fragment is trivially one arc. Pairing it with
-      // agreement on median train DURATION closes that off from both sides:
-      // over-splitting shortens the trains, under-splitting wrecks the arcs.
+      // agreement on median pulse DURATION closes that off from both sides:
+      // over-splitting shortens the pulses, under-splitting wrecks the arcs.
       function pkShapePenalty(st, refStats) {
         const durTerm =
           refStats.medDur > 0 && st.medDur > 0
@@ -7944,24 +7969,24 @@
       // best for each. Leave-one-out needs a fit per held-out boundary, and
       // those fits differ only in scoring — the regrouping is identical. Doing
       // them as separate sweeps made leave-one-out cost 19× the fit itself
-      // (9.2s on a 500-peak span); folded in here it is close to free.
+      // (9.2s on a 500-envelope peak span); folded in here it is close to free.
       //
       // Ties are broken toward the CENTRE of each parameter's candidate range.
       // With only a handful of boundaries many settings score identically, and
       // the ones sitting on a cliff edge are the ones that break on the next
       // recording.
-      async function pkFitSearch(peaks, refSets, tol, minRefDurSec, onProgress) {
+      async function pkFitSearch(envPeaks, refSets, tol, minRefDurSec, onProgress) {
         const gaps = pkCandidateThresholds(
-          peaks.slice(1).map((p, i) => p.time - peaks[i].time),
+          envPeaks.slice(1).map((p, i) => p.time - envPeaks[i].time),
           30,
         );
         const drops = [];
-        for (let i = 1; i < peaks.length; i++) {
-          const d = peaks[i - 1].amp - peaks[i].amp;
+        for (let i = 1; i < envPeaks.length; i++) {
+          const d = envPeaks[i - 1].amp - envPeaks[i].amp;
           if (d > 0) drops.push(d);
         }
         const diffs = [null, ...pkCandidateThresholds(drops, 15)];
-        // A guard longer than the shortest reference train would veto a cut
+        // A guard longer than the shortest reference pulse would veto a cut
         // the reference says is correct, so cap the candidates below it.
         const minDurs = [null, 0];
         if (minRefDurSec > 0)
@@ -7998,7 +8023,7 @@
           diffs.forEach((d, di) => {
             const gapMs = g * 1000;
             const diffPct = d == null ? null : d * 100;
-            const base = pkGroupTrains(peaks, gapMs, diffPct, false, 0, null);
+            const base = pkGroupPulses(envPeaks, gapMs, diffPct, false, 0, null);
             const cen0 = mid(gi, gaps.length) + mid(di, diffs.length);
             offer(
               cen0,
@@ -8009,7 +8034,7 @@
                 archDepth: 40,
                 archMinDur: null,
               },
-              pkTrainBoundaryTimes(base),
+              pkPulseBoundaryTimes(base),
             );
             PK_FIT_DEPTHS.forEach((dep, pi) => {
               minDurs.forEach((md, mi) => {
@@ -8024,7 +8049,7 @@
                     archDepth: dep,
                     archMinDur: md,
                   },
-                  pkTrainBoundaryTimes(pkSplitByValleys(base, dep, md)),
+                  pkPulseBoundaryTimes(pkSplitByValleys(base, dep, md)),
                 );
               });
             });
@@ -8039,15 +8064,15 @@
         return { bests, ties };
       }
 
-      // ── Stage 2: fit peak-DETECTION parameters ───────────────────────────
-      // Stage 1 takes the peak set as given and only decides where to cut it.
-      // This decides the peak set itself, learning from the peaks you kept,
+      // ── Stage 2: fit envelope peak-DETECTION parameters ───────────────────────────
+      // Stage 1 takes the envelope peak set as given and only decides where to cut it.
+      // This decides the envelope peak set itself, learning from the envelope peaks you kept,
       // added and deleted by hand — edits Stage 1 is blind to.
       //
       // Smoothing is deliberately NOT fitted. It is yours to set, and it is
       // also the one parameter whose change forces the whole envelope to be
       // recomputed; holding it fixed means the envelope is computed once and
-      // every candidate only re-runs peak finding.
+      // every candidate only re-runs envelope peak finding.
       //
       // Detection runs on a padded SLICE of the envelope rather than the whole
       // recording — hundreds of candidates over millions of samples would take
@@ -8055,10 +8080,10 @@
       // prominence walk somewhere to go before it hits an artificial edge.
       const PK_FIT_SLICE_PAD_S = 0.05;
 
-      // F1 over greedily matched peak TIMES. Same shape as the boundary match,
-      // but the tolerance is much tighter: two peaks a whole spacing apart are
-      // different peaks, not a near miss.
-      function pkPeakMatchF1(refTimes, predTimes, tol) {
+      // F1 over greedily matched envelope peak TIMES. Same shape as the boundary match,
+      // but the tolerance is much tighter: two envelope peaks a whole spacing apart are
+      // different envelope peaks, not a near miss.
+      function pkEnvPeakMatchF1(refTimes, predTimes, tol) {
         if (!refTimes.length && !predTimes.length) return 1;
         const used = new Array(predTimes.length).fill(false);
         let tp = 0;
@@ -8085,17 +8110,17 @@
         );
       }
 
-      // Search detection settings against the peaks you kept. Δ (false-peak)
+      // Search detection settings against the envelope peaks you kept. Δ (false-envelope peak)
       // is applied as post-processing on an already-detected list, so it sits
       // in the innermost loop and costs no extra detection passes.
-      async function pkFitDetection(refPeaks, t0, t1, maxGapMs, onProgress) {
-        const spac = refPeaks
+      async function pkFitDetection(refEnvPeaks, t0, t1, maxGapMs, onProgress) {
+        const spac = refEnvPeaks
           .slice(1)
-          .map((p, i) => p.time - refPeaks[i].time)
+          .map((p, i) => p.time - refEnvPeaks[i].time)
           .sort((a, b) => a - b);
         const medSpac = spac.length ? spac[Math.floor(spac.length / 2)] : 0.002;
         const tol = Math.max(medSpac * 0.25, 0.0002);
-        const refTimes = refPeaks.map((p) => p.time);
+        const refTimes = refEnvPeaks.map((p) => p.time);
 
         const pad = PK_FIT_SLICE_PAD_S;
         const lo = Math.max(0, Math.floor((t0 - pad) * sampleRate));
@@ -8104,7 +8129,7 @@
         const offsetSec = lo / sampleRate;
         const silenceFloor = pkPercentile(pkEnv, 5);
 
-        // Peak window caps how close two peaks may be, so scale the candidates
+        // Envelope peak window caps how close two envelope peaks may be, so scale the candidates
         // to the spacing actually present rather than to arbitrary numbers.
         const msSpac = medSpac * 1000;
         const winCands = [...new Set(
@@ -8116,7 +8141,7 @@
         // Detection threshold: thresholds between observed reference
         // amplitudes enumerate the distinct behaviours, same trick as Stage 1.
         const detCands = pkCandidateThresholds(
-          refPeaks.map((p) => p.amp),
+          refEnvPeaks.map((p) => p.amp),
           10,
         ).map((v) => v * 100);
         const falseCands = [null, 5, 15, 30];
@@ -8125,14 +8150,14 @@
         let done = 0;
         const total = winCands.length * promCands.length * detCands.length;
         for (const winMs of winCands) {
-          for (const peakThr of promCands) {
+          for (const env_peakThr of promCands) {
             for (const detThr of detCands) {
               // Onset threshold only means anything below the detection bar.
               for (const linkThr of [null, detThr * 0.5, detThr * 0.25]) {
-                const found = pkFindPeaks(
+                const found = pkFindEnvPeaks(
                   slice,
                   winMs,
-                  peakThr,
+                  env_peakThr,
                   detThr,
                   linkThr,
                   maxGapMs,
@@ -8141,12 +8166,12 @@
                   .map((p) => ({ time: p.time + offsetSec, amp: p.amp }))
                   .filter((p) => p.time >= t0 && p.time <= t1);
                 for (const falseDiff of falseCands) {
-                  const kept = pkWithoutFalsePeaks(
+                  const kept = pkWithoutFalseEnvPeaks(
                     shifted,
                     silenceFloor,
                     falseDiff,
                   );
-                  const f1 = pkPeakMatchF1(
+                  const f1 = pkEnvPeakMatchF1(
                     refTimes,
                     kept.map((p) => p.time),
                     tol,
@@ -8154,10 +8179,10 @@
                   if (!best || f1 > best.f1 + 1e-9) {
                     best = {
                       f1,
-                      peaks: kept,
+                      envPeaks: kept,
                       params: {
                         winMs,
-                        peakThr,
+                        env_peakThr,
                         detThr,
                         linkThr,
                         falseDiff,
@@ -8186,11 +8211,11 @@
       const PK_FIT_MAX_TIES = 120;
 
       async function pkFitEvaluate(
-        peaks,
+        envPeaks,
         ref,
         tol,
         minRefDurSec,
-        allPeaks,
+        allEnvPeaks,
         onProgress,
       ) {
         let foldOf = [];
@@ -8209,7 +8234,7 @@
           ...foldOf.map((j) => ref.filter((_, k) => k !== j)),
         ];
         const { bests, ties } = await pkFitSearch(
-          peaks,
+          envPeaks,
           sets,
           tol,
           minRefDurSec,
@@ -8231,32 +8256,32 @@
         // differently over the REST of the recording — which is the part that
         // matters and the part with no labels on it.
         //
-        // So among the tied settings, prefer the one whose trains most
+        // So among the tied settings, prefer the one whose pulses most
         // resemble the hand-corrected ones across the whole file: same kind of
-        // amplitude arc, same rough duration. This is the only place peak
+        // amplitude arc, same rough duration. This is the only place envelope peak
         // amplitude enters the fit, and it is deliberately a tie-break — it
         // can never override a setting that matches your boundaries better.
         let shape = null;
-        if (allPeaks && allPeaks.length && ties.length > 1) {
-          const refTrains = [];
-          let seg = [peaks[0]];
+        if (allEnvPeaks && allEnvPeaks.length && ties.length > 1) {
+          const refPulses = [];
+          let seg = [envPeaks[0]];
           const refSet = new Set(ref);
-          for (let i = 1; i < peaks.length; i++) {
-            const bt = (peaks[i - 1].time + peaks[i].time) / 2;
+          for (let i = 1; i < envPeaks.length; i++) {
+            const bt = (envPeaks[i - 1].time + envPeaks[i].time) / 2;
             if (refSet.has(bt)) {
-              refTrains.push(seg);
-              seg = [peaks[i]];
-            } else seg.push(peaks[i]);
+              refPulses.push(seg);
+              seg = [envPeaks[i]];
+            } else seg.push(envPeaks[i]);
           }
-          refTrains.push(seg);
-          const refStats = pkSegStats(refTrains);
+          refPulses.push(seg);
+          const refStats = pkSegStats(refPulses);
 
           let pick = null;
           for (const c of ties) {
             const p = c.params;
             const st = pkSegStats(
-              pkGroupTrains(
-                allPeaks,
+              pkGroupPulses(
+                allEnvPeaks,
                 p.maxGapMs,
                 p.maxDiff,
                 p.archEnable,
@@ -8300,48 +8325,48 @@
         pkFitBest = null;
         const applyBtn = $("btnPkFitApply");
         if (applyBtn) applyBtn.disabled = true;
-        if (!pkPeaks.length) {
-          _pkFitStatus("Detect peaks first.", "err");
+        if (!pkEnvPeaks.length) {
+          _pkFitStatus("Detect envelope peaks first.", "err");
           return;
         }
         const win = pkFitWindow();
         if (!win || win.hi - win.lo < 2) {
           _pkFitStatus(
-            "Select the peaks of the trains you corrected (or zoom to them).",
+            "Select the envelope peaks of the pulses you corrected (or zoom to them).",
             "err",
           );
           return;
         }
-        const peaks = pkPeaks.slice(win.lo, win.hi + 1);
+        const envPeaks = pkEnvPeaks.slice(win.lo, win.hi + 1);
         const ref = pkRefBoundaries(win.lo, win.hi);
         if (!ref.length) {
           _pkFitStatus(
-            "No train boundaries inside that span — nothing to learn from.",
+            "No pulse boundaries inside that span — nothing to learn from.",
             "err",
           );
           return;
         }
 
-        // Match tolerance: half the median peak spacing. Tight enough that a
+        // Match tolerance: half the median envelope peak spacing. Tight enough that a
         // boundary in the wrong gap counts as wrong, loose enough to survive
-        // a cut landing one peak either side of the reference.
-        const spac = peaks
+        // a cut landing one envelope peak either side of the reference.
+        const spac = envPeaks
           .slice(1)
-          .map((p, i) => p.time - peaks[i].time)
+          .map((p, i) => p.time - envPeaks[i].time)
           .sort((a, b) => a - b);
         const tol = spac.length ? spac[Math.floor(spac.length / 2)] / 2 : 0.001;
 
-        // Shortest reference train in the span, used to cap the min-train
+        // Shortest reference pulse in the span, used to cap the min-pulse
         // guard candidates.
         let minRefDur = Infinity,
           segStart = 0;
         const refIdx = [];
         for (let i = win.lo; i < win.hi; i++)
-          if (pkPeaks[i].splitAfter) refIdx.push(i - win.lo);
-        [...refIdx, peaks.length - 1].forEach((end) => {
+          if (pkEnvPeaks[i].splitAfter) refIdx.push(i - win.lo);
+        [...refIdx, envPeaks.length - 1].forEach((end) => {
           minRefDur = Math.min(
             minRefDur,
-            peaks[end].time - peaks[segStart].time,
+            envPeaks[end].time - envPeaks[segStart].time,
           );
           segStart = end + 1;
         });
@@ -8350,39 +8375,39 @@
         const alsoDetect = !!$("pkFitDetect")?.checked;
 
         const fitted = await withBusy("Fitting…", async (progress) => {
-          // Stage 2 first, if asked: the peak set it settles on is what
-          // Stage 1 then gets grouped. Fitting grouping against the OLD peaks
+          // Stage 2 first, if asked: the envelope peak set it settles on is what
+          // Stage 1 then gets grouped. Fitting grouping against the OLD envelope peaks
           // and detection against the new ones would leave the two disagreeing.
           let det = null;
           let detRejected = false;
-          let workPeaks = peaks;
+          let workEnvPeaks = envPeaks;
           if (alsoDetect) {
             const d = await pkFitDetection(
-              peaks,
-              peaks[0].time,
-              peaks[peaks.length - 1].time,
+              envPeaks,
+              envPeaks[0].time,
+              envPeaks[envPeaks.length - 1].time,
               parseFloat($("pkMaxGap").value) || 10,
               (f) =>
                 progress(
-                  "Fitting peak detection… " + Math.round(f * 100) + "%",
+                  "Fitting envelope peak detection… " + Math.round(f * 100) + "%",
                   f * 0.5,
                 ),
             );
-            // Adopt the detection fit only if it produced a usable peak set.
-            // Keeping its parameters after rejecting its peaks would write
+            // Adopt the detection fit only if it produced a usable envelope peak set.
+            // Keeping its parameters after rejecting its envelope peaks would write
             // settings into the panels that the grouping fit never saw, and
             // that find almost nothing when Apply re-runs detection.
-            if (d && d.peaks.length >= 3) {
+            if (d && d.envPeaks.length >= 3) {
               det = d;
-              workPeaks = d.peaks;
+              workEnvPeaks = d.envPeaks;
             } else if (d) detRejected = true;
           }
           const ev = await pkFitEvaluate(
-            workPeaks,
+            workEnvPeaks,
             ref,
             tol,
             minRefDur,
-            alsoDetect ? null : pkPeaks,
+            alsoDetect ? null : pkEnvPeaks,
             (f) =>
               progress(
                 "Fitting grouping… " + Math.round(f * 100) + "%",
@@ -8405,12 +8430,12 @@
         const bits = [];
         if (det)
           bits.push(
-            "peaks " +
+            "envelope peaks " +
               (det.f1 * 100).toFixed(0) +
               "% (win " +
               det.params.winMs +
               "ms, prom " +
-              det.params.peakThr +
+              det.params.env_peakThr +
               "%, det " +
               det.params.detThr.toFixed(1) +
               "%, onset " +
@@ -8433,7 +8458,7 @@
               (p.archMinDur == null ? "auto" : p.archMinDur.toFixed(0) + "ms")
             : "arch off",
         );
-        const trainPct = (best.f1 * 100).toFixed(0);
+        const pulsePct = (best.f1 * 100).toFixed(0);
         let msg =
           ref.length +
           " boundaries from " +
@@ -8441,7 +8466,7 @@
           " → " +
           bits.join(", ") +
           " · fit " +
-          trainPct +
+          pulsePct +
           "%";
         let cls = "";
         if (loo) {
@@ -8466,17 +8491,17 @@
         // Say plainly which half was fitted: with the box unticked, Apply
         // changes grouping only, and that is easy to mistake for a fault.
         if (detRejected) {
-          msg += " · detection fit found too few peaks — grouping only";
+          msg += " · detection fit found too few envelope peaks — grouping only";
           cls = "warn";
         } else if (!det) {
-          msg += " · grouping only (tick “incl. peak detection” to fit that too)";
+          msg += " · grouping only (tick “incl. envelope peak detection” to fit that too)";
         }
         _pkFitStatus(msg, cls);
       }
 
       // Writes the fitted values into the parameter inputs and re-applies them
       // across the WHOLE recording. Manual edits are replaced — boundary edits
-      // always, and peak edits too when detection was part of the fit. That is
+      // always, and envelope peak edits too when detection was part of the fit. That is
       // the point: the parameters now reproduce them without the hand work.
       async function pkFitApply() {
         if (!pkFitBest) return;
@@ -8492,18 +8517,18 @@
         if (p.detection) {
           const d = p.detection;
           $("pkWin").value = String(d.winMs);
-          $("pkThresh").value = String(d.peakThr);
+          $("pkThresh").value = String(d.env_peakThr);
           $("pkDetThr").value = String(Math.round(d.detThr * 100) / 100);
           $("pkLinkThr").value =
             d.linkThr == null ? "" : String(Math.round(d.linkThr * 100) / 100);
           $("pkFalseDiff").value =
             d.falseDiff == null ? "" : String(d.falseDiff);
-          // Detection changed, so the peak list itself has to be rebuilt —
-          // re-freezing boundaries over the old peaks would be meaningless.
+          // Detection changed, so the envelope peak list itself has to be rebuilt —
+          // re-freezing boundaries over the old envelope peaks would be meaningless.
           // Smoothing is untouched, so the envelope comes out identical.
           await pkDetect();
           _pkFitStatus(
-            "Applied. Peaks re-detected and boundaries regrouped — manual edits replaced.",
+            "Applied. Envelope peaks re-detected and boundaries regrouped — manual edits replaced.",
             "",
           );
           return;
@@ -8515,80 +8540,80 @@
       }
 
       // ── Frozen segmentation ─────────────────────────────────────────────
-      // Build trains by walking the peaks and cutting wherever splitAfter is set.
+      // Build pulses by walking the envelope peaks and cutting wherever splitAfter is set.
       // This is purely local: it never consults the grouping algorithm, so editing
       // one boundary can never change any other boundary.
-      function pkBuildTrains() {
-        const trains = [];
-        if (!pkPeaks.length) return trains;
-        let cur = [pkPeaks[0]];
-        for (let i = 1; i < pkPeaks.length; i++) {
-          if (pkPeaks[i - 1].splitAfter) {
-            trains.push(cur);
-            cur = [pkPeaks[i]];
-          } else cur.push(pkPeaks[i]);
+      function pkBuildPulses() {
+        const pulses = [];
+        if (!pkEnvPeaks.length) return pulses;
+        let cur = [pkEnvPeaks[0]];
+        for (let i = 1; i < pkEnvPeaks.length; i++) {
+          if (pkEnvPeaks[i - 1].splitAfter) {
+            pulses.push(cur);
+            cur = [pkEnvPeaks[i]];
+          } else cur.push(pkEnvPeaks[i]);
         }
-        trains.push(cur);
-        return trains;
+        pulses.push(cur);
+        return pulses;
       }
 
       // Run the detection algorithm ONCE and freeze its segmentation into flags.
       function pkInitBoundaries() {
         const P = pkReadParams();
-        const rawTrains = pkGroupTrains(
-          pkPeaks,
+        const rawPulses = pkGroupPulses(
+          pkEnvPeaks,
           P.maxGapMs,
           P.maxDiff,
           P.archEnable,
           P.archDepth,
           P.archMinDur,
         );
-        pkPeaks.forEach((p) => {
+        pkEnvPeaks.forEach((p) => {
           p.splitAfter = false;
         });
-        rawTrains.forEach((tr, ti) => {
-          if (ti < rawTrains.length - 1) tr[tr.length - 1].splitAfter = true; // boundary after each train
+        rawPulses.forEach((tr, ti) => {
+          if (ti < rawPulses.length - 1) tr[tr.length - 1].splitAfter = true; // boundary after each pulse
         });
       }
 
-      // Recompute trains/motifs from the FROZEN segmentation (no algorithm).
+      // Recompute pulses/motifs from the FROZEN segmentation (no algorithm).
       function pkComputeGroups() {
         const P = pkReadParams();
-        const trains = pkBuildTrains().filter((t) => t.length >= P.minPeaks);
-        const motifs = pkGroupMotifs(trains, P.maxTrainGapMs);
+        const pulses = pkBuildPulses().filter((t) => t.length >= P.minEnvPeaks);
+        const motifs = pkGroupMotifs(pulses, P.maxPulseGapMs);
         const motifSeqs = P.useMotifSeq
           ? pkGroupMotifSeqs(motifs, P.maxMotifGapMs)
           : [];
-        return { P, trains, motifs, motifSeqs };
+        return { P, pulses, motifs, motifSeqs };
       }
 
       // Regroup, redraw, and report counts after a manual edit.
       function pkLiveUpdate(note) {
-        const { trains, motifs } = pkComputeGroups();
+        const { pulses, motifs } = pkComputeGroups();
         if (pkConfirmed) {
           $("pkStatus").textContent =
-            pkPeaks.length +
-            " peaks → " +
-            trains.length +
-            " trains → " +
+            pkEnvPeaks.length +
+            " envelope peaks → " +
+            pulses.length +
+            " pulses → " +
             motifs.length +
             " motifs" +
             (note ? "  (" + note + ")" : "") +
             " · click Confirm to recompute metrics";
         } else {
           $("pkStatus").textContent =
-            pkPeaks.length +
-            " peaks → " +
-            trains.length +
-            " trains → " +
+            pkEnvPeaks.length +
+            " envelope peaks → " +
+            pulses.length +
+            " pulses → " +
             motifs.length +
             " motifs" +
             (note ? "  (" + note + ")" : "");
         }
         const applyBtn = $("btnPkApplySpectral");
-        if (applyBtn) applyBtn.disabled = !pkPeaks.length;
+        if (applyBtn) applyBtn.disabled = !pkEnvPeaks.length;
         const falseBtn = $("btnPkFilterFalse");
-        if (falseBtn) falseBtn.disabled = !pkPeaks.length;
+        if (falseBtn) falseBtn.disabled = !pkEnvPeaks.length;
         pkUpdateSelectionButtons();
         pkDrawEnvelope();
       }
@@ -8615,53 +8640,53 @@
         return 1;
       }
 
-      // ── False-peak filter ────────────────────────────────────────────────
-      // Removes peaks that are only technically local maxima — they clear the
+      // ── False-envelope peak filter ────────────────────────────────────────────────
+      // Removes envelope peaks that are only technically local maxima — they clear the
       // prominence check on their own tiny dip — but sit at the bottom of the
-      // envelope between clearly taller real peaks. That covers a single low
+      // envelope between clearly taller real envelope peaks. That covers a single low
       // bump between two pulses and, just as often, a run of several bumps at
       // much the same near-floor level.
       //
-      // A peak is dropped only when BOTH conditions hold, and requiring both
+      // A envelope peak is dropped only when BOTH conditions hold, and requiring both
       // is the whole point of the rule:
       //   • Near the floor on its own is not enough. The quiet onset and
-      //     offset peaks that open and close a real train live down there
-      //     too, and dropping them on that basis alone tore trains apart at
-      //     their own edges — the hole left behind exceeded Max peak gap, so
-      //     one train came out as two or three.
+      //     offset envelope peaks that open and close a real pulse live down there
+      //     too, and dropping them on that basis alone tore pulses apart at
+      //     their own edges — the hole left behind exceeded Max envelope peak gap, so
+      //     one pulse came out as two or three.
       //   • Below both neighbours on its own is not enough either. A genuine
-      //     dip inside a loud train can be deeper than Δ while sitting
+      //     dip inside a loud pulse can be deeper than Δ while sitting
       //     nowhere near the floor.
       //
-      // Near-floor peaks are grouped into RUNS and each run is judged as a
-      // unit against the taller peaks flanking the whole run. Judging peak by
-      // peak against immediate neighbours is what let clusters survive: every
+      // Near-floor envelope peaks are grouped into RUNS and each run is judged as a
+      // unit against the taller envelope peaks flanking the whole run. Judging envelope peak by
+      // envelope peak against immediate neighbours is what let clusters survive: every
       // member of a run has another run member for a neighbour, so no drop is
       // ever measured across that pair and the run shields itself.
       // The rule itself, as pure index arithmetic: [start,end] index pairs of
-      // near-floor runs that sit more than `thr` below the peaks flanking the
+      // near-floor runs that sit more than `thr` below the envelope peaks flanking the
       // whole run. Shared by the live filter and by the parameter fitter, so
       // the two can never drift apart.
-      function pkFalsePeakRuns(peaks, silenceFloor, thr) {
+      function pkFalseEnvPeakRuns(envPeaks, silenceFloor, thr) {
         const nearFloor = (p) => p.amp - silenceFloor <= thr;
         const doomed = [];
-        for (let i = 0; i < peaks.length; ) {
-          if (!nearFloor(peaks[i])) {
+        for (let i = 0; i < envPeaks.length; ) {
+          if (!nearFloor(envPeaks[i])) {
             i++;
             continue;
           }
           let end = i;
-          while (end + 1 < peaks.length && nearFloor(peaks[end + 1])) end++;
+          while (end + 1 < envPeaks.length && nearFloor(envPeaks[end + 1])) end++;
           // Compare the flankers against the run's TALLEST member: the run has
           // to sit below them as a whole, so one member standing clear of the
           // threshold keeps the entire run.
-          let runMax = peaks[i].amp;
+          let runMax = envPeaks[i].amp;
           for (let k = i + 1; k <= end; k++)
-            if (peaks[k].amp > runMax) runMax = peaks[k].amp;
-          const left = peaks[i - 1];
-          const right = peaks[end + 1];
+            if (envPeaks[k].amp > runMax) runMax = envPeaks[k].amp;
+          const left = envPeaks[i - 1];
+          const right = envPeaks[end + 1];
           // A missing flanker means the run opens or closes the recording —
-          // nothing shows it sits BETWEEN real peaks, so leave it alone.
+          // nothing shows it sits BETWEEN real envelope peaks, so leave it alone.
           if (
             left &&
             right &&
@@ -8675,58 +8700,58 @@
       }
 
       // Same rule, applied functionally: returns a NEW array with the false
-      // peaks gone. Used by the fitter, which must try Δ values without
-      // touching pkPeaks or the DOM.
-      function pkWithoutFalsePeaks(peaks, silenceFloor, falseDiffPct) {
-        if (!(falseDiffPct > 0)) return peaks;
-        const doomed = pkFalsePeakRuns(peaks, silenceFloor, falseDiffPct / 100);
-        if (!doomed.length) return peaks;
-        const drop = new Uint8Array(peaks.length);
+      // envelope peaks gone. Used by the fitter, which must try Δ values without
+      // touching pkEnvPeaks or the DOM.
+      function pkWithoutFalseEnvPeaks(envPeaks, silenceFloor, falseDiffPct) {
+        if (!(falseDiffPct > 0)) return envPeaks;
+        const doomed = pkFalseEnvPeakRuns(envPeaks, silenceFloor, falseDiffPct / 100);
+        if (!doomed.length) return envPeaks;
+        const drop = new Uint8Array(envPeaks.length);
         doomed.forEach(([s, e]) => {
           for (let k = s; k <= e; k++) drop[k] = 1;
         });
-        return peaks.filter((_, i) => !drop[i]);
+        return envPeaks.filter((_, i) => !drop[i]);
       }
 
-      function pkFilterFalsePeaks(silent) {
-        if (!pkPeaks.length || !pkEnv) {
-          if (!silent) pkLiveUpdate("no peaks to filter");
+      function pkFilterFalseEnvPeaks(silent) {
+        if (!pkEnvPeaks.length || !pkEnv) {
+          if (!silent) pkLiveUpdate("no envelope peaks to filter");
           return 0;
         }
         const raw = $("pkFalseDiff") ? $("pkFalseDiff").value.trim() : "";
         const falseDiffPct = raw === "" ? null : parseFloat(raw);
         if (falseDiffPct == null || !(falseDiffPct > 0)) {
-          if (!silent) pkLiveUpdate("false-peak filter is off");
+          if (!silent) pkLiveUpdate("false-envelope peak filter is off");
           return 0;
         }
         const silenceFloor = pkPercentile(pkEnv, 5); // 5th percentile ≈ background level
         const thr = falseDiffPct / 100;
         const maxGapMs = parseFloat($("pkMaxGap")?.value) || 10;
-        const doomed = pkFalsePeakRuns(pkPeaks, silenceFloor, thr);
-        if (!silent && doomed.length) pkSnapshot("remove false peaks");
+        const doomed = pkFalseEnvPeakRuns(pkEnvPeaks, silenceFloor, thr);
+        if (!silent && doomed.length) pkSnapshot("remove false envelope peaks");
 
         let removed = 0;
         for (let d = doomed.length - 1; d >= 0; d--) {
           const [s, e] = doomed[d];
-          const left = pkPeaks[s - 1];
-          const right = pkPeaks[e + 1];
+          const left = pkEnvPeaks[s - 1];
+          const right = pkEnvPeaks[e + 1];
           for (let k = s; k <= e; k++) {
-            const p = pkPeaks[k];
+            const p = pkEnvPeaks[k];
             pkSelection.delete(p);
-            // A boundary that sat on a dropped peak has to outlive it.
+            // A boundary that sat on a dropped envelope peak has to outlive it.
             if (left) left.splitAfter = left.splitAfter || p.splitAfter;
           }
           // Closing the hole can leave the survivors further apart than a
-          // train tolerates — that IS a train boundary, so mark it.
+          // pulse tolerates — that IS a pulse boundary, so mark it.
           if (left && right && (right.time - left.time) * 1000 > maxGapMs)
             left.splitAfter = true;
-          pkPeaks.splice(s, e - s + 1);
+          pkEnvPeaks.splice(s, e - s + 1);
           removed += e - s + 1;
         }
         if (!silent) {
           pkLiveUpdate(
             removed +
-              " false peak(s) removed (floor≈" +
+              " false envelope peak(s) removed (floor≈" +
               (silenceFloor * 100).toFixed(2) +
               "%)",
           );
@@ -8734,19 +8759,19 @@
         return removed;
       }
 
-      // ── Import a saved Peaks table ──────────────────────────────────────
-      // The exported Peaks sheet carries peak_time, peak_amp and train_id —
-      // everything needed to restore a hand-curated result: the peaks, and a
-      // train boundary wherever train_id changes. Undo only lasts a session;
+      // ── Import a saved Envelope peaks table ──────────────────────────────────────
+      // The exported Envelope peaks sheet carries env_peak_time, env_peak_amp and pulse_id —
+      // everything needed to restore a hand-curated result: the envelope peaks, and a
+      // pulse boundary wherever pulse_id changes. Undo only lasts a session;
       // this survives a restart, a different machine, or a colleague.
       //
       // Boundaries come straight from the file. The grouping algorithm is NOT
       // consulted — re-deriving them would throw away the very hand edits the
       // table was exported to preserve.
-      async function pkImportPeaksFile(file) {
+      async function pkImportEnvPeaksFile(file) {
         if (!file) return;
         if (!rawSamples) {
-          log("Load the matching audio before importing peaks.", "warn");
+          log("Load the matching audio before importing envelope peaks.", "warn");
           return;
         }
         let workbook;
@@ -8758,29 +8783,29 @@
           return;
         }
 
-        // Find the sheet that looks like a Peaks table, by columns not name,
+        // Find the sheet that looks like a Envelope peaks table, by columns not name,
         // so a renamed sheet still works.
         const key = (row, want) =>
           Object.keys(row).find((k) => k.toLowerCase() === want);
         let rows = null;
         for (const name of Object.keys(workbook)) {
           const r = workbook[name];
-          if (r && r.length && key(r[0], "peak_time")) {
+          if (r && r.length && (key(r[0], "env_peak_time") || key(r[0], "peak_time"))) {
             rows = r;
             break;
           }
         }
         if (!rows) {
           log(
-            "No Peaks table in that workbook (need a peak_time column).",
+            "No Envelope peaks table in that workbook (need a env_peak_time column).",
             "err",
           );
           return;
         }
 
-        const tK = key(rows[0], "peak_time"),
-          aK = key(rows[0], "peak_amp"),
-          trK = key(rows[0], "train_id"),
+        const tK = key(rows[0], "env_peak_time"),
+          aK = key(rows[0], "env_peak_amp"),
+          trK = key(rows[0], "pulse_id"),
           moK = key(rows[0], "motif_id");
 
         const parsed = [];
@@ -8800,20 +8825,20 @@
           parsed.push({
             time: t,
             amp: isFinite(a) ? a : null,
-            train: trK != null ? String(r[trK] ?? "") : "",
+            pulse: trK != null ? String(r[trK] ?? "") : "",
             motif: moK != null ? String(r[moK] ?? "") : "",
           });
         });
         if (!parsed.length) {
-          log("No usable rows in that Peaks table.", "err");
+          log("No usable rows in that Envelope peaks table.", "err");
           return;
         }
-        // A table from a different recording is the likely cause of peaks
+        // A table from a different recording is the likely cause of envelope peaks
         // landing past the end, so say so rather than silently dropping them.
         if (outside) {
           log(
             outside +
-              " peak(s) fall past the end of this " +
+              " envelope peak(s) fall past the end of this " +
               duration.toFixed(2) +
               "s recording — is this table from a different file?",
             "warn",
@@ -8826,7 +8851,7 @@
         if (!pkEnv) pkRefreshEnvelope();
 
         const n = pkEnv ? pkEnv.length : 0;
-        pkPeaks = parsed.map((p, i) => {
+        pkEnvPeaks = parsed.map((p, i) => {
           const idx = Math.max(
             0,
             Math.min(n - 1, Math.round(p.time * sampleRate)),
@@ -8836,8 +8861,8 @@
             idx,
             time: p.time,
             amp: p.amp != null ? p.amp : pkEnv ? pkEnv[idx] : 0,
-            // Boundary wherever the train (or motif) label changes.
-            splitAfter: !!next && (next.train !== p.train || next.motif !== p.motif),
+            // Boundary wherever the pulse (or motif) label changes.
+            splitAfter: !!next && (next.pulse !== p.pulse || next.motif !== p.motif),
           };
         });
 
@@ -8848,22 +8873,22 @@
         pkViewStart = 0;
         pkViewEnd = null;
 
-        const trains = pkBuildTrains();
+        const pulses = pkBuildPulses();
         $("pkStatus").textContent =
-          pkPeaks.length +
-          " peaks imported → " +
-          trains.length +
-          " trains (boundaries from the file)" +
+          pkEnvPeaks.length +
+          " envelope peaks imported → " +
+          pulses.length +
+          " pulses (boundaries from the file)" +
           (skipped ? " · " + skipped + " unreadable row(s) skipped" : "") +
           (outside ? " · " + outside + " outside the recording" : "");
-        $("btnPkConfirm").disabled = pkPeaks.length === 0;
+        $("btnPkConfirm").disabled = pkEnvPeaks.length === 0;
         const applyBtn = $("btnPkApplySpectral");
-        if (applyBtn) applyBtn.disabled = pkPeaks.length === 0;
+        if (applyBtn) applyBtn.disabled = pkEnvPeaks.length === 0;
         const falseBtn = $("btnPkFilterFalse");
-        if (falseBtn) falseBtn.disabled = !pkPeaks.length;
+        if (falseBtn) falseBtn.disabled = !pkEnvPeaks.length;
         pkDrawEnvelope();
         log(
-          "Imported " + pkPeaks.length + ' peaks from "' + file.name + '".',
+          "Imported " + pkEnvPeaks.length + ' envelope peaks from "' + file.name + '".',
           "ok",
         );
       }
@@ -8877,7 +8902,7 @@
           log("Load audio first", "warn");
           return;
         }
-        return withBusy("Detecting peaks…", (progress) =>
+        return withBusy("Detecting envelope peaks…", (progress) =>
           _pkDetectStages(progress),
         );
       }
@@ -8892,24 +8917,24 @@
         await busyTick();
         pkEnv = pkComputeEnv(P.smoothMs);
 
-        progress("Finding peaks…", 0.4);
+        progress("Finding envelope peaks…", 0.4);
         await busyTick();
-        const rawPeaks = pkFindPeaks(
+        const rawEnvPeaks = pkFindEnvPeaks(
           pkEnv,
           P.winMs,
-          P.peakThr,
+          P.env_peakThr,
           P.detThr,
           P.linkThr,
           P.maxGapMs,
         );
-        pkPeaks = rawPeaks;
+        pkEnvPeaks = rawEnvPeaks;
 
-        progress("Grouping trains…", 0.8);
+        progress("Grouping pulses…", 0.8);
         await busyTick();
         pkResetUndo();
-        // Strip near-floor "false" peaks before boundaries are ever drawn from
-        // this set, so trains/motifs are built on the cleaned list.
-        const falseRemoved = pkFilterFalsePeaks(true);
+        // Strip near-floor "false" envelope peaks before boundaries are ever drawn from
+        // this set, so pulses/motifs are built on the cleaned list.
+        const falseRemoved = pkFilterFalseEnvPeaks(true);
         pkClearSelection();
         // Reset view to full on new detection
         pkViewStart = 0;
@@ -8920,21 +8945,21 @@
         // Run the grouping algorithm ONCE and freeze it. From here on, only manual
         // edits change boundaries — the algorithm is not consulted again.
         pkInitBoundaries();
-        const filtered = pkBuildTrains().filter((t) => t.length >= P.minPeaks);
-        const rawMotifs = pkGroupMotifs(filtered, P.maxTrainGapMs);
+        const filtered = pkBuildPulses().filter((t) => t.length >= P.minEnvPeaks);
+        const rawMotifs = pkGroupMotifs(filtered, P.maxPulseGapMs);
 
         $("pkStatus").textContent =
-          rawPeaks.length +
-          " peaks" +
+          rawEnvPeaks.length +
+          " envelope peaks" +
           (falseRemoved ? " (" + falseRemoved + " false removed)" : "") +
           " → " +
           filtered.length +
-          " trains → " +
+          " pulses → " +
           rawMotifs.length +
           " motifs";
-        $("btnPkConfirm").disabled = rawPeaks.length === 0;
+        $("btnPkConfirm").disabled = rawEnvPeaks.length === 0;
         const applyBtn = $("btnPkApplySpectral");
-        if (applyBtn) applyBtn.disabled = rawPeaks.length === 0;
+        if (applyBtn) applyBtn.disabled = rawEnvPeaks.length === 0;
 
         pkDrawEnvelope();
       }
@@ -9000,18 +9025,18 @@
         const pw = W - padL - padR;
         const ph = H - padT - padB;
 
-        // Recompute groupings from current pkPeaks (+ manual overrides)
-        const { P, trains, motifs, motifSeqs } = pkComputeGroups();
+        // Recompute groupings from current pkEnvPeaks (+ manual overrides)
+        const { P, pulses, motifs, motifSeqs } = pkComputeGroups();
         const useMotifSeq = P.useMotifSeq;
 
         // Map time → x within view window
         const tX = (t) => padL + ((t - vStart) / vDur) * pw;
         // Amplitude → y, with vertical magnification (pkAmpScale). Values above the
-        // visible ceiling clamp to the top edge so faint peaks can be magnified
-        // without tall peaks overflowing the plot.
+        // visible ceiling clamp to the top edge so faint envelope peaks can be magnified
+        // without tall envelope peaks overflowing the plot.
         const aY = (a) => Math.max(padT, padT + ph - a * pkAmpScale * ph);
         const inView = (t) => t >= vStart - 0.01 && t <= vEnd + 0.01;
-        const pad = pkTrainPadSec(); // grow drawn spans to match padded extents
+        const pad = pkPulsePadSec(); // grow drawn spans to match padded extents
 
         // Motif sequence spans
         motifSeqs.forEach((seq) => {
@@ -9039,10 +9064,10 @@
           ctx.fillRect(x0, padT, x1 - x0, 3);
         });
 
-        // Train spans
-        trains.forEach((train) => {
-          const t0 = pkClampT(train[0].time - pad),
-            t1 = pkClampT(train[train.length - 1].time + pad);
+        // Pulse spans
+        pulses.forEach((pulse) => {
+          const t0 = pkClampT(pulse[0].time - pad),
+            t1 = pkClampT(pulse[pulse.length - 1].time + pad);
           if (t1 < vStart || t0 > vEnd) return;
           const x0 = Math.max(padL, tX(t0)),
             x1 = Math.min(padL + pw, tX(t1));
@@ -9071,15 +9096,15 @@
         }
         ctx.stroke();
 
-        // Peak markers (auto = orange dot; manual = cyan ring with white core)
+        // Envelope peak markers (auto = orange dot; manual = cyan ring with white core)
         const hasSel = pkSelection.size > 0;
-        pkPeaks.forEach((p) => {
+        pkEnvPeaks.forEach((p) => {
           if (!inView(p.time)) return;
           const x = tX(p.time),
             y = aY(p.amp);
           const selected = hasSel && pkSelection.has(p);
           if (selected) {
-            // Yellow halo behind selected peaks
+            // Yellow halo behind selected envelope peaks
             ctx.beginPath();
             ctx.arc(x, y, 7, 0, Math.PI * 2);
             ctx.fillStyle = "rgba(241,196,15,0.30)";
@@ -9504,8 +9529,8 @@
         if (frac < 0 || frac > 1) return null;
         return geo.vStart + frac * geo.vDur;
       }
-      // Index of the nearest peak to a pointer event (within HIT px), or -1.
-      function pkNearestPeak(clientX, clientY, HIT = 8) {
+      // Index of the nearest envelope peak to a pointer event (within HIT px), or -1.
+      function pkNearestEnvPeak(clientX, clientY, HIT = 8) {
         const canvas = $("pkCanvas");
         const geo = canvas._pkGeo;
         if (!geo) return -1;
@@ -9514,7 +9539,7 @@
           my = clientY - rect.top;
         let closest = -1,
           bestD = Infinity;
-        pkPeaks.forEach((p, i) => {
+        pkEnvPeaks.forEach((p, i) => {
           if (p.time < geo.vStart || p.time > geo.vEnd) return;
           const px = geo.padL + ((p.time - geo.vStart) / geo.vDur) * geo.pw;
           const py = Math.max(
@@ -9530,8 +9555,8 @@
         return closest;
       }
 
-      // ── Add a peak, snapped to the nearest envelope local-max around `time` ──
-      function pkAddPeakAt(time) {
+      // ── Add a envelope peak, snapped to the nearest envelope local-max around `time` ──
+      function pkAddEnvPeakAt(time) {
         if (!pkEnv) return;
         const n = pkEnv.length;
         const center = Math.max(
@@ -9567,13 +9592,13 @@
           best = Math.round((l + r) / 2);
         }
 
-        // Reject only if there's ALREADY a peak essentially at this snapped tip.
-        // Use a tight tolerance so faint peaks next to tall ones still commit.
+        // Reject only if there's ALREADY a envelope peak essentially at this snapped tip.
+        // Use a tight tolerance so faint envelope peaks next to tall ones still commit.
         const minSep = Math.max(1, Math.round((sampleRate * 0.15) / 1000)); // 0.15 ms
-        const dup = pkPeaks.find((p) => Math.abs(p.idx - best) < minSep);
+        const dup = pkEnvPeaks.find((p) => Math.abs(p.idx - best) < minSep);
         if (dup) {
           pkLiveUpdate(
-            "a peak already exists here (@ " +
+            "a envelope peak already exists here (@ " +
               (dup.time * 1000).toFixed(2) +
               " ms)",
           );
@@ -9587,17 +9612,17 @@
           manual: true,
           splitAfter: false,
         };
-        pkSnapshot("add peak");
-        // Insert keeping pkPeaks sorted by time
+        pkSnapshot("add envelope peak");
+        // Insert keeping pkEnvPeaks sorted by time
         let lo = 0;
-        while (lo < pkPeaks.length && pkPeaks[lo].time < np.time) lo++;
-        const leftPeer = lo > 0 ? pkPeaks[lo - 1] : null;
-        const rightPeer = lo < pkPeaks.length ? pkPeaks[lo] : null;
-        // Merge into whichever neighbouring train(s) fall within the gap
+        while (lo < pkEnvPeaks.length && pkEnvPeaks[lo].time < np.time) lo++;
+        const leftPeer = lo > 0 ? pkEnvPeaks[lo - 1] : null;
+        const rightPeer = lo < pkEnvPeaks.length ? pkEnvPeaks[lo] : null;
+        // Merge into whichever neighbouring pulse(s) fall within the gap
         // threshold — independently on each side. If both sides are within
-        // threshold, the new peak bridges the two trains into one; if only
-        // one side is, it joins just that train; if neither is, it stands
-        // alone as its own single-peak train.
+        // threshold, the new envelope peak bridges the two pulses into one; if only
+        // one side is, it joins just that pulse; if neither is, it stands
+        // alone as its own single-envelope peak pulse.
         const maxGapMs = parseFloat($("pkMaxGap")?.value) || 10;
         if (leftPeer) {
           const leftGapMs = (np.time - leftPeer.time) * 1000;
@@ -9607,13 +9632,13 @@
           const rightGapMs = (rightPeer.time - np.time) * 1000;
           np.splitAfter = rightGapMs > maxGapMs;
         }
-        pkPeaks.splice(lo, 0, np);
-        // Selecting the new peak (and only it) makes it obvious what was
+        pkEnvPeaks.splice(lo, 0, np);
+        // Selecting the new envelope peak (and only it) makes it obvious what was
         // just added and where it landed.
         pkSelection.clear();
         pkSelection.add(np);
         pkLiveUpdate(
-          "peak added @ " +
+          "envelope peak added @ " +
             (np.time * 1000).toFixed(2) +
             " ms (amp " +
             np.amp.toFixed(3) +
@@ -9622,25 +9647,25 @@
       }
 
       // ── Boundary edits — all purely local toggles of splitAfter flags ─────
-      // The gap to the LEFT of peak i is owned by pkPeaks[i-1].splitAfter.
-      // The gap to the RIGHT of peak i is owned by pkPeaks[i].splitAfter.
+      // The gap to the LEFT of envelope peak i is owned by pkEnvPeaks[i-1].splitAfter.
+      // The gap to the RIGHT of envelope peak i is owned by pkEnvPeaks[i].splitAfter.
 
       // Merge: clear one boundary, touch nothing else.
-      // ── Undo for peak + boundary edits ──────────────────────────────────
-      // Snapshots the whole peak list before each edit. Snapshots are stored as
+      // ── Undo for envelope peak + boundary edits ──────────────────────────────────
+      // Snapshots the whole envelope peak list before each edit. Snapshots are stored as
       // typed arrays rather than cloned objects: a long recording carries tens
-      // of thousands of peaks, and forty snapshots of forty thousand small
+      // of thousands of envelope peaks, and forty snapshots of forty thousand small
       // objects would be hundreds of megabytes, where this is a few hundred
       // kilobytes each.
       //
-      // The selection is captured as INDICES and restored with the peaks, so
+      // The selection is captured as INDICES and restored with the envelope peaks, so
       // undo puts back what was highlighted before the edit, not an empty
       // selection or a set of dead object references.
       const PK_UNDO_LIMIT = 40;
       let pkUndoStack = [];
 
       function pkSnapshot(label) {
-        const n = pkPeaks.length;
+        const n = pkEnvPeaks.length;
         const snap = {
           label,
           n,
@@ -9651,7 +9676,7 @@
           sel: [],
         };
         for (let i = 0; i < n; i++) {
-          const p = pkPeaks[i];
+          const p = pkEnvPeaks[i];
           snap.idx[i] = p.idx == null ? -1 : p.idx;
           snap.time[i] = p.time;
           snap.amp[i] = p.amp;
@@ -9663,8 +9688,8 @@
         pkUpdateUndoButton();
       }
 
-      // Wipe the history when the peak list is replaced wholesale — after a
-      // fresh detection or a reset, the old snapshots describe peaks that no
+      // Wipe the history when the envelope peak list is replaced wholesale — after a
+      // fresh detection or a reset, the old snapshots describe envelope peaks that no
       // longer relate to what is on screen.
       function pkResetUndo() {
         pkUndoStack = [];
@@ -9690,7 +9715,7 @@
           pkLiveUpdate("nothing to undo");
           return;
         }
-        pkPeaks = new Array(snap.n);
+        pkEnvPeaks = new Array(snap.n);
         for (let i = 0; i < snap.n; i++) {
           const p = {
             idx: snap.idx[i] < 0 ? null : snap.idx[i],
@@ -9699,22 +9724,22 @@
             splitAfter: !!(snap.flags[i] & 1),
           };
           if (snap.flags[i] & 2) p.manual = true;
-          pkPeaks[i] = p;
+          pkEnvPeaks[i] = p;
         }
         pkSelection.clear();
         snap.sel.forEach((i) => {
-          if (pkPeaks[i]) pkSelection.add(pkPeaks[i]);
+          if (pkEnvPeaks[i]) pkSelection.add(pkEnvPeaks[i]);
         });
         pkUpdateUndoButton();
         pkLiveUpdate("undo: " + snap.label);
       }
 
       function pkMerge(i, dir) {
-        const p = pkPeaks[i];
+        const p = pkEnvPeaks[i];
         if (!p) return;
         if (dir === "right") {
-          if (i + 1 >= pkPeaks.length) {
-            pkLiveUpdate("no peak to the right");
+          if (i + 1 >= pkEnvPeaks.length) {
+            pkLiveUpdate("no envelope peak to the right");
             return;
           }
           pkSnapshot("merge right");
@@ -9722,11 +9747,11 @@
           pkLiveUpdate("merged right");
         } else {
           if (i - 1 < 0) {
-            pkLiveUpdate("no peak to the left");
+            pkLiveUpdate("no envelope peak to the left");
             return;
           }
           pkSnapshot("merge left");
-          pkPeaks[i - 1].splitAfter = false;
+          pkEnvPeaks[i - 1].splitAfter = false;
           pkLiveUpdate("merged left");
         }
       }
@@ -9734,63 +9759,63 @@
       // Split: set one boundary, touch nothing else.
       function pkSplitLeft(i) {
         if (i - 1 < 0) {
-          pkLiveUpdate("no peak to the left");
+          pkLiveUpdate("no envelope peak to the left");
           return;
         }
         pkSnapshot("split left");
-        pkPeaks[i - 1].splitAfter = true;
+        pkEnvPeaks[i - 1].splitAfter = true;
         pkLiveUpdate("split left");
       }
       function pkSplitRight(i) {
-        if (i + 1 >= pkPeaks.length) {
-          pkLiveUpdate("no peak to the right");
+        if (i + 1 >= pkEnvPeaks.length) {
+          pkLiveUpdate("no envelope peak to the right");
           return;
         }
         pkSnapshot("split right");
-        pkPeaks[i].splitAfter = true;
+        pkEnvPeaks[i].splitAfter = true;
         pkLiveUpdate("split right");
       }
 
-      // Assign: move this single peak into the neighbouring train. Only the two
-      // gaps immediately around this peak change — nothing downstream is touched.
-      // Left  = join the left gap, cut the right gap  → peak ends the left train.
-      // Right = cut the left gap, join the right gap  → peak starts the right train.
+      // Assign: move this single envelope peak into the neighbouring pulse. Only the two
+      // gaps immediately around this envelope peak change — nothing downstream is touched.
+      // Left  = join the left gap, cut the right gap  → envelope peak ends the left pulse.
+      // Right = cut the left gap, join the right gap  → envelope peak starts the right pulse.
       function pkAssign(i, dir) {
-        const p = pkPeaks[i];
+        const p = pkEnvPeaks[i];
         if (!p) return;
         if (dir === "left") {
           if (i - 1 < 0) {
-            pkLiveUpdate("no train to the left");
+            pkLiveUpdate("no pulse to the left");
             return;
           }
           pkSnapshot("assign left");
-          pkPeaks[i - 1].splitAfter = false; // join with left
-          if (i + 1 < pkPeaks.length) pkPeaks[i].splitAfter = true; // end the train here
-          pkLiveUpdate("assigned to left train");
+          pkEnvPeaks[i - 1].splitAfter = false; // join with left
+          if (i + 1 < pkEnvPeaks.length) pkEnvPeaks[i].splitAfter = true; // end the pulse here
+          pkLiveUpdate("assigned to left pulse");
         } else {
-          if (i + 1 >= pkPeaks.length) {
-            pkLiveUpdate("no train to the right");
+          if (i + 1 >= pkEnvPeaks.length) {
+            pkLiveUpdate("no pulse to the right");
             return;
           }
           pkSnapshot("assign right");
-          if (i - 1 >= 0) pkPeaks[i - 1].splitAfter = true; // cut from left
-          pkPeaks[i].splitAfter = false; // join with right
-          pkLiveUpdate("assigned to right train");
+          if (i - 1 >= 0) pkEnvPeaks[i - 1].splitAfter = true; // cut from left
+          pkEnvPeaks[i].splitAfter = false; // join with right
+          pkLiveUpdate("assigned to right pulse");
         }
       }
 
-      // Remove a peak. The two gaps around it collapse into one; a boundary is
-      // preserved if either side had one, so trains never accidentally merge.
-      // The collapsed gap can also end up wider than the train-grouping
+      // Remove a envelope peak. The two gaps around it collapse into one; a boundary is
+      // preserved if either side had one, so pulses never accidentally merge.
+      // The collapsed gap can also end up wider than the pulse-grouping
       // threshold on its own — even if neither original half-gap was flagged
       // — so re-check against it and split there too if needed.
-      function pkRemovePeak(i) {
-        const p = pkPeaks[i];
+      function pkRemoveEnvPeak(i) {
+        const p = pkEnvPeaks[i];
         if (!p) return;
-        pkSnapshot("remove peak");
+        pkSnapshot("remove envelope peak");
         if (pkSelection.has(p)) pkSelection.delete(p);
-        const prev = pkPeaks[i - 1];
-        const next = pkPeaks[i + 1];
+        const prev = pkEnvPeaks[i - 1];
+        const next = pkEnvPeaks[i + 1];
         if (prev) {
           prev.splitAfter = prev.splitAfter || p.splitAfter;
           const maxGapMs = parseFloat($("pkMaxGap")?.value) || 10;
@@ -9798,15 +9823,15 @@
             prev.splitAfter = true;
           }
         }
-        pkPeaks.splice(i, 1);
-        pkLiveUpdate("peak removed");
+        pkEnvPeaks.splice(i, 1);
+        pkLiveUpdate("envelope peak removed");
       }
 
       // Re-run the detection algorithm's segmentation and re-freeze it, discarding
-      // manual boundary edits (added/removed peaks are kept). Wired to the
+      // manual boundary edits (added/removed envelope peaks are kept). Wired to the
       // "Reset boundaries" button.
       function pkClearOverrides() {
-        if (!pkPeaks.length) {
+        if (!pkEnvPeaks.length) {
           pkLiveUpdate("nothing to reset");
           return;
         }
@@ -9816,7 +9841,7 @@
       }
 
       // ── Multi-selection + bulk boundary edits ───────────────────────────
-      // Selection stores peak object references (stable across boundary edits).
+      // Selection stores envelope peak object references (stable across boundary edits).
       function pkClearSelection() {
         pkSelection.clear();
         pkUpdateSelectionButtons();
@@ -9844,7 +9869,7 @@
       function pkRemoveSelected() {
         const idxs = pkSelectionIndices();
         if (!idxs.length) return;
-        if (idxs.length === 1) pkRemovePeak(idxs[0]);
+        if (idxs.length === 1) pkRemoveEnvPeak(idxs[0]);
         else pkBulkRemove();
       }
       function pkClearSelectionAction() {
@@ -9856,18 +9881,18 @@
         const count = idxs.length;
         const single = count === 1;
         const hasSel = count > 0;
-        const peakIdx = single ? idxs[0] : -1;
-        const hasPrev = single && peakIdx > 0;
-        const hasNext = single && peakIdx < pkPeaks.length - 1;
-        const leftSplit = hasPrev ? pkPeaks[peakIdx - 1].splitAfter : null;
-        const rightSplit = single ? pkPeaks[peakIdx].splitAfter : null;
+        const env_peakIdx = single ? idxs[0] : -1;
+        const hasPrev = single && env_peakIdx > 0;
+        const hasNext = single && env_peakIdx < pkEnvPeaks.length - 1;
+        const leftSplit = hasPrev ? pkEnvPeaks[env_peakIdx - 1].splitAfter : null;
+        const rightSplit = single ? pkEnvPeaks[env_peakIdx].splitAfter : null;
         const assignLeft =
           hasSel && (single ? hasPrev : count > 1 && idxs[0] > 0);
         const assignRight =
           hasSel &&
           (single
             ? hasNext
-            : count > 1 && idxs[count - 1] < pkPeaks.length - 1);
+            : count > 1 && idxs[count - 1] < pkEnvPeaks.length - 1);
         const mergeLeft = single && hasPrev && leftSplit === true;
         const mergeRight = single && hasNext && rightSplit === true;
         const splitLeft = single && hasPrev && leftSplit === false;
@@ -9892,45 +9917,45 @@
         setState("btnPkRemoveSel", remove);
         setState("btnPkClearSelection", clear);
       }
-      // Sorted array-indices of the currently-selected peaks (drops any stale refs).
+      // Sorted array-indices of the currently-selected envelope peaks (drops any stale refs).
       function pkSelectionIndices() {
         const idxs = [];
-        pkPeaks.forEach((p, i) => {
+        pkEnvPeaks.forEach((p, i) => {
           if (pkSelection.has(p)) idxs.push(i);
         });
         return idxs;
       }
       // Bulk ops act on the contiguous span [lo..hi] from the first to the last
-      // selected peak — natural for a box selection. Every change is local to that
+      // selected envelope peak — natural for a box selection. Every change is local to that
       // span and the two gaps bordering it; nothing else is touched.
       function pkBulkAssign(dir) {
         const idxs = pkSelectionIndices();
         if (idxs.length < 2) return;
         const lo = idxs[0],
           hi = idxs[idxs.length - 1];
-        pkSnapshot("assign " + idxs.length + " peaks");
-        for (let i = lo; i < hi; i++) pkPeaks[i].splitAfter = false; // join the block internally
+        pkSnapshot("assign " + idxs.length + " envelope peaks");
+        for (let i = lo; i < hi; i++) pkEnvPeaks[i].splitAfter = false; // join the block internally
         if (dir === "right") {
-          if (hi < pkPeaks.length - 1) pkPeaks[hi].splitAfter = false; // merge into right train
-          if (lo > 0) pkPeaks[lo - 1].splitAfter = true; // detach from the left
-          pkLiveUpdate(idxs.length + " peaks → right train");
+          if (hi < pkEnvPeaks.length - 1) pkEnvPeaks[hi].splitAfter = false; // merge into right pulse
+          if (lo > 0) pkEnvPeaks[lo - 1].splitAfter = true; // detach from the left
+          pkLiveUpdate(idxs.length + " envelope peaks → right pulse");
         } else {
-          if (lo > 0) pkPeaks[lo - 1].splitAfter = false; // merge into left train
-          if (hi < pkPeaks.length - 1) pkPeaks[hi].splitAfter = true; // detach from the right
-          pkLiveUpdate(idxs.length + " peaks → left train");
+          if (lo > 0) pkEnvPeaks[lo - 1].splitAfter = false; // merge into left pulse
+          if (hi < pkEnvPeaks.length - 1) pkEnvPeaks[hi].splitAfter = true; // detach from the right
+          pkLiveUpdate(idxs.length + " envelope peaks → left pulse");
         }
       }
       function pkBulkIsolate() {
-        // make the selection its own train
+        // make the selection its own pulse
         const idxs = pkSelectionIndices();
         if (idxs.length < 2) return;
         const lo = idxs[0],
           hi = idxs[idxs.length - 1];
-        pkSnapshot("isolate " + idxs.length + " peaks");
-        for (let i = lo; i < hi; i++) pkPeaks[i].splitAfter = false;
-        if (lo > 0) pkPeaks[lo - 1].splitAfter = true;
-        if (hi < pkPeaks.length - 1) pkPeaks[hi].splitAfter = true;
-        pkLiveUpdate("selection isolated as one train");
+        pkSnapshot("isolate " + idxs.length + " envelope peaks");
+        for (let i = lo; i < hi; i++) pkEnvPeaks[i].splitAfter = false;
+        if (lo > 0) pkEnvPeaks[lo - 1].splitAfter = true;
+        if (hi < pkEnvPeaks.length - 1) pkEnvPeaks[hi].splitAfter = true;
+        pkLiveUpdate("selection isolated as one pulse");
       }
       function pkBulkJoin() {
         // join gaps within the selection, leave both ends alone
@@ -9939,32 +9964,32 @@
         const lo = idxs[0],
           hi = idxs[idxs.length - 1];
         pkSnapshot("join selection");
-        for (let i = lo; i < hi; i++) pkPeaks[i].splitAfter = false;
+        for (let i = lo; i < hi; i++) pkEnvPeaks[i].splitAfter = false;
         pkLiveUpdate("joined within selection");
       }
       function pkBulkRemove() {
         const idxs = pkSelectionIndices();
         if (!idxs.length) return;
-        pkSnapshot("remove " + idxs.length + " peak(s)");
+        pkSnapshot("remove " + idxs.length + " envelope peak(s)");
         const maxGapMs = parseFloat($("pkMaxGap")?.value) || 10;
         // Remove from the end so earlier indices stay valid; preserve boundaries,
-        // and split if the collapsed gap now exceeds the train threshold even
-        // when neither original half-gap was flagged (same fix as pkRemovePeak).
+        // and split if the collapsed gap now exceeds the pulse threshold even
+        // when neither original half-gap was flagged (same fix as pkRemoveEnvPeak).
         for (let k = idxs.length - 1; k >= 0; k--) {
           const i = idxs[k];
-          const prev = pkPeaks[i - 1];
-          const next = pkPeaks[i + 1];
+          const prev = pkEnvPeaks[i - 1];
+          const next = pkEnvPeaks[i + 1];
           if (prev) {
-            prev.splitAfter = prev.splitAfter || pkPeaks[i].splitAfter;
+            prev.splitAfter = prev.splitAfter || pkEnvPeaks[i].splitAfter;
             if (next && (next.time - prev.time) * 1000 > maxGapMs) {
               prev.splitAfter = true;
             }
           }
-          pkPeaks.splice(i, 1);
+          pkEnvPeaks.splice(i, 1);
         }
         const n = idxs.length;
         pkClearSelection();
-        pkLiveUpdate(n + " peaks removed");
+        pkLiveUpdate(n + " envelope peaks removed");
       }
 
       // ── Edit-mode toggle ────────────────────────────────────────────────
@@ -9974,8 +9999,8 @@
         $("btnPkModeAdd").className = mode === "add" ? "pri" : "";
         $("pkEditHint").textContent =
           mode === "add"
-            ? "Add mode · click on the plot to add a peak (snaps to the envelope) · drag still pans"
-            : "Select mode · click selects a peak · shift-drag to box-select (or shift-click) · use the panel for actions · Del to delete selection";
+            ? "Add mode · click on the plot to add a envelope peak (snaps to the envelope) · drag still pans"
+            : "Select mode · click selects a envelope peak · shift-drag to box-select (or shift-click) · use the panel for actions · Del to delete selection";
         const canvas = $("pkCanvas");
         if (pkEnv) canvas.style.cursor = mode === "add" ? "copy" : "crosshair";
         pkHoverTime = null;
@@ -10088,7 +10113,7 @@
               xMax = Math.max(pkBand.x0, pkBand.x1);
             const yMin = Math.min(pkBand.y0, pkBand.y1),
               yMax = Math.max(pkBand.y0, pkBand.y1);
-            pkPeaks.forEach((p) => {
+            pkEnvPeaks.forEach((p) => {
               if (p.time < geo.vStart || p.time > geo.vEnd) return;
               const px = geo.padL + ((p.time - geo.vStart) / geo.vDur) * geo.pw;
               const py = Math.max(
@@ -10127,15 +10152,15 @@
         } // it was a pan, not a click
         if (pkEditMode === "add") {
           const t = pkClientXToTime(e.clientX);
-          if (t !== null) pkAddPeakAt(t);
+          if (t !== null) pkAddEnvPeakAt(t);
           return;
         }
-        if (!pkPeaks.length) return;
-        const idx = pkNearestPeak(e.clientX, e.clientY, 8);
-        // Shift-click toggles a single peak in/out of the selection.
+        if (!pkEnvPeaks.length) return;
+        const idx = pkNearestEnvPeak(e.clientX, e.clientY, 8);
+        // Shift-click toggles a single envelope peak in/out of the selection.
         if (e.shiftKey) {
           if (idx >= 0) {
-            const p = pkPeaks[idx];
+            const p = pkEnvPeaks[idx];
             if (pkSelection.has(p)) pkSelection.delete(p);
             else pkSelection.add(p);
             pkLiveUpdate(
@@ -10147,10 +10172,10 @@
           return;
         }
         if (idx >= 0) {
-          const p = pkPeaks[idx];
+          const p = pkEnvPeaks[idx];
           pkSelection.clear();
           pkSelection.add(p);
-          pkLiveUpdate("peak selected");
+          pkLiveUpdate("envelope peak selected");
           return;
         }
         if (pkSelection.size) {
@@ -10169,7 +10194,7 @@
             active.tagName === "TEXTAREA" ||
             active.tagName === "SELECT" ||
             active.isContentEditable);
-        // Ctrl+Z / Cmd+Z — undo the last peak or boundary edit. Guarded on
+        // Ctrl+Z / Cmd+Z — undo the last envelope peak or boundary edit. Guarded on
         // pkEnv so it only fires once Temporal Analysis has something to edit,
         // and skipped while a text field has focus so it does not steal undo
         // from whatever the user is typing in.
@@ -10188,7 +10213,7 @@
         }
         if ((e.key === "+" || e.key === "Add") && !isTyping && pkEnv) {
           if (pkLastMouseTime !== null) {
-            pkAddPeakAt(pkLastMouseTime);
+            pkAddEnvPeakAt(pkLastMouseTime);
             e.preventDefault();
           }
           return;
@@ -10263,10 +10288,10 @@
       }
 
       // ── Confirm & compute metrics ───────────────────────────────────────
-      // A peak's amplitude should always be set at creation, but this is a
+      // A envelope peak's amplitude should always be set at creation, but this is a
       // safety net: fall back to re-reading it straight from the envelope
-      // at the peak's sample index if it's ever missing/invalid, so a
-      // stale/malformed peak object can never blank out an export instead
+      // at the envelope peak's sample index if it's ever missing/invalid, so a
+      // stale/malformed envelope peak object can never blank out an export instead
       // of just reporting a real number.
       // Name of the audio these numbers came from. Every exported row carries
       // it so a table can always be traced back to its recording — filenames
@@ -10281,7 +10306,7 @@
         return pkEnv && p.idx != null ? pkEnv[p.idx] : null;
       }
 
-      // Spectral columns for train- and motif-level rows. These spans are long
+      // Spectral columns for pulse- and motif-level rows. These spans are long
       // enough for the whole measure set, unlike a single pulse.
       function pkSpecCols(m) {
         if (!m)
@@ -10322,15 +10347,15 @@
       //
       //   spec_*        — one transform over the whole motif span, at the
       //                   motif resolution. The long window resolves fine
-      //                   structure the shorter train window cannot, but its
-      //                   frames also cross the silence between trains, so on
+      //                   structure the shorter pulse window cannot, but its
+      //                   frames also cross the silence between pulses, so on
       //                   a low duty cycle some frames are pure background and
       //                   entropy and flatness read high.
-      //   spec_*_tmean  — the mean of the motif's train rows. Every number is
-      //                   anchored to actual signal, at the train resolution.
+      //   spec_*_tmean  — the mean of the motif's pulse rows. Every number is
+      //                   anchored to actual signal, at the pulse resolution.
       //
       // Disagreement between them is informative: it means the motif is not
-      // spectrally uniform across its trains, or the background is loud.
+      // spectrally uniform across its pulses, or the background is loud.
       const PK_SPEC_MEAN_KEYS = [
         "peak_freq_khz",
         "bw_20db_khz",
@@ -10349,7 +10374,7 @@
       ];
 
       function pkMotifSpecMeans(motifId) {
-        const rows = pkTrainData.filter((r) => r.motif_id === motifId);
+        const rows = pkPulseData.filter((r) => r.motif_id === motifId);
         const out = {};
         PK_SPEC_MEAN_KEYS.forEach((k) => {
           const v = rows
@@ -10359,7 +10384,7 @@
             ? Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 1e4) / 1e4
             : null;
           // freq_spread has no direct counterpart — it is the scatter of peak
-          // carriers within a train, which a single transform cannot report —
+          // carriers within a pulse, which a single transform cannot report —
           // so it keeps its plain name. Everything else is suffixed to sit
           // beside the motif's own measurement without colliding.
           out[k === "freq_spread" ? k : k + "_tmean"] = val;
@@ -10367,33 +10392,33 @@
         return out;
       }
 
-      // ── Peak-level spectra ──────────────────────────────────────────────
+      // ── Envelope peak-level spectra ─────────────────────────────────────────────
       // Two separate things, and conflating them was the bug.
       //
-      // The TRANSFORM LENGTH comes from "Peak spec win (ms)" and nothing else.
-      // It fixes the bin grid, so every peak — in this recording and in every
+      // The TRANSFORM LENGTH comes from "Envelope peak spec win (ms)" and nothing else.
+      // It fixes the bin grid, so every envelope peak — in this recording and in every
       // other recording measured with the same preset — is described on the
       // same frequency axis. Deriving it from the data (the tightest pair of
-      // peaks, say) makes columns comparable inside one file and meaningless
+      // envelope peaks, say) makes columns comparable inside one file and meaningless
       // between files, because a dense recording and a sparse one would end up
       // on different grids.
       //
-      // The signal is capped at half the distance to each neighbouring peak,
+      // The signal is capped at half the distance to each neighbouring envelope peak,
       // so adjacent pulses never enter the same frame.
       //
       // That cap is also a hard limit on resolution, and it is a physical one:
-      // resolution is 1/T, so a peak with only 0.7 ms of clear space around it
+      // resolution is 1/T, so a envelope peak with only 0.7 ms of clear space around it
       // cannot be resolved finer than ~1400 Hz no matter what is requested.
       // Zero-padding interpolates the curve, it does not add information. So
       // the requested resolution is a TARGET, spec_res_hz reports what each
-      // peak actually achieved, and rows only sit on a common frequency axis
-      // if the target is coarse enough for every peak to reach it.
-      function pkPeakHalfWindow(peaks, i, want) {
-        const p = peaks[i];
+      // envelope peak actually achieved, and rows only sit on a common frequency axis
+      // if the target is coarse enough for every envelope peak to reach it.
+      function pkEnvPeakHalfWindow(envPeaks, i, want) {
+        const p = envPeaks[i];
         let half = want;
-        if (i > 0) half = Math.min(half, (p.time - peaks[i - 1].time) / 2);
-        if (i + 1 < peaks.length)
-          half = Math.min(half, (peaks[i + 1].time - p.time) / 2);
+        if (i > 0) half = Math.min(half, (p.time - envPeaks[i - 1].time) / 2);
+        if (i + 1 < envPeaks.length)
+          half = Math.min(half, (envPeaks[i + 1].time - p.time) / 2);
         // Floor of a few samples, only so a transform is possible at all. It
         // used to be half of SPEC_MIN_FFT, which at a coarse target (1500 Hz
         // wants 0.67 ms) is LONGER than the requested window — the floor would
@@ -10407,23 +10432,23 @@
       // Target frequency resolution per level, in Hz. Set in Hz rather than
       // milliseconds because that is what has to be held constant to compare
       // recordings, and it stays the same number whatever the sample rate.
-      function pkPeakSpecRes() {
-        return Math.max(1, parseFloat($("pkSpecResPeak")?.value) || 1500);
+      function pkEnvPeakSpecRes() {
+        return Math.max(1, parseFloat($("pkSpecResEnvPeak")?.value) || 1500);
       }
-      function pkTrainSpecRes() {
-        return Math.max(1, parseFloat($("pkSpecResTrain")?.value) || 50);
+      function pkPulseSpecRes() {
+        return Math.max(1, parseFloat($("pkSpecResPulse")?.value) || 50);
       }
       function pkMotifSpecRes() {
         return Math.max(1, parseFloat($("pkSpecResMotif")?.value) || 10);
       }
 
-      function pkPeakSpectrum(peaks, i, resHz) {
+      function pkEnvPeakSpectrum(envPeaks, i, resHz) {
         // Requested resolution implies a duration; the neighbours may allow
         // less, and then the row simply reports the coarser resolution it
         // actually got via spec_res_hz.
         const want = sampleRate / pkFrameForRes(resHz) / 2;
-        const half = pkPeakHalfWindow(peaks, i, want);
-        const t = peaks[i].time;
+        const half = pkEnvPeakHalfWindow(envPeaks, i, want);
+        const t = envPeaks[i].time;
         return computeSpectralMetrics(
           pkClampT(t - half),
           pkClampT(t + half),
@@ -10431,58 +10456,58 @@
         );
       }
 
-      // Confirm now runs one FFT per peak on top of the temporal maths, which
+      // Confirm now runs one FFT per envelope peak on top of the temporal maths, which
       // on a long recording is thousands of transforms — far too slow to hold
       // the UI thread without saying anything.
       async function pkConfirm() {
-        if (!pkPeaks.length) return;
+        if (!pkEnvPeaks.length) return;
         return withBusy("Computing metrics\u2026", (progress) =>
           _pkConfirmStages(progress),
         );
       }
 
       async function _pkConfirmStages(progress) {
-        const maxTrainGapMs = parseFloat($("pkMaxTrainGap").value) || 300;
-        const minPeaks = parseInt($("pkMinPeaks").value) || 3;
+        const maxPulseGapMs = parseFloat($("pkMaxPulseGap").value) || 300;
+        const minEnvPeaks = parseInt($("pkMinEnvPeaks").value) || 3;
         const useMotifSeq = $("pkMotifSeq").checked;
         const maxMotifGapMs = parseFloat($("pkMaxMotifGap").value) || 800;
 
-        // Trains come straight from the frozen segmentation — same as what's drawn.
-        const trains = pkBuildTrains().filter((t) => t.length >= minPeaks);
-        const motifs = pkGroupMotifs(trains, maxTrainGapMs);
+        // Pulses come straight from the frozen segmentation — same as what's drawn.
+        const pulses = pkBuildPulses().filter((t) => t.length >= minEnvPeaks);
+        const motifs = pkGroupMotifs(pulses, maxPulseGapMs);
         const motifSeqs = useMotifSeq
           ? pkGroupMotifSeqs(motifs, maxMotifGapMs)
           : [];
 
-        progress("Peak spectra\u2026", 0.1);
+        progress("Envelope peak spectra\u2026", 0.1);
         await busyTick();
-        // ── Build peak_data ──────────────────────────────────────────────
-        // Period is the interval to the NEXT peak, measured straight through
-        // train and motif boundaries.
+        // ── Build env_peak_data ──────────────────────────────────────────────
+        // Period is the interval to the NEXT envelope peak, measured straight through
+        // pulse and motif boundaries.
         //
-        // It used to be measured BACKWARDS and only within a train, which left
-        // the first peak of every train blank — so every extra train cost
-        // another missing value, and arch splitting produces a lot more trains
+        // It used to be measured BACKWARDS and only within a pulse, which left
+        // the first envelope peak of every pulse blank — so every extra pulse cost
+        // another missing value, and arch splitting produces a lot more pulses
         // than the gap rule alone did. Forwards and un-segmented, exactly one
-        // peak in the table has no successor: the last one.
+        // envelope peak in the table has no successor: the last one.
         const flat = [];
         motifs.forEach((motif, mi) => {
-          motif.forEach((train, ti) => {
-            train.forEach((p, pi) => flat.push({ p, mi, ti, pi }));
+          motif.forEach((pulse, ti) => {
+            pulse.forEach((p, pi) => flat.push({ p, mi, ti, pi }));
           });
         });
-        // One short FFT per peak. Only the measures that survive a frame this
+        // One short FFT per envelope peak. Only the measures that survive a frame this
         // short are reported: entropy and flatness need many bins to mean
         // anything and would just be noise dressed as data.
-        const allPeaks = flat.map((e) => e.p);
-        const peakRes = pkPeakSpecRes();
-        // Peak carrier frequencies, kept so the train pass can report how much
-        // they vary within a train (freq_spread).
+        const allEnvPeaks = flat.map((e) => e.p);
+        const env_peakRes = pkEnvPeakSpecRes();
+        // Envelope peak carrier frequencies, kept so the pulse pass can report how much
+        // they vary within a pulse (freq_spread).
         const peakFreqOf = new Map();
-        pkPeakData = flat.map((e, k) => {
+        pkEnvPeakData = flat.map((e, k) => {
           const next = k + 1 < flat.length ? flat[k + 1].p : null;
           const period = next ? next.time - e.p.time : null;
-          const sm = pkPeakSpectrum(allPeaks, k, peakRes) || {};
+          const sm = pkEnvPeakSpectrum(allEnvPeaks, k, env_peakRes) || {};
           if (sm.peak_freq_khz != null) peakFreqOf.set(e.p, sm.peak_freq_khz);
           return {
             source_file: pkSourceFile(),
@@ -10492,11 +10517,11 @@
             country: currentCountry,
             locality: currentLocality,
             motif_id: e.mi + 1,
-            train_id: e.ti + 1,
-            peak_id: e.pi + 1,
-            peak_time: round4(e.p.time),
-            peak_period_ms: period !== null ? round4(period * 1000) : null,
-            peak_amp: round4(_pkAmpOf(e.p)),
+            pulse_id: e.ti + 1,
+            env_peak_id: e.pi + 1,
+            env_peak_time: round4(e.p.time),
+            env_peak_period_ms: period !== null ? round4(period * 1000) : null,
+            env_peak_amp: round4(_pkAmpOf(e.p)),
             peak_freq_khz: sm.peak_freq_khz ?? null,
             bw_20db_khz: sm.bw_20db_khz ?? null,
             spec_centroid_khz: sm.spec_centroid_khz ?? null,
@@ -10510,15 +10535,15 @@
           };
         });
 
-        progress("Train metrics\u2026", 0.6);
+        progress("Pulse metrics\u2026", 0.6);
         await busyTick();
-        // ── Build train_data ─────────────────────────────────────────────
-        pkTrainData = [];
-        // Same split as for peaks: the transform length comes from "Train
-        // spec win (ms)", not from the shortest train in this recording, so
-        // train rows line up across recordings. A train shorter than the
+        // ── Build pulse_data ─────────────────────────────────────────────
+        pkPulseData = [];
+        // Same split as for envelope peaks: the transform length comes from "Pulse
+        // spec win (ms)", not from the shortest pulse in this recording, so
+        // pulse rows line up across recordings. A pulse shorter than the
         // transform is zero-padded; a longer one is Welch-averaged.
-        const trainRes = pkTrainSpecRes();
+        const pulseRes = pkPulseSpecRes();
 
         // Sample standard deviation (n-1). One pulse cannot support a spread,
         // so that reports null rather than a misleading zero.
@@ -10531,17 +10556,17 @@
 
         // ── Carrier-frequency statistics over constituent pulses ───────────
         // Distinct from the peak_freq_khz already on these rows, which is the
-        // dominant frequency of ONE transform over the whole train/motif span.
+        // dominant frequency of ONE transform over the whole pulse/motif span.
         // These describe the DISTRIBUTION of the per-pulse carriers inside the
         // structure: where they sit on average, how far they drift, and the
-        // extremes reached. A species whose train sweeps in frequency and one
-        // whose train holds a steady carrier can report the same
+        // extremes reached. A species whose pulse sweeps in frequency and one
+        // whose pulse holds a steady carrier can report the same
         // peak_freq_khz; only these columns separate them.
         //
-        // The p- prefix marks "aggregated over peak rows", parallel to the
-        // _tmean suffix meaning "aggregated over train rows".
-        const pkFreqCols = (peaksIn) => {
-          const f = peaksIn
+        // The p- prefix marks "aggregated over envelope peak rows", parallel to the
+        // _tmean suffix meaning "aggregated over pulse rows".
+        const pkFreqCols = (env_peaksIn) => {
+          const f = env_peaksIn
             .map((pk) => peakFreqOf.get(pk))
             .filter((v) => typeof v === "number" && isFinite(v));
           if (!f.length)
@@ -10563,24 +10588,24 @@
         };
 
         motifs.forEach((motif, mi) => {
-          motif.forEach((train, ti) => {
-            const times = train.map((p) => p.time);
-            const amps = train.map((p) => _pkAmpOf(p) ?? 0);
-            const pad = pkTrainPadSec();
+          motif.forEach((pulse, ti) => {
+            const times = pulse.map((p) => p.time);
+            const amps = pulse.map((p) => _pkAmpOf(p) ?? 0);
+            const pad = pkPulsePadSec();
             const rawStart = times[0],
               rawEnd = times[times.length - 1];
-            const peakSpan = rawEnd - rawStart; // span of peak maxima
-            const start = pkClampT(rawStart - pad), // padded train edges
+            const env_peakSpan = rawEnd - rawStart; // span of envelope peak maxima
+            const start = pkClampT(rawStart - pad), // padded pulse edges
               end = pkClampT(rawEnd + pad);
             const dur = end - start; // padded duration
-            const nPeaks = train.length;
-            // Pulse (peak) rate stays tied to the peak maxima, not the
+            const nEnvPeaks = pulse.length;
+            // Pulse (envelope peak) rate stays tied to the envelope peak maxima, not the
             // padded edges, so onset padding never dilutes this diagnostic.
-            const rate = peakSpan > 0 ? round4((nPeaks - 1) / peakSpan) : 0;
-            const meanAmp = round4(amps.reduce((s, v) => s + v, 0) / nPeaks);
-            // Temporal Excursion: sum of |diff(inter-peak intervals in ms)|
+            const rate = env_peakSpan > 0 ? round4((nEnvPeaks - 1) / env_peakSpan) : 0;
+            const meanAmp = round4(amps.reduce((s, v) => s + v, 0) / nEnvPeaks);
+            // Temporal Excursion: sum of |diff(inter-envelope peak intervals in ms)|
             const periods = [];
-            for (let i = 1; i < nPeaks; i++)
+            for (let i = 1; i < nEnvPeaks; i++)
               periods.push((times[i] - times[i - 1]) * 1000);
             const temExc = round4(
               periods.length > 1
@@ -10597,12 +10622,12 @@
                     .reduce((s, v, i) => s + Math.abs(v - amps[i]), 0)
                 : 0,
             );
-            // Gap to next train
-            const nextTrain = motif[ti + 1];
-            const gap = nextTrain
-              ? round4(pkClampT(nextTrain[0].time - pad) - end)
+            // Gap to next pulse
+            const nextPulse = motif[ti + 1];
+            const gap = nextPulse
+              ? round4(pkClampT(nextPulse[0].time - pad) - end)
               : null;
-            pkTrainData.push({
+            pkPulseData.push({
               source_file: pkSourceFile(),
               temp_c: currentTempC,
               specimen_id: currentSpecimenId,
@@ -10610,34 +10635,34 @@
               country: currentCountry,
               locality: currentLocality,
               motif_id: mi + 1,
-              train_id: ti + 1,
-              train_start: round4(start),
-              train_end: round4(end),
-              train_dur_ms: round4(dur * 1000),
-              n_peaks: nPeaks,
-              peak_rate_pps: rate, // peaks per second — "Hz" is reserved for spectral frequency
+              pulse_id: ti + 1,
+              pulse_start: round4(start),
+              pulse_end: round4(end),
+              pulse_dur_ms: round4(dur * 1000),
+              n_env_peaks: nEnvPeaks,
+              env_peak_rate_eps: rate, // envelope peaks per second — "Hz" is reserved for spectral frequency
               mean_amp: meanAmp,
               tem_exc: temExc,
               dyn_exc: dynExc,
-              train_gap_ms: gap !== null ? round4(gap * 1000) : null,
-              // Onset to the next train's onset, within this motif. Null on
-              // the motif's last train — the interval to the next motif's
-              // first train is a motif period, not a train period.
-              train_period_ms:
+              pulse_gap_ms: gap !== null ? round4(gap * 1000) : null,
+              // Onset to the next pulse's onset, within this motif. Null on
+              // the motif's last pulse — the interval to the next motif's
+              // first pulse is a motif period, not a pulse period.
+              pulse_period_ms:
                 gap !== null
                   ? round4(
-                      (pkClampT(nextTrain[0].time - pad) - start) * 1000,
+                      (pkClampT(nextPulse[0].time - pad) - start) * 1000,
                     )
                   : null,
-              ...pkSpecCols(computeSpectralMetrics(start, end, trainRes)),
-              ...pkFreqCols(train),
+              ...pkSpecCols(computeSpectralMetrics(start, end, pulseRes)),
+              ...pkFreqCols(pulse),
               // Historical name for peak_freq_psd_khz, kept so workbooks and
               // scripts written against older exports keep working. Same
-              // number: how much the per-peak carrier moves across this train.
-              // Large values mean the train's own bandwidth is driven by drift
+              // number: how much the per-envelope peak carrier moves across this pulse.
+              // Large values mean the pulse's own bandwidth is driven by drift
               // between pulses rather than the width of any one pulse.
               freq_spread: (() => {
-                const f = train
+                const f = pulse
                   .map((pk) => peakFreqOf.get(pk))
                   .filter((v) => typeof v === "number" && isFinite(v));
                 const v = sd(f);
@@ -10653,45 +10678,69 @@
         pkMotifData = [];
         const motifRes = pkMotifSpecRes();
         motifs.forEach((motif, mi) => {
-          const allPeaks = motif.flat();
-          const pad = pkTrainPadSec();
-          const rawMStart = allPeaks[0].time;
-          const rawMEnd = allPeaks[allPeaks.length - 1].time;
-          const mSpan = rawMEnd - rawMStart; // raw extent of peak maxima
+          const allEnvPeaks = motif.flat();
+          const pad = pkPulsePadSec();
+          const rawMStart = allEnvPeaks[0].time;
+          const rawMEnd = allEnvPeaks[allEnvPeaks.length - 1].time;
           const mStart = pkClampT(rawMStart - pad), // padded motif edges
             mEnd = pkClampT(rawMEnd + pad);
           const mDur = mEnd - mStart; // padded duration
-          const nTrains = motif.length;
-          // Train rate tied to raw peak span, not the padded edges.
-          const trainRate = mSpan > 0 ? round4((nTrains - 1) / mSpan) : 0;
-          // Duty cycle: sum(train_dur) / motif_dur
-          const myTrains = pkTrainData.filter((t) => t.motif_id === mi + 1);
-          const sumDur = myTrains.reduce((s, t) => s + t.train_dur_ms, 0);
+          const nPulses = motif.length;
+          // Pulses per second: the N-1 inter-pulse intervals divided by the
+          // time they actually span, which is ONSET to ONSET — the first
+          // pulse's first envelope peak to the last pulse's first envelope peak.
+          //
+          // Measuring instead to the last pulse's LAST envelope peak (the motif's raw
+          // envelope peak span) put that final pulse's whole duration into the
+          // denominator, where it belongs to no interval. The rate came out
+          // low by an amount that depended on how many pulses the motif
+          // held: -32% at two pulses, -14% at four, -2.5% at twenty. A motif
+          // that lengthened with temperature therefore moved this number on
+          // its own, with no change in tempo at all.
+          //
+          // As defined here the rate is exactly 1 / mean(pulse_period_ms):
+          // the periods sum to the onset span, and there are N-1 of them.
+          // That is the count-over-time reading of "pulses per second", and
+          // deliberately not mean(1 / period), which overweights the short
+          // intervals and runs high on a variable song.
+          const onsetSpan =
+            nPulses > 1 ? motif[nPulses - 1][0].time - motif[0][0].time : 0;
+          // A lone pulse has no interval to measure, so it has no rate. null
+          // rather than 0 — the same convention pulse_gap_ms and
+          // pulse_period_ms use for "not defined here" — because a 0 would
+          // be averaged in as a real observation of silence.
+          const pulseRate =
+            nPulses > 1 && onsetSpan > 0
+              ? round4((nPulses - 1) / onsetSpan)
+              : null;
+          // Duty cycle: sum(pulse_dur) / motif_dur
+          const myPulses = pkPulseData.filter((t) => t.motif_id === mi + 1);
+          const sumDur = myPulses.reduce((s, t) => s + t.pulse_dur_ms, 0);
           const dutyCycle = mDur > 0 ? round4((sumDur / 1000 / mDur) * 100) : 0;
-          const temExcMean = round4(mean(myTrains.map((t) => t.tem_exc)));
-          const dynExcMean = round4(mean(myTrains.map((t) => t.dyn_exc)));
-          // PCI-syl — the motif divided at TRAIN boundaries: each train's
+          const temExcMean = round4(mean(myPulses.map((t) => t.tem_exc)));
+          const dynExcMean = round4(mean(myPulses.map((t) => t.dyn_exc)));
+          // PCI-syl — the motif divided at PULSE boundaries: each pulse's
           // duration, then the gap that follows it. This is the original
           // index. It describes the syllable pattern, but it also inherits
-          // whatever grouping parameters produced those trains.
+          // whatever grouping parameters produced those pulses.
           const propsSyl = [];
-          myTrains.forEach((t, i) => {
-            propsSyl.push(t.train_dur_ms / 1000 / mDur);
-            if (t.train_gap_ms !== null && i < myTrains.length - 1)
-              propsSyl.push(t.train_gap_ms / 1000 / mDur);
+          myPulses.forEach((t, i) => {
+            propsSyl.push(t.pulse_dur_ms / 1000 / mDur);
+            if (t.pulse_gap_ms !== null && i < myPulses.length - 1)
+              propsSyl.push(t.pulse_gap_ms / 1000 / mDur);
           });
-          const syl = pkPatternComplexity(propsSyl, nTrains, mDur);
+          const syl = pkPatternComplexity(propsSyl, nPulses, mDur);
 
-          // PCI-agn — the same motif divided at EVERY PEAK: the intervals
-          // between consecutive peaks, with no notion of where one train ends
+          // PCI-agn — the same motif divided at EVERY TOOTH: the intervals
+          // between consecutive envelope peaks, with no notion of where one pulse ends
           // and the next begins. Nothing about the grouping enters it, so it
           // is a behaviour-agnostic description of the same motif and can be
-          // compared against PCI-syl to test whether train segmentation adds
+          // compared against PCI-syl to test whether pulse segmentation adds
           // information or only adds assumptions.
           const propsAgn = [];
-          for (let i = 1; i < allPeaks.length; i++)
-            propsAgn.push((allPeaks[i].time - allPeaks[i - 1].time) / mDur);
-          const agn = pkPatternComplexity(propsAgn, allPeaks.length, mDur);
+          for (let i = 1; i < allEnvPeaks.length; i++)
+            propsAgn.push((allEnvPeaks[i].time - allEnvPeaks[i - 1].time) / mDur);
+          const agn = pkPatternComplexity(propsAgn, allEnvPeaks.length, mDur);
           // Gap to next motif
           const nextMotif = motifs[mi + 1];
           const mGap = nextMotif
@@ -10714,8 +10763,8 @@
             motif_dur_s: round4(mDur),
             motif_gap_s: mGap,
             motif_period_s: mPeriod,
-            n_trains: nTrains,
-            train_rate_tps: trainRate, // trains per second — "Hz" is reserved for spectral frequency
+            n_pulses: nPulses,
+            pulse_rate_pps: pulseRate, // pulses per second — "Hz" is reserved for spectral frequency
             duty_cycle_pct: dutyCycle,
             tem_exc_mean: temExcMean,
             dyn_exc_mean: dynExcMean,
@@ -10730,10 +10779,10 @@
             ...pkSpecCols(computeSpectralMetrics(mStart, mEnd, motifRes)),
             ...pkMotifSpecMeans(mi + 1),
             // Pooled over every pulse in the motif, not averaged over its
-            // trains: a motif whose trains each hold a steady but different
-            // carrier has a small freq_spread (each train is tight) and a
+            // pulses: a motif whose pulses each hold a steady but different
+            // carrier has a small freq_spread (each pulse is tight) and a
             // large peak_freq_psd_khz (the motif as a whole is not).
-            ...pkFreqCols(allPeaks),
+            ...pkFreqCols(allEnvPeaks),
           });
         });
 
@@ -10741,10 +10790,10 @@
         pkMotifSeqData = [];
         if (useMotifSeq) {
           motifSeqs.forEach((seq, si) => {
-            const allPeaks = seq.flat(2);
-            const pad = pkTrainPadSec();
-            const sStart = pkClampT(allPeaks[0].time - pad),
-              sEnd = pkClampT(allPeaks[allPeaks.length - 1].time + pad);
+            const allEnvPeaks = seq.flat(2);
+            const pad = pkPulsePadSec();
+            const sStart = pkClampT(allEnvPeaks[0].time - pad),
+              sEnd = pkClampT(allEnvPeaks[allEnvPeaks.length - 1].time + pad);
             const nextSeq = motifSeqs[si + 1];
             const sGap = nextSeq
               ? round4(pkClampT(nextSeq[0][0][0].time - pad) - sEnd)
@@ -10774,8 +10823,8 @@
           species: currentSpecies,
           country: currentCountry,
           locality: currentLocality,
-          n_peaks: pkPeakData.length,
-          n_trains: pkTrainData.length,
+          n_env_peaks: pkEnvPeakData.length,
+          n_pulses: pkPulseData.length,
           n_motifs: pkMotifData.length,
           pci_syl_mean: round4(mean(pkMotifData.map((m) => m.pci_syl))),
           pci_syl_sd: round4(sd(pkMotifData.map((m) => m.pci_syl))),
@@ -10787,34 +10836,34 @@
           duty_cycle_sd: round4(sd(pkMotifData.map((m) => m.duty_cycle_pct))),
           motif_dur_mean: round4(mean(pkMotifData.map((m) => m.motif_dur_s))),
           motif_dur_sd: round4(sd(pkMotifData.map((m) => m.motif_dur_s))),
-          n_trains_per_motif_mean: round4(
-            mean(pkMotifData.map((m) => m.n_trains)),
+          n_pulses_per_motif_mean: round4(
+            mean(pkMotifData.map((m) => m.n_pulses)),
           ),
-          n_trains_per_motif_sd: round4(sd(pkMotifData.map((m) => m.n_trains))),
-          train_dur_mean: round4(mean(pkTrainData.map((t) => t.train_dur_ms))),
-          train_dur_sd: round4(sd(pkTrainData.map((t) => t.train_dur_ms))),
-          train_gap_mean: round4(
+          n_pulses_per_motif_sd: round4(sd(pkMotifData.map((m) => m.n_pulses))),
+          pulse_dur_mean: round4(mean(pkPulseData.map((t) => t.pulse_dur_ms))),
+          pulse_dur_sd: round4(sd(pkPulseData.map((t) => t.pulse_dur_ms))),
+          pulse_gap_mean: round4(
             mean(
-              pkTrainData
-                .filter((t) => t.train_gap_ms !== null)
-                .map((t) => t.train_gap_ms),
+              pkPulseData
+                .filter((t) => t.pulse_gap_ms !== null)
+                .map((t) => t.pulse_gap_ms),
             ),
           ),
-          train_gap_sd: round4(
+          pulse_gap_sd: round4(
             sd(
-              pkTrainData
-                .filter((t) => t.train_gap_ms !== null)
-                .map((t) => t.train_gap_ms),
+              pkPulseData
+                .filter((t) => t.pulse_gap_ms !== null)
+                .map((t) => t.pulse_gap_ms),
             ),
           ),
-          peaks_per_train_mean: round4(mean(pkTrainData.map((t) => t.n_peaks))),
-          peaks_per_train_sd: round4(sd(pkTrainData.map((t) => t.n_peaks))),
-          peak_rate_mean: round4(mean(pkTrainData.map((t) => t.peak_rate_pps))),
-          peak_rate_sd: round4(sd(pkTrainData.map((t) => t.peak_rate_pps))),
-          tem_exc_mean: round4(mean(pkTrainData.map((t) => t.tem_exc))),
-          tem_exc_sd: round4(sd(pkTrainData.map((t) => t.tem_exc))),
-          dyn_exc_mean: round4(mean(pkTrainData.map((t) => t.dyn_exc))),
-          dyn_exc_sd: round4(sd(pkTrainData.map((t) => t.dyn_exc))),
+          env_peaks_per_pulse_mean: round4(mean(pkPulseData.map((t) => t.n_env_peaks))),
+          env_peaks_per_pulse_sd: round4(sd(pkPulseData.map((t) => t.n_env_peaks))),
+          env_peak_rate_mean: round4(mean(pkPulseData.map((t) => t.env_peak_rate_eps))),
+          env_peak_rate_sd: round4(sd(pkPulseData.map((t) => t.env_peak_rate_eps))),
+          tem_exc_mean: round4(mean(pkPulseData.map((t) => t.tem_exc))),
+          tem_exc_sd: round4(sd(pkPulseData.map((t) => t.tem_exc))),
+          dyn_exc_mean: round4(mean(pkPulseData.map((t) => t.dyn_exc))),
+          dyn_exc_sd: round4(sd(pkPulseData.map((t) => t.dyn_exc))),
         };
 
         pkConfirmed = true;
@@ -10824,16 +10873,16 @@
         if ($("btnExportTextReport")) $("btnExportTextReport").disabled = false;
         $("pkResults").style.display = "";
         $("pkTabBtnMotSeq").style.display = useMotifSeq ? "" : "none";
-        pkShowTable("peak");
+        pkShowTable("envpeak");
         pkRenderSummaryCards();
-        // Peaks packed closer than the requested resolution needs are limited
+        // Envelope peaks packed closer than the requested resolution needs are limited
         // by their neighbours, and those rows are NOT on the same frequency
         // axis as the rest. Say so plainly, with the number to fall back to,
         // rather than leaving it to be discovered in the spreadsheet.
-        const achieved = pkPeakData
+        const achieved = pkEnvPeakData
           .map((r) => r.spec_res_hz)
           .filter((v) => v != null);
-        const wantRes = pkPeakSpecRes();
+        const wantRes = pkEnvPeakSpecRes();
         const worst = achieved.length ? Math.max(...achieved) : 0;
         const short = achieved.filter((v) => v > wantRes * 1.01).length;
         let resNote = "";
@@ -10843,7 +10892,7 @@
             short +
             "/" +
             achieved.length +
-            " peaks too close together for " +
+            " envelope peaks too close together for " +
             Math.round(wantRes) +
             " Hz (coarsest " +
             Math.round(worst) +
@@ -10853,10 +10902,10 @@
         }
         $("pkStatus").textContent =
           "✓ " +
-          pkPeakData.length +
-          " peaks | " +
-          pkTrainData.length +
-          " trains | " +
+          pkEnvPeakData.length +
+          " envelope peaks | " +
+          pkPulseData.length +
+          " pulses | " +
           pkMotifData.length +
           " motifs" +
           resNote;
@@ -10875,7 +10924,7 @@
       //
       // The SCORING is shared between both variants; only the DIVISION differs
       // — which is exactly the thing being tested. PCI-syl divides the motif
-      // at train boundaries, PCI-agn at every peak. Keeping one formula means
+      // at pulse boundaries, PCI-agn at every envelope peak. Keeping one formula means
       // a difference between the two columns can only come from the division.
       //
       // Note this deliberately does not bail out on an empty `props`: the
@@ -10911,20 +10960,20 @@
       // ── Table rendering ──────────────────────────────────────────────────
       function pkShowTable(which) {
         pkCurrentTable = which;
-        ["peak", "train", "motif", "motseq", "summ"].forEach((t) => {
+        ["envpeak", "pulse", "motif", "motseq", "summ"].forEach((t) => {
           const btn = $("pkTabBtn" + t.charAt(0).toUpperCase() + t.slice(1));
           if (btn) btn.className = t === which ? "pri" : "";
         });
         // Fix button IDs
-        $("pkTabBtnPeak").className = which === "peak" ? "pri" : "";
-        $("pkTabBtnTrain").className = which === "train" ? "pri" : "";
+        $("pkTabBtnEnvPeak").className = which === "envpeak" ? "pri" : "";
+        $("pkTabBtnPulse").className = which === "pulse" ? "pri" : "";
         $("pkTabBtnMotif").className = which === "motif" ? "pri" : "";
         $("pkTabBtnMotSeq").className = which === "motseq" ? "pri" : "";
         $("pkTabBtnSumm").className = which === "summ" ? "pri" : "";
 
         const dataMap = {
-          peak: pkPeakData,
-          train: pkTrainData,
+          envpeak: pkEnvPeakData,
+          pulse: pkPulseData,
           motif: pkMotifData,
           motseq: pkMotifSeqData,
           summ: pkSummaryData ? [pkSummaryData] : [],
@@ -10956,13 +11005,13 @@
       function pkRenderSummaryCards() {
         if (!pkSummaryData) return;
         const cards = [
-          { lbl: "Peaks", v: pkSummaryData.n_peaks },
-          { lbl: "Trains", v: pkSummaryData.n_trains },
+          { lbl: "Envelope peaks", v: pkSummaryData.n_env_peaks },
+          { lbl: "Pulses", v: pkSummaryData.n_pulses },
           { lbl: "Motifs", v: pkSummaryData.n_motifs },
           { lbl: "PCI-syl (mean)", v: pkSummaryData.pci_syl_mean },
           { lbl: "PCI-agn (mean)", v: pkSummaryData.pci_agn_mean },
           { lbl: "Duty cycle %", v: pkSummaryData.duty_cycle_mean },
-          { lbl: "Peak rate (peaks/s)", v: pkSummaryData.peak_rate_mean },
+          { lbl: "Envelope peak rate (envelope peaks/s)", v: pkSummaryData.env_peak_rate_mean },
           { lbl: "Tem. Exc.", v: pkSummaryData.tem_exc_mean },
           { lbl: "Dyn. Exc.", v: pkSummaryData.dyn_exc_mean },
         ];
@@ -10986,8 +11035,8 @@
       // ── Export ───────────────────────────────────────────────────────────
       function pkExportCurrent() {
         const dataMap = {
-          peak: pkPeakData,
-          train: pkTrainData,
+          envpeak: pkEnvPeakData,
+          pulse: pkPulseData,
           motif: pkMotifData,
           motseq: pkMotifSeqData,
           summ: pkSummaryData ? [pkSummaryData] : [],
@@ -11012,8 +11061,8 @@
       // fully offline.
       async function pkExportAll() {
         const sheets = [
-          ["Peaks", pkPeakData],
-          ["Trains", pkTrainData],
+          ["Envelope peaks", pkEnvPeakData],
+          ["Pulses", pkPulseData],
           ["Motifs", pkMotifData],
           ["MotifSeqs", pkMotifSeqData],
           ["Summary", pkSummaryData ? [pkSummaryData] : []],
@@ -11024,7 +11073,7 @@
           return;
         }
 
-        // A Peaks sheet routinely runs to tens of thousands of rows, and the
+        // A Envelope peaks sheet routinely runs to tens of thousands of rows, and the
         // whole workbook is serialised to XML and zipped on this thread.
         //
         // The save DIALOG is deliberately left outside the overlay: at that
@@ -11080,9 +11129,30 @@
         }
         return s;
       }
+      // The columns a sheet will have: the union of every row's keys, in
+      // first-seen order. Rows are NOT uniform — the temperature correction
+      // stamps adj_* onto only the metrics that got a usable fit — so taking
+      // the keys of the first row alone silently dropped those columns from
+      // the whole sheet whenever the first metric happened not to have one.
+      // Shared with _withFormulaCols so the letters its formulas point at are
+      // the letters this writer actually uses.
+      function _unionCols(data) {
+        const cols = [];
+        const seen = new Set();
+        data.forEach((row) => {
+          Object.keys(row).forEach((k) => {
+            if (!seen.has(k)) {
+              seen.add(k);
+              cols.push(k);
+            }
+          });
+        });
+        return cols;
+      }
+
       // Build a worksheet XML from an array of row-objects.
       function _sheetXml(data) {
-        const cols = Object.keys(data[0]);
+        const cols = _unionCols(data);
         let rows = "";
         // Header row
         rows += '<row r="1">';
@@ -11384,8 +11454,8 @@
 
       // "24.03 ± 0.86 [22.66–25.86] ms" — mean, SD and range in one string.
       //
-      // Nulls are dropped first, and this matters: train_gap_ms,
-      // train_period_ms, motif_gap_s and motif_period_s are all null on their
+      // Nulls are dropped first, and this matters: pulse_gap_ms,
+      // pulse_period_ms, motif_gap_s and motif_period_s are all null on their
       // last element by design, and the shared mean() coerces null to 0, which
       // would drag every one of those statistics low.
       //
@@ -11410,25 +11480,25 @@
         );
       }
 
-      // Inter-peak intervals WITHIN each train.
+      // Inter-envelope peak intervals WITHIN each pulse.
       //
-      // The peak_period_ms column cannot be averaged directly: it is built
-      // from the globally flattened peak list, so the last peak of every train
-      // carries the inter-train interval instead of a pulse period. Averaging
-      // it would blend pulse periods with train gaps and inflate the result.
-      // Regrouping by (motif_id, train_id) and dropping each train's last peak
-      // leaves only genuine within-train periods.
-      function _pkWithinTrainPeriods() {
-        const byTrain = new Map();
-        pkPeakData.forEach((r) => {
-          const k = r.motif_id + "/" + r.train_id;
-          if (!byTrain.has(k)) byTrain.set(k, []);
-          byTrain.get(k).push(r);
+      // The env_peak_period_ms column cannot be averaged directly: it is built
+      // from the globally flattened envelope peak list, so the last envelope peak of every pulse
+      // carries the inter-pulse interval instead of a pulse period. Averaging
+      // it would blend pulse periods with pulse gaps and inflate the result.
+      // Regrouping by (motif_id, pulse_id) and dropping each pulse's last envelope peak
+      // leaves only genuine within-pulse periods.
+      function _pkWithinPulsePeriods() {
+        const byPulse = new Map();
+        pkEnvPeakData.forEach((r) => {
+          const k = r.motif_id + "/" + r.pulse_id;
+          if (!byPulse.has(k)) byPulse.set(k, []);
+          byPulse.get(k).push(r);
         });
         const out = [];
-        byTrain.forEach((rows) => {
+        byPulse.forEach((rows) => {
           for (let i = 0; i < rows.length - 1; i++) {
-            const v = rows[i].peak_period_ms;
+            const v = rows[i].env_peak_period_ms;
             if (typeof v === "number" && isFinite(v)) out.push(v);
           }
         });
@@ -11443,7 +11513,7 @@
         const paras = [];
         const col = (rows, k) => rows.map((r) => r[k]);
 
-        if (pkConfirmed && pkPeakData.length) {
+        if (pkConfirmed && pkEnvPeakData.length) {
           const fname = currentAudioFileName || "recording";
           paras.push(
             "Temporal analysis of " +
@@ -11451,10 +11521,10 @@
               " over " +
               (duration ? duration.toFixed(2) + " s" : "an unknown duration") +
               ": " +
-              pkPeakData.length +
-              " peaks in " +
-              pkTrainData.length +
-              " trains and " +
+              pkEnvPeakData.length +
+              " envelope peaks in " +
+              pkPulseData.length +
+              " pulses and " +
               pkMotifData.length +
               " motifs. Values are mean ± SD [min–max].",
           );
@@ -11473,26 +11543,26 @@
             lines.forEach((l) => paras.push(l));
           };
 
-          section("Peaks", [
-            ["Peak period (within train)", _pkWithinTrainPeriods(), 2, "ms"],
-            ["Peaks per train", col(pkTrainData, "n_peaks"), 1, null],
+          section("Envelope peaks", [
+            ["Envelope peak period (within pulse)", _pkWithinPulsePeriods(), 2, "ms"],
+            ["Envelope peaks per pulse", col(pkPulseData, "n_env_peaks"), 1, null],
           ]);
 
-          section("Trains", [
-            ["Train rate", col(pkMotifData, "train_rate_tps"), 2, "trains/s"],
-            ["Trains per motif", col(pkMotifData, "n_trains"), 1, null],
-            ["Train duration", col(pkTrainData, "train_dur_ms"), 2, "ms"],
-            ["Train period", col(pkTrainData, "train_period_ms"), 2, "ms"],
-            ["Train gap", col(pkTrainData, "train_gap_ms"), 2, "ms"],
-            ["Dynamic excursion (DE)", col(pkTrainData, "dyn_exc"), 3, null],
-            ["Temporal excursion (TE)", col(pkTrainData, "tem_exc"), 2, null],
+          section("Pulses", [
+            ["Pulse rate", col(pkMotifData, "pulse_rate_pps"), 2, "pulses/s"],
+            ["Pulses per motif", col(pkMotifData, "n_pulses"), 1, null],
+            ["Pulse duration", col(pkPulseData, "pulse_dur_ms"), 2, "ms"],
+            ["Pulse period", col(pkPulseData, "pulse_period_ms"), 2, "ms"],
+            ["Pulse gap", col(pkPulseData, "pulse_gap_ms"), 2, "ms"],
+            ["Dynamic excursion (DE)", col(pkPulseData, "dyn_exc"), 3, null],
+            ["Temporal excursion (TE)", col(pkPulseData, "tem_exc"), 2, null],
           ]);
 
           section("Motifs", [
             ["Motif duration", col(pkMotifData, "motif_dur_s"), 3, "s"],
             ["Motif period", col(pkMotifData, "motif_period_s"), 3, "s"],
             ["Duty cycle", col(pkMotifData, "duty_cycle_pct"), 1, "%"],
-            // The motif's OWN transform, not the _tmean average of its trains.
+            // The motif's OWN transform, not the _tmean average of its pulses.
             ["Peak frequency", col(pkMotifData, "peak_freq_khz"), 3, "kHz"],
             ["Bandwidth at -20 dB", col(pkMotifData, "bw_20db_khz"), 3, "kHz"],
             ["Bandwidth at -10 dB", col(pkMotifData, "bw_10db_khz"), 3, "kHz"],
@@ -11513,7 +11583,7 @@
             a.length ? mean(a).toFixed(d) + " ± " + sd(a).toFixed(d) : null;
 
           const durs = nums("dur_ms"),
-            peaks = nums("peak_freq_khz"),
+            envPeaks = nums("peak_freq_khz"),
             bw20 = nums("bw_20db_khz"),
             bw10 = nums("bw_10db_khz"),
             q3 = nums("q_3db"),
@@ -11529,7 +11599,7 @@
               ".",
           );
           const bits = [];
-          if (peaks.length)
+          if (envPeaks.length)
             bits.push("a peak frequency of " + pm(peaks, 3) + " kHz");
           if (durs.length) bits.push("a duration of " + pm(durs, 2) + " ms");
           if (bits.length)
@@ -11569,7 +11639,7 @@
         const paragraphs = buildTextReportParagraphs();
         if (!paragraphs || !paragraphs.length) {
           log(
-            "Run Detect Peaks and Confirm (or compute spectral metrics) before exporting a report.",
+            "Run Detect Envelope peaks and Confirm (or compute spectral metrics) before exporting a report.",
             "warn",
           );
           return;
@@ -11715,11 +11785,11 @@
 
       function pkClear() {
         pkEnv = null;
-        pkPeaks = [];
-        pkTrains = [];
+        pkEnvPeaks = [];
+        pkPulses = [];
         pkMotifs = [];
-        pkPeakData = [];
-        pkTrainData = [];
+        pkEnvPeakData = [];
+        pkPulseData = [];
         pkMotifData = [];
         pkMotifSeqData = [];
         pkSummaryData = null;
@@ -11744,17 +11814,17 @@
           log("Load audio first", "warn");
           return;
         }
-        if (!pkPeaks.length) {
-          log("No peak detections to apply", "warn");
+        if (!pkEnvPeaks.length) {
+          log("No envelope peak detections to apply", "warn");
           return;
         }
 
-        const kind = $("pkApplySelectionType")?.value || "train";
-        const minPeaks = parseInt($("pkMinPeaks").value) || 3;
-        const trains = pkBuildTrains().filter((t) => t.length >= minPeaks);
-        if (!trains.length) {
+        const kind = $("pkApplySelectionType")?.value || "pulse";
+        const minEnvPeaks = parseInt($("pkMinEnvPeaks").value) || 3;
+        const pulses = pkBuildPulses().filter((t) => t.length >= minEnvPeaks);
+        if (!pulses.length) {
           log(
-            "No train selections available for current peak settings.",
+            "No pulse selections available for current envelope peak settings.",
             "warn",
           );
           return;
@@ -11762,8 +11832,8 @@
 
         const selections =
           kind === "motif"
-            ? pkGroupMotifs(trains, parseFloat($("pkMaxTrainGap").value) || 300)
-            : trains;
+            ? pkGroupMotifs(pulses, parseFloat($("pkMaxPulseGap").value) || 300)
+            : pulses;
         if (!selections.length) {
           log(
             "No " +
@@ -11777,7 +11847,7 @@
         annotSnapshot("apply " + kind + " selections");
 
         // Replace whatever this function added last time — otherwise
-        // editing detections (splitting/joining/deleting peaks) and
+        // editing detections (splitting/joining/deleting envelope peaks) and
         // re-applying just piles fresh, correctly-numbered selections on
         // top of the stale ones from before the edit, instead of updating
         // them. Selections created some other way (manual drag-select)
@@ -11792,19 +11862,19 @@
         let added = 0,
           skipped = 0;
         const addedIds = [];
-        const pad = pkTrainPadSec();
+        const pad = pkPulsePadSec();
         selections.forEach((selection, i) => {
-          // selection is a train (array of peaks) or, for kind="motif", a
-          // motif (array of trains). Resolve the first/last PEAK either way,
-          // then pad each edge to match the padded train/motif extent.
+          // selection is a pulse (array of envelope peaks) or, for kind="motif", a
+          // motif (array of pulses). Resolve the first/last TOOTH either way,
+          // then pad each edge to match the padded pulse/motif extent.
           const isMotif = Array.isArray(selection[0]);
-          const firstPeak = isMotif ? selection[0][0] : selection[0];
+          const firstEnvPeak = isMotif ? selection[0][0] : selection[0];
           const lastGroup = selection[selection.length - 1];
-          const lastPeak = isMotif
+          const lastEnvPeak = isMotif
             ? lastGroup[lastGroup.length - 1]
             : lastGroup;
-          const start = pkClampT(firstPeak.time - pad);
-          const end = pkClampT(lastPeak.time + pad);
+          const start = pkClampT(firstEnvPeak.time - pad);
+          const end = pkClampT(lastEnvPeak.time + pad);
           if (
             annotations.find(
               (x) =>
@@ -11874,7 +11944,7 @@
         }
       }
 
-      // Enable Detect Peaks button when audio loads
+      // Enable Detect Envelope peaks button when audio loads
       // (hooked into existing load pipeline via a small addition)
 
       // Sync the Loaded Audio panel's settings inputs with any persisted
@@ -11888,13 +11958,13 @@
       // off the imported files; no audio needs to be loaded. Reuses the
       // shared _readXlsx / _buildXlsx / _buildDocx / dlFile helpers.
       // ═══════════════════════════════════════════════════════════════════
-      let summFilesData = []; // [{id, name, specimenId, fromData, sheets: {peaks:[],trains:[],...}}]
+      let summFilesData = []; // [{id, name, specimenId, fromData, sheets: {envelope peaks:[],pulses:[],...}}]
       let summNextFileId = 1;
       // Holds {specimenId, species, country, locality} copied from one file box via
       // "📋 Copy metadata", so it can be pasted into others — cuts down on
       // retyping the same tags across many files from one field trip.
       let summMetaClipboard = null;
-      let summMerged = null; // {peaks:[],trains:[],motifs:[],motseq:[],spectral:[]}
+      let summMerged = null; // {envelope peaks:[],pulses:[],motifs:[],motseq:[],spectral:[]}
       let summStatsRows = null; // [{selection, category, specimenId, metric, n, mean, sd, min, max}]
       // Kept from the last merge so a selection can be edited and re-summarized
       // without re-reading every workbook.
@@ -11911,17 +11981,17 @@
       // column, so "everything" is a selection like any other downstream.
       const SUMM_SEL_ALL = "All rows";
 
-      const SUMM_CATS = ["peaks", "trains", "motifs", "motseq", "spectral"];
+      const SUMM_CATS = ["envPeaks", "pulses", "motifs", "motseq", "spectral"];
       const SUMM_LABEL = {
-        peaks: "Peaks",
-        trains: "Trains",
+        envPeaks: "EnvPeaks",
+        pulses: "Pulses",
         motifs: "Motifs",
         motseq: "MotifSeqs",
         spectral: "Spectral",
       };
       const SUMM_SHEET_NAME = {
-        peaks: "Peaks",
-        trains: "Trains",
+        envPeaks: "EnvPeaks",
+        pulses: "Pulses",
         motifs: "Motifs",
         motseq: "MotifSeqs",
         spectral: "Spectral_Analysis",
@@ -11934,18 +12004,29 @@
       // the merged Summary is recomputed fresh from the pooled raw rows.
       function _summClassifySheet(name, rows) {
         const nm = name.toLowerCase();
+        // The pre-rename vocabulary is accepted alongside the new one
+        // throughout this classifier: "train" for pulse and "peak" for
+        // envelope peak. Workbooks exported before the rename carry the old names,
+        // and refusing them would strand every table a user already has.
         if (nm.includes("motifseq")) return "motseq";
         if (nm.includes("motif")) return "motifs";
-        if (nm.includes("train")) return "trains";
-        if (nm.includes("peak")) return "peaks";
+        if (nm.includes("pulse") || nm.includes("train")) return "pulses";
+        // "envpeaks" first: that is what the sheet is actually called. Matching
+        // only the singular meant the app could not re-import its own export.
+        if (nm.includes("envpeaks") || nm.includes("envpeak") || nm.includes("peak"))
+          return "envPeaks";
         if (nm.includes("spectral")) return "spectral";
-        if (nm === "summary" || nm === "info") return null;
+        // startsWith, not equality: the merged workbook's own sheet is
+        // Summary_Obs, and re-importing one must not treat it as data.
+        if (nm.startsWith("summary") || nm === "info") return null;
         if (!rows || !rows.length) return null;
         const cols = Object.keys(rows[0]).map((c) => c.toLowerCase());
         const has = (...ks) => ks.every((k) => cols.includes(k));
         if (has("motif_start", "motif_end")) return "motifs";
-        if (has("train_start", "train_end")) return "trains";
-        if (cols.includes("peak_time")) return "peaks";
+        if (has("pulse_start", "pulse_end") || has("train_start", "train_end"))
+          return "pulses";
+        if (cols.includes("env_peak_time") || cols.includes("peak_time"))
+          return "envPeaks";
         if (
           cols.some(
             (c) =>
@@ -12030,7 +12111,7 @@
       // a prefix and append a fixed marker for what the export is — the
       // Temporal Analysis workbook gets "_temp", Spectral Analysis exports
       // get "_spec" (users sometimes rename theirs further, e.g.
-      // "..._spec_trains.xlsx", to tell apart repeated exports for different
+      // "..._spec_pulses.xlsx", to tell apart repeated exports for different
       // selection sets). Cut at the first such marker to recover the shared
       // prefix, so several exports from the same audio file collapse into ONE
       // recording instead of being counted once per file.
@@ -12052,8 +12133,8 @@
 
       // Columns that must never be averaged, regressed or used to predict a
       // temperature. Covers the metadata tags (specimen_id/species/
-      // locality/source_file), every *_id column (motif_id/train_id/
-      // peak_id/seq_id — these are categorical row numbers, not counts),
+      // locality/source_file), every *_id column (motif_id/pulse_id/
+      // env_peak_id/seq_id — these are categorical row numbers, not counts),
       // the plain running-index columns ("selection", "n"), and the columns
       // that record WHERE something sits rather than what it sounds like.
       function _summIsCategoricalKey(k) {
@@ -12085,11 +12166,11 @@
           // They stay in the per-level tables, which is where they earn
           // their place: locating a row back in the audio, and rebuilding
           // annotations from a saved table on import (_importXlsxSelections
-          // reads train_start/train_end, and sheet classification keys off
+          // reads pulse_start/pulse_end, and sheet classification keys off
           // their presence).
-          kl === "peak_time" ||
-          kl === "train_start" ||
-          kl === "train_end" ||
+          kl === "env_peak_time" ||
+          kl === "pulse_start" ||
+          kl === "pulse_end" ||
           kl === "motif_start" ||
           kl === "motif_end"
         )
@@ -12121,7 +12202,7 @@
               log(
                 '"' +
                   f.name +
-                  '": no recognizable Peaks/Trains/Motifs/Spectral table found — skipped.',
+                  '": no recognizable Envelope peaks/Pulses/Motifs/Spectral table found — skipped.',
                 "warn",
               );
               continue;
@@ -12386,10 +12467,10 @@
         summSelections.push({
           id,
           name: "Selection " + id,
-          level: "train_in_motif",
+          level: "pulse_in_motif",
           positions: "1",
           filters: "",
-          // Only read by the chunk levels: a disyllabic species pairs trains
+          // Only read by the chunk levels: a disyllabic species pairs pulses
           // two at a time, from the first one.
           chunkSize: 2,
           chunkOffset: 0,
@@ -12501,7 +12582,7 @@
           runSize.style.cssText = "width:42px;font-size:11px";
           runSize.title =
             "How many consecutive structures make one unit.\n" +
-            "2 for a disyllabic species (trains 1+2, 3+4, 5+6 …),\n" +
+            "2 for a disyllabic species (pulses 1+2, 3+4, 5+6 …),\n" +
             "3 for a trisyllabic one.";
           const runOffLbl = document.createElement("span");
           runOffLbl.textContent = "skipping";
@@ -12603,15 +12684,15 @@
           const fltIn = document.createElement("input");
           fltIn.type = "text";
           fltIn.value = sel.filters;
-          fltIn.placeholder = "where… n_peaks >= 3; train_dur_ms > 20";
+          fltIn.placeholder = "where… n_env_peaks >= 3; pulse_dur_ms > 20";
           fltIn.title =
             "Optional conditions on the measured columns, separated by ';'.\n" +
-            "Use >, >=, <, <=, = and != — for example n_peaks >= 3.\n" +
+            "Use >, >=, <, <=, = and != — for example n_env_peaks >= 3.\n" +
             "Conditions narrow the rows the positions already picked; they\n" +
             "never change which position a structure holds.\n\n" +
             "On a gap level the condition is read against the structure the\n" +
-            "gap follows, with all of its columns — so both train_gap_ms > 5\n" +
-            "and n_peaks >= 3 work.";
+            "gap follows, with all of its columns — so both pulse_gap_ms > 5\n" +
+            "and n_env_peaks >= 3 work.";
           fltIn.style.cssText = "font-size:11px;width:100%;box-sizing:border-box";
           fltIn.oninput = () => {
             sel.filters = fltIn.value;
@@ -12716,7 +12797,7 @@
         }
         // Several files (Temporal Analysis, Spectral Analysis exported per
         // selection set, etc.) commonly cover the SAME recording — count
-        // distinct recording keys, not files, or re-importing Trains and
+        // distinct recording keys, not files, or re-importing Pulses and
         // Motifs spectral exports for one audio file would look like 2+
         // recordings.
         const nRecordings = new Set(
@@ -12731,7 +12812,7 @@
           ["country", "country"],
           ["locality", "locality"],
         ];
-        const merged = { peaks: [], trains: [], motifs: [], motseq: [], spectral: [] };
+        const merged = { envPeaks: [], pulses: [], motifs: [], motseq: [], spectral: [] };
         summFilesData.forEach((f) => {
           SUMM_CATS.forEach((cat) => {
             const rows = f.sheets[cat];
@@ -12794,10 +12875,10 @@
           " file(s) → " +
           nRecordings +
           " recording(s), " +
-          merged.peaks.length +
-          " peaks, " +
-          merged.trains.length +
-          " trains, " +
+          merged.envPeaks.length +
+          " envelope peaks, " +
+          merged.pulses.length +
+          " pulses, " +
           merged.motifs.length +
           " motifs merged.";
         log(
@@ -12871,6 +12952,9 @@
         summUpdateTempNote();
         summRenderCards(summMerged, summIndividuals, summNRecordings);
         summRenderTable(stats);
+        // Deferred: the panel is inside a tab that may not be laid out yet,
+        // and a canvas with zero width draws nothing.
+        setTimeout(() => summRenderTempPlots(summMerged), 0);
         summUpdateSelNotes();
         // Re-drafting on every selection edit would throw away the user's own
         // wording, so the draft is only (re)written while the box is still
@@ -12897,8 +12981,8 @@
         const cards = [
           { lbl: "Recordings", v: nRecordings },
           { lbl: "Individuals", v: individuals.length },
-          { lbl: "Peaks", v: merged.peaks.length },
-          { lbl: "Trains", v: merged.trains.length },
+          { lbl: "Envelope peaks", v: merged.envPeaks.length },
+          { lbl: "Pulses", v: merged.pulses.length },
           { lbl: "Motifs", v: merged.motifs.length },
         ];
         if (speciesN) cards.push({ lbl: "Species", v: speciesN });
@@ -12917,8 +13001,8 @@
           );
           return row ? row.mean.toFixed(digits) + " ± " + row.sd.toFixed(digits) : null;
         };
-        const rate = pooledMean("trains", "peak_rate_pps", 2);
-        if (rate) cards.push({ lbl: "Peak rate (peaks/s)", v: rate });
+        const rate = pooledMean("pulses", "env_peak_rate_eps", 2);
+        if (rate) cards.push({ lbl: "Envelope peak rate (envelope peaks/s)", v: rate });
         const pf = pooledMean("spectral", "peak_freq_khz", 3);
         if (pf) cards.push({ lbl: "Peak freq (kHz)", v: pf });
         const bw = pooledMean("spectral", "bw_20db_khz", 3);
@@ -12935,6 +13019,255 @@
             '<div class="sv">' + c.v + '</div><div class="sl">' + c.lbl + "</div>";
           el.appendChild(d);
         });
+      }
+
+      // ── Temperature response plots ──────────────────────────────────
+      // The four metrics whose thermal dependence is worth seeing rather
+      // than reading off a slope. Two live in the Pulses table and two in
+      // Motifs, which is why each carries its own category.
+      // One response variable, deliberately.
+      //
+      // Walker (1975) analysed wingstroke rate against temperature across 10
+      // Orchelimum species and 47 other crickets and katydids, and in every
+      // case the relation was approximately linear (r2 0.76-0.99). A pulse is
+      // one wingstroke, so pulse_rate_pps IS Walker's quantity, and it is the
+      // one with a literature to compare against. Modelling six metrics and
+      // choosing the best-looking afterwards is how noise gets published --
+      // at n = 6, six unrelated metrics produce a best r2 near 0.8 about half
+      // the time.
+      //
+      // The other song traits remain in the sheets and the summary table;
+      // what is confined to one metric is the temperature MODEL.
+      const SUMM_TEMP_PLOTS = [
+        {
+          cat: "motifs",
+          key: "pulse_rate_pps",
+          label: "Pulse rate",
+          unit: "pulses/s",
+        },
+      ];
+
+      // Two-tailed t for 95%, by residual df. Tabulated rather than computed
+      // because the small-df values are the ones that matter here and they
+      // are where every series approximation is worst: at df = 2 the
+      // multiplier is 4.303, not the 1.96 a normal approximation would give.
+      const SUMM_T95 = [
+        NaN, 12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262,
+        2.228, 2.201, 2.179, 2.16, 2.145, 2.131, 2.12, 2.11, 2.101, 2.093,
+        2.086, 2.08, 2.074, 2.069, 2.064, 2.06, 2.056, 2.052, 2.048, 2.045,
+        2.042,
+      ];
+      function _summT95(df) {
+        if (df < 1) return NaN;
+        return df <= 30 ? SUMM_T95[df] : 1.96 + 2.4 / df;
+      }
+
+      function summRenderTempPlots(merged) {
+        const panel = $("summTempPlotsPanel");
+        if (!panel) return;
+        if (!merged) {
+          panel.style.display = "none";
+          return;
+        }
+        let anyPoints = false;
+        // log(y) = a + bT is a CURVED model in the metric's own units that
+        // costs the same two parameters as the straight line — so the choice
+        // between them is about which shape is right, not about how much data
+        // there is to spend.
+        const wantLog = $("summFitMode")?.value === "log";
+        const series = SUMM_TEMP_PLOTS.map((spec) => {
+          const src = merged[spec.cat] || [];
+          const pts = _summByRecording(
+            spec.filter ? src.filter(spec.filter) : src,
+            spec.key,
+          );
+          if (pts.length) anyPoints = true;
+          // A non-positive value has no logarithm. Falling back per metric
+          // rather than refusing the whole panel keeps one odd column from
+          // silently changing the model under the others.
+          const loggable = pts.length > 0 && pts.every((q) => q.v > 0);
+          const log = wantLog && loggable;
+          return {
+            spec,
+            pts,
+            log,
+            logRefused: wantLog && pts.length > 0 && !loggable,
+            fit: _summFitTemp(
+              pts.map((q) => ({ t: q.t, v: log ? Math.log(q.v) : q.v })),
+            ),
+          };
+        });
+        panel.style.display = anyPoints ? "block" : "none";
+        if (!anyPoints) return;
+
+        const note = $("summTempPlotsNote");
+        if (note) {
+          const n = Math.max(...series.map((x) => x.pts.length));
+          note.textContent =
+            "one point per recording with a temperature · shaded band = 95% CI for the line";
+          if (n && n < 5)
+            note.textContent += " · n = " + n + ", so the band is wide by construction";
+        }
+        series.forEach((x, i) => summDrawTempPlot("summPlot" + i, x));
+      }
+
+      function summDrawTempPlot(canvasId, { spec, pts, fit, log, logRefused }) {
+        const cv = $(canvasId);
+        if (!cv) return;
+        const w = cv.clientWidth || 300;
+        const h = cv.clientHeight || 168;
+        if (!w || !h) return;
+        const dpr = window.devicePixelRatio || 1;
+        cv.width = Math.round(w * dpr);
+        cv.height = Math.round(h * dpr);
+        const g = cv.getContext("2d");
+        g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        g.fillStyle = "#0d1117";
+        g.fillRect(0, 0, w, h);
+        g.font = "10px Consolas, monospace";
+
+        // Two header lines: the metric on the first, its fit on the second.
+        // They shared one line until the annotation was found overprinting
+        // the title on a narrow panel, and right-aligning it only moved the
+        // collision to a different width rather than removing it.
+        const L = 48, R = 8, T = 30, B = 26;
+        const pw = w - L - R, ph = h - T - B;
+
+        g.fillStyle = "#e6edf3";
+        g.fillText(spec.label + " (" + spec.unit + ")", 4, 12);
+
+        if (!pts.length) {
+          g.fillStyle = "#8b949e";
+          g.fillText("no recordings carry both this metric and a temperature", 6, h / 2);
+          return;
+        }
+
+        // Ranges, padded, and never degenerate — a single temperature or a
+        // flat response would otherwise divide by zero.
+        let x0 = Math.min(...pts.map((q) => q.t)), x1 = Math.max(...pts.map((q) => q.t));
+        let y0 = Math.min(...pts.map((q) => q.v)), y1 = Math.max(...pts.map((q) => q.v));
+        // In log mode the fit lives in log space, so everything drawn from
+        // it comes back through exp(). model() is therefore the curve in the
+        // metric's own units, and a straight line is just the special case.
+        const inv = log ? Math.exp : (z) => z;
+        const model = fit ? (t) => inv(fit.intercept + fit.slope * t) : null;
+        if (model) {
+          // Sampled across the span rather than at the two ends: a curve can
+          // leave the frame between them.
+          for (let i = 0; i <= 20; i++) {
+            const v = model(x0 + ((x1 - x0) * i) / 20);
+            if (isFinite(v)) {
+              y0 = Math.min(y0, v);
+              y1 = Math.max(y1, v);
+            }
+          }
+        }
+        const padX = (x1 - x0) * 0.12 || 1;
+        const padY = (y1 - y0) * 0.15 || Math.abs(y0) * 0.1 || 1;
+        x0 -= padX; x1 += padX; y0 -= padY; y1 += padY;
+        const X = (t) => L + ((t - x0) / (x1 - x0)) * pw;
+        const Y = (v) => T + ph - ((v - y0) / (y1 - y0)) * ph;
+
+        // Axes
+        g.strokeStyle = "#30363d";
+        g.lineWidth = 1;
+        g.beginPath();
+        g.moveTo(L, T); g.lineTo(L, T + ph); g.lineTo(L + pw, T + ph);
+        g.stroke();
+        g.fillStyle = "#8b949e";
+        for (let i = 0; i <= 3; i++) {
+          const t = x0 + ((x1 - x0) * i) / 3;
+          const v = y0 + ((y1 - y0) * i) / 3;
+          g.fillText(t.toFixed(1), X(t) - 10, T + ph + 12);
+          const lab = Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 1 ? v.toFixed(1) : v.toFixed(3);
+          g.fillText(lab, 4, Y(v) + 3);
+          g.strokeStyle = "#21262d";
+          g.beginPath(); g.moveTo(L, Y(v)); g.lineTo(L + pw, Y(v)); g.stroke();
+        }
+        g.fillStyle = "#8b949e";
+        g.fillText("\u00b0C", L + pw / 2, h - 3);
+
+        if (fit) {
+          const df = fit.n - 2;
+          const tc = _summT95(df);
+          // 95% band for the FITTED LINE (not a prediction interval): the
+          // range of straight lines the data is consistent with. Its waist at
+          // the mean temperature and flare at the ends are what make an
+          // underdetermined slope legible at a glance.
+          if (isFinite(tc) && isFinite(fit.se) && fit.sxx > 0) {
+            const band = [];
+            for (let i = 0; i <= 40; i++) {
+              const t = x0 + ((x1 - x0) * i) / 40;
+              const half = tc * fit.se * Math.sqrt(1 / fit.n + ((t - fit.mx) ** 2) / fit.sxx);
+              // Transformed through exp() in log mode, which makes the band
+              // asymmetric about the curve — correctly so: a proportional
+              // error is wider above the curve than below it.
+              band.push({ t, lo: inv(fit.intercept + fit.slope * t - half),
+                          hi: inv(fit.intercept + fit.slope * t + half) });
+            }
+            g.fillStyle = "rgba(88,166,255,0.14)";
+            g.beginPath();
+            band.forEach((b, i) => (i ? g.lineTo(X(b.t), Y(b.hi)) : g.moveTo(X(b.t), Y(b.hi))));
+            for (let i = band.length - 1; i >= 0; i--) g.lineTo(X(band[i].t), Y(band[i].lo));
+            g.closePath();
+            g.fill();
+          }
+          g.strokeStyle = "#58a6ff";
+          g.lineWidth = 1.4;
+          g.beginPath();
+          for (let i = 0; i <= 40; i++) {
+            const t = x0 + ((x1 - x0) * i) / 40;
+            const py = Y(model(t));
+            if (i === 0) g.moveTo(X(t), py);
+            else g.lineTo(X(t), py);
+          }
+          g.stroke();
+        }
+
+        // Points last, so the line never hides a recording.
+        pts.forEach((q) => {
+          g.fillStyle = "#7ee787";
+          g.beginPath();
+          g.arc(X(q.t), Y(q.v), 3.2, 0, 2 * Math.PI);
+          g.fill();
+          g.strokeStyle = "#0d1117";
+          g.lineWidth = 1;
+          g.stroke();
+        });
+
+        // The numbers, stated rather than left to be inferred from the slope.
+        g.font = "9px Consolas, monospace";
+        let msg;
+        if (!fit) {
+          msg =
+            pts.length < 3
+              ? "n = " + pts.length + " - too few to fit"
+              : "no temperature spread to fit";
+          g.fillStyle = "#d29922";
+        } else {
+          const df = fit.n - 2;
+          const sig = Math.abs(fit.slope) > _summT95(df) * fit.seSlope;
+          if (log) {
+            // exp(10*slope) is the factor per 10 degC, which is Q10 by
+            // definition; exp(slope)-1 is the proportional change per degree.
+            const q10 = Math.exp(fit.slope * 10);
+            const pct = (Math.exp(fit.slope) - 1) * 100;
+            msg =
+              "Q\u2081\u2080 " + q10.toFixed(2) +
+              "  " + (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%/\u00b0C" +
+              "  r\u00b2 " + fit.r2.toFixed(2) +
+              "  n " + fit.n + (sig ? "" : "  n.s.");
+          } else {
+            msg =
+              "slope " + fit.slope.toFixed(3) +
+              (isFinite(fit.seSlope) ? " \u00b1 " + fit.seSlope.toFixed(3) : "") +
+              "/\u00b0C  r\u00b2 " + fit.r2.toFixed(2) +
+              "  n " + fit.n + (sig ? "" : "  n.s.");
+          }
+          if (logRefused) msg += "  (linear: value \u2264 0)";
+          g.fillStyle = sig ? "#7ee787" : "#8b949e";
+        }
+        g.fillText(msg, 4, 24);
       }
 
       function summRenderTable(stats) {
@@ -12969,10 +13302,15 @@
         // temperature cannot be corrected and drop out.
         const adjT = _summAdjTarget();
         if (adjT !== null && (stats || []).some((s) => s.adj_mean != null)) {
-          cols.push("adj_n", "adj_mean", "adj_sd");
+          // Same five statistics as the observed block, in the same order, so
+          // the two halves of the row read as one table rather than as a
+          // summary followed by a different, shorter summary.
+          cols.push("adj_n", "adj_mean", "adj_sd", "adj_min", "adj_max");
           labels.adj_n = "N @" + adjT + "°C";
           labels.adj_mean = "Mean @" + adjT + "°C";
           labels.adj_sd = "SD @" + adjT + "°C";
+          labels.adj_min = "Min @" + adjT + "°C";
+          labels.adj_max = "Max @" + adjT + "°C";
         }
         head.innerHTML = "";
         cols.forEach((c) => {
@@ -13006,10 +13344,10 @@
             (nRecordings === 1 ? "" : "s") +
             (nInd > 1 ? " from " + nInd + " individuals" : "") +
             ", totaling " +
-            merged.peaks.length +
-            " peaks across " +
-            merged.trains.length +
-            " trains and " +
+            merged.envPeaks.length +
+            " envelope peaks across " +
+            merged.pulses.length +
+            " pulses and " +
             merged.motifs.length +
             " motifs.",
         );
@@ -13193,37 +13531,37 @@
 
         // "Peak frequency" in the conventional sense: the maximum of the
         // structure's own power spectrum. peak_freq_pmean_khz — the mean of
-        // the per-PEAK carriers — is the fallback for workbooks exported
+        // the per-TOOTH carriers — is the fallback for workbooks exported
         // before the spectral columns were added to the temporal tables, and
         // is a different quantity, so it is only used when the real one is
         // absent rather than mixed in beside it.
         const pfStat = (cat) =>
           statFor(cat, "peak_freq_khz") || statFor(cat, "peak_freq_pmean_khz");
 
-        const rate = statFor("trains", "peak_rate_pps");
-        const meanAmp = statFor("trains", "mean_amp");
-        const trainDur = statFor("trains", "train_dur_ms");
-        const trainGap = statFor("trains", "train_gap_ms");
-        const trainPf = pfStat("trains");
-        const trainBw = statFor("trains", "bw_20db_khz");
+        const rate = statFor("pulses", "env_peak_rate_eps");
+        const meanAmp = statFor("pulses", "mean_amp");
+        const pulseDur = statFor("pulses", "pulse_dur_ms");
+        const pulseGap = statFor("pulses", "pulse_gap_ms");
+        const pulsePf = pfStat("pulses");
+        const pulseBw = statFor("pulses", "bw_20db_khz");
         const bits = [];
         const abits = [];
-        const addTrain = phraseInto(bits, abits);
-        addTrain(rate, "a mean peak rate of", "peaks/s", 2);
-        addTrain(trainDur, "a mean train duration of", "ms", 1);
-        addTrain(meanAmp, "a mean amplitude of", "(normalized)", 3);
-        addTrain(trainGap, "a mean gap between trains of", "ms", 1);
-        addTrain(trainPf, "a mean peak frequency of", "kHz", 3);
-        addTrain(trainBw, "a mean -20 dB bandwidth of", "kHz", 3);
+        const addPulse = phraseInto(bits, abits);
+        addPulse(rate, "a mean envelope peak rate of", "envelope peaks/s", 2);
+        addPulse(pulseDur, "a mean pulse duration of", "ms", 1);
+        addPulse(meanAmp, "a mean amplitude of", "(normalized)", 3);
+        addPulse(pulseGap, "a mean gap between pulses of", "ms", 1);
+        addPulse(pulsePf, "a mean peak frequency of", "kHz", 3);
+        addPulse(pulseBw, "a mean -20 dB bandwidth of", "kHz", 3);
         if (bits.length)
           paras.push(
-            "Across all trains, recordings showed " + bits.join("; ") + ".",
+            "Across all pulses, recordings showed " + bits.join("; ") + ".",
           );
         if (abits.length)
           paras.push(
             "Expressed at " +
               adjT +
-              " °C, trains showed " +
+              " °C, pulses showed " +
               abits.join("; ") +
               ".",
           );
@@ -13317,20 +13655,20 @@
 
         if (nInd > 1) {
           individuals.forEach((ind) => {
-            const indRows = merged.trains.filter((r) => r.specimen_id === ind);
+            const indRows = merged.pulses.filter((r) => r.specimen_id === ind);
             if (!indRows.length) return;
             const indStat = (metric) =>
               summStatsRows.find(
                 (s) =>
                   s.selection === SUMM_SEL_ALL &&
-                  s.category === "Trains" &&
+                  s.category === "Pulses" &&
                   s.specimen_id === ind &&
                   s.metric === metric,
               );
             const ibits = [];
             const iabits = [];
             const addInd = phraseInto(ibits, iabits, false);
-            addInd(indStat("peak_rate_pps"), "mean peak rate", "peaks/s", 2);
+            addInd(indStat("env_peak_rate_eps"), "mean envelope peak rate", "envelope peaks/s", 2);
             addInd(
               indStat("peak_freq_khz") || indStat("peak_freq_pmean_khz"),
               "mean peak frequency",
@@ -13342,7 +13680,7 @@
                 ind +
                   ": " +
                   indRows.length +
-                  " trains, " +
+                  " pulses, " +
                   ibits.join(", ") +
                   "." +
                   (iabits.length
@@ -13360,7 +13698,7 @@
         // came from, which a corrected figure would erase.
         const recKeys = [];
         const recOf = new Map();
-        merged.trains.forEach((r) => {
+        merged.pulses.forEach((r) => {
           const k = _summRecKey(r);
           if (!recOf.has(k)) {
             recOf.set(k, []);
@@ -13371,7 +13709,7 @@
         if (recKeys.length > 1) {
           recKeys.forEach((k) => {
             const rows = recOf.get(k);
-            const rate = _summMeanSd(rows, "peak_rate_pps");
+            const rate = _summMeanSd(rows, "env_peak_rate_eps");
             const pf =
               _summMeanSd(rows, "peak_freq_khz") ||
               _summMeanSd(rows, "peak_freq_pmean_khz");
@@ -13390,14 +13728,14 @@
                   temps.join(", ") +
                   " °C",
               );
-            rbits.push(rows.length + " trains");
+            rbits.push(rows.length + " pulses");
             if (rate)
               rbits.push(
-                "mean peak rate " +
+                "mean envelope peak rate " +
                   rate.mean.toFixed(2) +
                   " ± " +
                   rate.sd.toFixed(2) +
-                  " peaks/s",
+                  " envelope peaks/s",
               );
             if (pf)
               rbits.push(
@@ -13419,7 +13757,7 @@
         }
 
         // One paragraph per structure selection. Stated as a rule plus its
-        // headline numbers, because "the first train of each echeme" only
+        // headline numbers, because "the first pulse of each echeme" only
         // means something in a paper if the rule that produced it is on the
         // page beside the values.
         summSelResults.forEach((res) => {
@@ -13444,37 +13782,37 @@
                 [lvl.chunk.prefix + "_duty_pct", "a mean duty cycle of", "%", 1],
                 [lvl.chunk.prefix + "_gap_" + lvl.chunk.outSuffix, "a mean gap to the next of", lvl.chunk.outSuffix, 1],
                 [lvl.chunk.prefix + "_period_" + lvl.chunk.outSuffix, "a mean period of", lvl.chunk.outSuffix, 1],
-                [lvl.chunk.prefix + "_n_peaks", "a mean of", "peaks", 1],
+                [lvl.chunk.prefix + "_n_env_peaks", "a mean of", "envpeaks", 1],
                 [lvl.chunk.prefix + "_peak_freq_pmean_khz", "a mean carrier frequency of", "kHz", 3],
               ]
             : lvl.gap
             ? [
-                ["train_gap_ms", "a mean gap of", "ms", 1],
-                ["train_period_ms", "a mean train period of", "ms", 1],
-                ["peak_period_ms", "a mean interval of", "ms", 2],
+                ["pulse_gap_ms", "a mean gap of", "ms", 1],
+                ["pulse_period_ms", "a mean pulse period of", "ms", 1],
+                ["env_peak_period_ms", "a mean interval of", "ms", 2],
                 ["motif_gap_s", "a mean gap of", "s", 2],
                 ["motif_period_s", "a mean echeme period of", "s", 2],
                 ["seq_gap_s", "a mean gap of", "s", 2],
               ]
-            : res.cat === "trains"
+            : res.cat === "pulses"
               ? [
-                  ["train_dur_ms", "a mean duration of", "ms", 1],
-                  ["peak_rate_pps", "a mean peak rate of", "peaks/s", 2],
-                  ["train_gap_ms", "a mean gap to the next train of", "ms", 1],
+                  ["pulse_dur_ms", "a mean duration of", "ms", 1],
+                  ["env_peak_rate_eps", "a mean envelope peak rate of", "envelope peaks/s", 2],
+                  ["pulse_gap_ms", "a mean gap to the next pulse of", "ms", 1],
                   ["peak_freq_pmean_khz", "a mean carrier frequency of", "kHz", 3],
                 ]
               : res.cat === "motifs"
                 ? [
                     ["motif_dur_s", "a mean duration of", "s", 2],
-                    ["n_trains", "a mean of", "trains", 1],
+                    ["n_pulses", "a mean of", "pulses", 1],
                     ["duty_cycle_pct", "a mean duty cycle of", "%", 1],
                     ["peak_freq_pmean_khz", "a mean carrier frequency of", "kHz", 3],
                   ]
-                : res.cat === "peaks"
+                : res.cat === "envpeaks"
                   ? [
-                      ["peak_period_ms", "a mean period of", "ms", 2],
+                      ["env_peak_period_ms", "a mean period of", "ms", 2],
                       ["peak_freq_khz", "a mean carrier frequency of", "kHz", 3],
-                      ["peak_amp", "a mean amplitude of", "(normalized)", 3],
+                      ["env_peak_amp", "a mean amplitude of", "(normalized)", 3],
                     ]
                   : [
                       ["seq_dur_s", "a mean duration of", "s", 2],
@@ -13498,7 +13836,7 @@
               " " +
               // A gap selection is drawn from the gaps, not from the structure
               // rows they were derived from, and the count must say so — "5 of
-              // 8 trains rows" would be the wrong denominator named twice over.
+              // 8 pulses rows" would be the wrong denominator named twice over.
               (lvl.gap || lvl.chunk
                 ? lvl.unit + "s"
                 : SUMM_LABEL[res.cat].toLowerCase() + " rows") +
@@ -13669,9 +14007,13 @@
           if (s.selection !== selection || s.category !== catLabel) return;
           const a = byKey.get(s.specimen_id + "" + s.metric);
           if (!a) return;
+          // Ordered to mirror n/mean/sd/min/max so the adjusted block reads
+          // as the same five statistics, not a different set.
+          s.adj_n = a.n;
           s.adj_mean = a.mean;
           s.adj_sd = a.sd;
-          s.adj_n = a.n;
+          s.adj_min = a.min;
+          s.adj_max = a.max;
           // The evidence behind the correction travels with the number, so a
           // reader can weigh it instead of trusting it.
           const f = fits.get(s.metric);
@@ -13685,14 +14027,49 @@
         });
       }
 
-      function _summWithFormulaCols(stats) {
-        return _withFormulaCols(stats, ["mean", "sd", "min", "max"]);
+      // Which brackets wrap the min-max range in the LaTeX/Word convenience
+      // columns. Square is the default because it is what most journals use
+      // for a range beside a mean; round is offered because a few house
+      // styles reserve square brackets for citations or for confidence
+      // intervals specifically, and a range in them then reads as a claim
+      // the numbers do not make.
+      function _summBrackets() {
+        // Round is the default, so the test is for the non-default value:
+        // this must agree with which <option> comes first in the markup.
+        return $("summBracket")?.value === "square" ? ["[", "]"] : ["(", ")"];
       }
 
-      // Spreadsheet column letter for a key, from its position in the row
-      // object — the same order _buildXlsx writes the header in.
-      function _colLetterOf(row, key) {
-        let n = Object.keys(row).indexOf(key) + 1;
+      function _summWithFormulaCols(stats) {
+        // Give every row the same keys, in one order, before anything reads a
+        // column letter. The temperature correction stamps adj_* onto only
+        // the metrics it could fit, so without this the sheet's column ORDER
+        // depended on whether the first metric happened to get one — and a
+        // metric with no fit showed no adjusted columns at all, rather than
+        // visibly empty ones. null renders as an empty cell.
+        const canonCols = _unionCols(stats);
+        const rows = stats.map((r) => {
+          const o = {};
+          canonCols.forEach((k) => (o[k] = k in r ? r[k] : null));
+          return o;
+        });
+        let out = _withFormulaCols(rows, ["mean", "sd", "min", "max"], "obs");
+        // The temperature correction leaves adj_* on these same rows, so the
+        // sheet can carry a second, clearly-named pair rather than leaving
+        // the reader to work out which set the one pair described.
+        if (out.some((r) => r.adj_mean != null))
+          out = _withFormulaCols(
+            out,
+            ["adj_mean", "adj_sd", "adj_min", "adj_max"],
+            "adj",
+          );
+        return out;
+      }
+
+      // Spreadsheet column letter for a key, from its position in the
+      // sheet's resolved column list — the same order _sheetXml writes the
+      // header in.
+      function _colLetterOf(cols, key) {
+        let n = cols.indexOf(key) + 1;
         if (n <= 0) return null;
         let s = "";
         while (n > 0) {
@@ -13708,28 +14085,56 @@
       // their left silently repointed these formulas at whatever slid into
       // D–G. Resolving the letter from the key at write time means the sheet
       // can gain columns without the formulas quietly going wrong.
-      function _withFormulaCols(rows, [mKey, sKey, loKey, hiKey]) {
+      // `suffix` names the pair: latex_obs/word_obs for the observed
+      // statistics, latex_adj/word_adj for the temperature-corrected ones.
+      // They were once a single unsuffixed pair built from the observed
+      // columns, which meant that turning the correction on and copying the
+      // "word" column pasted the UNCORRECTED figures, with nothing in the
+      // sheet to say so.
+      function _withFormulaCols(rows, [mKey, sKey, loKey, hiKey], suffix) {
         if (!rows.length) return rows;
-        const mCol = _colLetterOf(rows[0], mKey),
-          sCol = _colLetterOf(rows[0], sKey),
-          loCol = _colLetterOf(rows[0], loKey),
-          hiCol = _colLetterOf(rows[0], hiKey);
+        const cols = _unionCols(rows);
+        const mCol = _colLetterOf(cols, mKey),
+          sCol = _colLetterOf(cols, sKey),
+          loCol = _colLetterOf(cols, loKey),
+          hiCol = _colLetterOf(cols, hiKey);
         // A renamed key would otherwise produce "TEXT($null2,...)" in every
         // cell; better to ship the sheet without the two convenience columns.
         if (!mCol || !sCol || !loCol || !hiCol) {
           log(
-            "Could not locate the mean/sd/min/max columns for the LaTeX and " +
-              "Word columns; they have been left out of this sheet.",
+            "Could not locate the " +
+              [mKey, sKey, loKey, hiKey].join("/") +
+              " columns, so latex_" +
+              suffix +
+              "/word_" +
+              suffix +
+              " have been left out of this sheet.",
             "warn",
           );
           return rows;
         }
+        const latexKey = "latex_" + suffix;
+        const wordKey = "word_" + suffix;
+        const [open, close] = _summBrackets();
         return rows.map((r, i) => {
           const row = i + 2; // +1 for the header, +1 because Excel is 1-based
+          // A metric with no fit has no adjusted value. It must not get a
+          // formula: TEXT() of an empty cell renders "0.00", so the column
+          // would read as a measured zero rather than as absent.
+          if (r[mKey] == null) return r;
           // Column letters absolute ($F) and rows relative, which is what
           // makes these survive being filled down or copied sideways.
           const t = (col) => `TEXT($${col}${row},"0.00")`;
-          const tail = `" ["&${t(loCol)}&"-"&${t(hiCol)}&"]"`;
+          // An en dash, spelled per target for the same reason ± is below.
+          // "--" is the portable LaTeX spelling that every engine turns into
+          // one; a literal en dash pasted into LaTeX source is at the mercy
+          // of the document's input encoding. Word wants the glyph itself,
+          // and UNICHAR keeps the stored formula pure ASCII rather than
+          // relying on the workbook XML carrying U+2013 intact.
+          const tailFor = (dash) =>
+            `" ${open}"&${t(loCol)}&${dash}&${t(hiCol)}&"${close}"`;
+          const latexTail = tailFor('"--"');
+          const wordTail = tailFor("_xlfn.UNICHAR(8211)");
           return Object.assign({}, r, {
             // \pm in LaTeX; UNICHAR(177) is the ± glyph for Word.
             // The _xlfn. prefix is REQUIRED in the stored XML for functions
@@ -13738,8 +14143,12 @@
             // treats it as an unknown defined name, and tags it with the
             // implicit-intersection "@" — which then fails to compute. Excel
             // hides the prefix, so the formula bar still reads UNICHAR(177).
-            latex: { __xlFormula: `${t(mCol)}&"$\\pm$"&${t(sCol)}&${tail}` },
-            word: { __xlFormula: `${t(mCol)}&_xlfn.UNICHAR(177)&${t(sCol)}&${tail}` },
+            [latexKey]: {
+              __xlFormula: `${t(mCol)}&"$\\pm$"&${t(sCol)}&${latexTail}`,
+            },
+            [wordKey]: {
+              __xlFormula: `${t(mCol)}&_xlfn.UNICHAR(177)&${t(sCol)}&${wordTail}`,
+            },
           });
         });
       }
@@ -13747,48 +14156,48 @@
       // ── Structure selections ────────────────────────────────────────────
       // Pooled means answer "what does this species do on average". They
       // cannot answer "what does the OPENING stroke do", because opening and
-      // closing strokes sit in the same Trains table and average together.
+      // closing strokes sit in the same Pulses table and average together.
       //
       // A selection names a subset of structures by their POSITION inside the
-      // parent structure — the first train of every echeme, the odd-numbered
-      // trains, the last train — optionally narrowed further by conditions on
+      // parent structure — the first pulse of every echeme, the odd-numbered
+      // pulses, the last pulse — optionally narrowed further by conditions on
       // the measured columns. Each selection is then summarized with exactly
       // the same statistics as the pooled data, so the two are comparable.
       //
-      // Positions are resolved per parent, per recording. "Train 1" means the
-      // first train of each echeme in each recording, not the first row of the
+      // Positions are resolved per parent, per recording. "Pulse 1" means the
+      // first pulse of each echeme in each recording, not the first row of the
       // merged sheet.
       const SUMM_SEL_LEVELS = {
-        train_in_motif: {
-          cat: "trains",
-          label: "Trains within each echeme (motif)",
+        pulse_in_motif: {
+          cat: "pulses",
+          label: "Pulses within each echeme (motif)",
           group: ["_rec", "motif_id"],
-          order: ["train_id"],
-          unit: "train",
+          order: ["pulse_id"],
+          unit: "pulse",
           parent: "echeme",
         },
-        train_in_rec: {
-          cat: "trains",
-          label: "Trains within each recording",
+        pulse_in_rec: {
+          cat: "pulses",
+          label: "Pulses within each recording",
           group: ["_rec"],
-          order: ["motif_id", "train_id"],
-          unit: "train",
+          order: ["motif_id", "pulse_id"],
+          unit: "pulse",
           parent: "recording",
         },
-        peak_in_train: {
-          cat: "peaks",
-          label: "Peaks within each train",
-          group: ["_rec", "motif_id", "train_id"],
-          order: ["peak_id"],
-          unit: "peak",
-          parent: "train",
+        env_peak_in_pulse: {
+          cat: "envpeaks",
+          label: "Envelope peaks within each pulse",
+          group: ["_rec", "motif_id", "pulse_id"],
+          order: ["env_peak_id"],
+          unit: "envpeak",
+          parent: "pulse",
         },
-        peak_in_motif: {
-          cat: "peaks",
-          label: "Peaks within each echeme (motif)",
+        env_peak_in_motif: {
+          cat: "envpeaks",
+          label: "Envelope peaks within each echeme (motif)",
           group: ["_rec", "motif_id"],
-          order: ["train_id", "peak_id"],
-          unit: "peak",
+          order: ["pulse_id", "env_peak_id"],
+          unit: "envpeak",
           parent: "echeme",
         },
         motif_in_rec: {
@@ -13811,10 +14220,10 @@
         // ── Gap levels ────────────────────────────────────────────────────
         // The silences, addressed in their own right. A gap is not a
         // structure, so it cannot be selected by the levels above: asking for
-        // "the gap between trains 1 and 2" there means selecting TRAIN 1 and
-        // then knowing that its train_gap_ms happens to be the gap that
+        // "the gap between pulses 1 and 2" there means selecting PULSE 1 and
+        // then knowing that its pulse_gap_ms happens to be the gap that
         // follows it. That works, but the selection is labelled as being about
-        // trains, its mean duration and peak rate come along for the ride, and
+        // pulses, its mean duration and envelope peak rate come along for the ride, and
         // "1-2" typed in the positions box silently reads as the range 1..2.
         //
         // On a gap level the unit IS the gap. Within a parent holding k
@@ -13824,38 +14233,38 @@
         // and "even" its inter-syllable complement.
         //
         // Dropping each group's last structure is what makes the arithmetic
-        // honest, and it matters most for peaks: peak_period_ms comes from the
-        // globally flattened peak list, so the last peak of every train
-        // carries the interval to the NEXT TRAIN rather than a pulse period.
-        // Selecting peak gaps within a train never sees those rows, so the
+        // honest, and it matters most for envelope peaks: env_peak_period_ms comes from the
+        // globally flattened envelope peak list, so the last envelope peak of every pulse
+        // carries the interval to the NEXT PULSE rather than a pulse period.
+        // Selecting envelope peak gaps within a pulse never sees those rows, so the
         // mean is a pulse period throughout — the same correction
-        // _pkWithinTrainPeriods makes for the single-recording report.
-        gap_train_in_motif: {
-          cat: "trains",
-          label: "Gaps between trains within each echeme (motif)",
+        // _pkWithinPulsePeriods makes for the single-recording report.
+        gap_pulse_in_motif: {
+          cat: "pulses",
+          label: "Gaps between pulses within each echeme (motif)",
           group: ["_rec", "motif_id"],
-          order: ["train_id"],
+          order: ["pulse_id"],
           unit: "gap",
           parent: "echeme",
           gap: {
-            of: "train",
-            metrics: ["train_gap_ms", "train_period_ms"],
-            from: "train_end",
-            to: "train_start",
+            of: "pulse",
+            metrics: ["pulse_gap_ms", "pulse_period_ms"],
+            from: "pulse_end",
+            to: "pulse_start",
           },
         },
-        gap_peak_in_train: {
-          cat: "peaks",
-          label: "Intervals between peaks within each train",
-          group: ["_rec", "motif_id", "train_id"],
-          order: ["peak_id"],
+        gap_env_peak_in_pulse: {
+          cat: "envpeaks",
+          label: "Intervals between envelope peaks within each pulse",
+          group: ["_rec", "motif_id", "pulse_id"],
+          order: ["env_peak_id"],
           unit: "interval",
-          parent: "train",
+          parent: "pulse",
           gap: {
-            of: "peak",
-            metrics: ["peak_period_ms"],
-            from: "peak_time",
-            to: "peak_time",
+            of: "envpeak",
+            metrics: ["env_peak_period_ms"],
+            from: "env_peak_time",
+            to: "env_peak_time",
           },
         },
         gap_motif_in_rec: {
@@ -13888,48 +14297,48 @@
         },
 
         // ── Chunk levels ──────────────────────────────────────────────────
-        // A syllable in a disyllabic species is not a train and not a gap: it
-        // is a fixed run of consecutive trains taken as one sound, measured
+        // A syllable in a disyllabic species is not a pulse and not a gap: it
+        // is a fixed run of consecutive pulses taken as one sound, measured
         // from the first one's onset to the last one's offset. Selecting
-        // "trains 1 and 2" cannot express it, because that yields two rows
-        // whose durations average to a train duration; the syllable's duration
+        // "pulses 1 and 2" cannot express it, because that yields two rows
+        // whose durations average to a pulse duration; the syllable's duration
         // is the SPAN, silence in the middle included.
         //
         // So these levels partition each parent into consecutive runs of `size`
         // structures and emit one row per run. Positions then number the
-        // syllables, not the trains: "1" is the first syllable of each echeme,
+        // syllables, not the pulses: "1" is the first syllable of each echeme,
         // "odd" every other one.
         //
-        // A run must be complete. A motif of 5 trains read in pairs yields two
-        // syllables and one leftover train, and that train is dropped rather
-        // than emitted as a one-train syllable — its "duration" would be a
-        // train duration with no interior silence, biasing the mean downward
+        // A run must be complete. A motif of 5 pulses read in pairs yields two
+        // syllables and one leftover pulse, and that pulse is dropped rather
+        // than emitted as a one-pulse syllable — its "duration" would be a
+        // pulse duration with no interior silence, biasing the mean downward
         // by exactly the thing the level exists to measure. The count of
         // dropped members is reported on the card so the loss is never silent.
-        syl_train_in_motif: {
-          cat: "trains",
-          label: "Syllables (runs of trains) within each echeme (motif)",
+        syl_pulse_in_motif: {
+          cat: "pulses",
+          label: "Syllables (runs of pulses) within each echeme (motif)",
           group: ["_rec", "motif_id"],
-          order: ["train_id"],
+          order: ["pulse_id"],
           unit: "syllable",
           parent: "echeme",
           chunk: {
-            of: "train",
+            of: "pulse",
             prefix: "syl",
-            start: "train_start",
-            end: "train_end",
+            start: "pulse_start",
+            end: "pulse_end",
             // Member duration, and what to multiply it by to reach seconds —
-            // extents are in seconds but train_dur_ms is not.
-            memberDur: "train_dur_ms",
+            // extents are in seconds but pulse_dur_ms is not.
+            memberDur: "pulse_dur_ms",
             memberDurToSec: 0.001,
             // Emitted durations are seconds × outScale, labelled outSuffix.
             outScale: 1000,
             outSuffix: "ms",
             // Exact aggregations only. Each of these is already a sum over its
-            // own train (a peak count, an excursion), so summing over the
-            // trains of a syllable is the same quantity one level up.
-            sum: ["n_peaks", "tem_exc", "dyn_exc"],
-            // Intensive quantities, averaged with each train weighted by its
+            // own pulse (a envelope peak count, an excursion), so summing over the
+            // pulses of a syllable is the same quantity one level up.
+            sum: ["n_env_peaks", "tem_exc", "dyn_exc"],
+            // Intensive quantities, averaged with each pulse weighted by its
             // duration — the longer stroke should count for more in a
             // syllable's carrier frequency than a brief one.
             wmean: [
@@ -13944,11 +14353,11 @@
             // Extremes aggregate exactly.
             min: ["peak_freq_pmin_khz"],
             max: ["peak_freq_pmax_khz"],
-            // Peaks per second across the whole syllable, interior silence
-            // included — deliberately not the mean of the trains' own rates,
+            // Envelope peaks per second across the whole syllable, interior silence
+            // included — deliberately not the mean of the pulses' own rates,
             // which would describe the strokes rather than the syllable.
-            rateFrom: "n_peaks",
-            rateName: "peak_rate_pps",
+            rateFrom: "n_env_peaks",
+            rateName: "env_peak_rate_eps",
           },
         },
         syl_motif_in_rec: {
@@ -13967,7 +14376,7 @@
             memberDurToSec: 1,
             outScale: 1,
             outSuffix: "s",
-            sum: ["n_trains"],
+            sum: ["n_pulses"],
             wmean: [
               "duty_cycle_pct",
               "peak_freq_khz",
@@ -13979,8 +14388,8 @@
             ],
             min: ["peak_freq_pmin_khz"],
             max: ["peak_freq_pmax_khz"],
-            rateFrom: "n_trains",
-            rateName: "train_rate_tps",
+            rateFrom: "n_pulses",
+            rateName: "pulse_rate_pps",
           },
         },
       };
@@ -14100,7 +14509,7 @@
 
       // Longest first: ">=" must be recognised before ">", "<>" before "<",
       // "!=" and "==" before "=". Scanning left to right with this order is
-      // what makes "n_peaks>=3" parse as (n_peaks) (>=) (3).
+      // what makes "n_env_peaks>=3" parse as (n_env_peaks) (>=) (3).
       const SUMM_FILTER_OPS = [
         [">=", (a, b) => a >= b],
         ["<=", (a, b) => a <= b],
@@ -14113,7 +14522,7 @@
       ];
 
       // Conditions on the measured columns, one per line (or separated by
-      // ";"), e.g. "n_peaks >= 3" or "species = Neoconocephalus". Equality and
+      // ";"), e.g. "n_env_peaks >= 3" or "species = Neoconocephalus". Equality and
       // inequality also accept text; the ordering operators require a number.
       function _summParseFilters(text) {
         const lines = String(text || "")
@@ -14132,7 +14541,7 @@
           if (!found)
             return {
               ok: false,
-              err: `Could not read the condition "${line}" — expected something like "n_peaks >= 3".`,
+              err: `Could not read the condition "${line}" — expected something like "n_env_peaks >= 3".`,
             };
           const key = line.slice(0, found.at).trim();
           const rhs = line.slice(found.at + found.sym.length).trim();
@@ -14185,9 +14594,9 @@
       // Resolve one selection against the merged tables.
       //
       // Position first, conditions second, and the order is deliberate: with
-      // conditions applied first, "train 1" would mean "the first train that
-      // survived filtering", which for a filter like train_dur_ms > 20 quietly
-      // promotes a second or third train into the first position. Positions
+      // conditions applied first, "pulse 1" would mean "the first pulse that
+      // survived filtering", which for a filter like pulse_dur_ms > 20 quietly
+      // promotes a second or third pulse into the first position. Positions
       // therefore always refer to the structure's real place in the song.
       //
       // The derived levels run the same machinery over the same structure
@@ -14246,7 +14655,7 @@
         let nGapGroups = 0;
         // Chunk levels: the run size, and how many leading members to skip
         // before the first run starts (a species with a lead-in stroke pairs
-        // from the second train on). Defaulted here rather than at creation so
+        // from the second pulse on). Defaulted here rather than at creation so
         // selections made before these levels existed still resolve.
         const chunkSize = Math.max(2, Math.round(+sel.chunkSize || 2));
         const chunkOffset = Math.max(0, Math.round(+sel.chunkOffset || 0));
@@ -14273,9 +14682,9 @@
               if (!pos.test(i, nGaps)) continue;
               // Conditions are read against the structure the gap FOLLOWS,
               // with all of its columns — that row is where the gap's own
-              // measure lives (train_gap_ms and friends are stored on it), so
-              // both "gaps longer than 5 ms" and "gaps that follow a train of
-              // at least 3 peaks" work, and neither needs the gap row to carry
+              // measure lives (pulse_gap_ms and friends are stored on it), so
+              // both "gaps longer than 5 ms" and "gaps that follow a pulse of
+              // at least 3 envelope peaks" work, and neither needs the gap row to carry
               // columns it has no business carrying.
               if (flt.filters.length && !_summRowPasses(prev, flt.filters))
                 continue;
@@ -14308,7 +14717,7 @@
               const row = _summChunkRow(lvl, members, runs[c + 1] || null, i, nChunks);
               // Conditions see the syllable's own measures laid over the full
               // columns of its FIRST member, so "syl_dur_ms > 30" and
-              // "n_peaks >= 3" both work. The syllable wins on a name clash,
+              // "n_env_peaks >= 3" both work. The syllable wins on a name clash,
               // since that is the level being selected.
               if (
                 flt.filters.length &&
@@ -14352,9 +14761,9 @@
       //
       // Deliberately NOT a copy of the preceding structure with extra columns.
       // Only the gap measures are carried across as numbers: a table of gaps
-      // that also held train_dur_ms and peak_rate_pps would report a mean
+      // that also held pulse_dur_ms and env_peak_rate_eps would report a mean
       // duration for "the intra-syllable gaps", which is the duration of the
-      // trains that happen to precede them and answers a question nobody
+      // pulses that happen to precede them and answers a question nobody
       // asked. Everything else kept is categorical — the tags, the ids and the
       // extents — so it locates the gap without ever entering a mean.
       function _summGapRow(lvl, prev, next, i, nGaps) {
@@ -14396,13 +14805,13 @@
       }
 
       // One row describing a run of consecutive structures taken as a single
-      // sound — the syllable of a disyllabic species being two trains.
+      // sound — the syllable of a disyllabic species being two pulses.
       //
       // The duration is the SPAN, first member's onset to last member's
       // offset, which is the whole reason the level exists: it includes the
       // silence between the strokes, where summing the members' own durations
       // would not. That silence is reported separately too, so a syllable can
-      // be described as sound + interior gap without going back to the trains.
+      // be described as sound + interior gap without going back to the pulses.
       //
       // Only aggregations that are exact or explicitly weighted are carried
       // across (see the level's sum/wmean/min/max lists). Columns outside
@@ -14574,11 +14983,11 @@
             ? ` with ${res.flt.label}`
             : "";
         const named = res && res.pos && res.pos.label !== "all";
-        // "gaps between trains 1-2, 3-4, 5-6 of each echeme" — the phrasing a
+        // "gaps between pulses 1-2, 3-4, 5-6 of each echeme" — the phrasing a
         // reader would use, so the rule reads the same on screen and on paper.
         if (lvl.chunk) {
           // The run size and phase ARE the definition here: "syllables of 2
-          // trains" says what a syllable is, and without it the numbers cannot
+          // pulses" says what a syllable is, and without it the numbers cannot
           // be interpreted, let alone reproduced.
           const k = (res && res.chunkSize) || 2;
           const off = (res && res.chunkOffset) || 0;
@@ -14658,9 +15067,9 @@
       // (individual) variation intact.
       // One observation per recording, not per row.
       //
-      // Temperature is a property of the RECORDING: every train in a file
+      // Temperature is a property of the RECORDING: every pulse in a file
       // carries that file's single reading. Fitting on raw rows counts one
-      // measurement many times over — fifty trains from one recording are
+      // measurement many times over — fifty pulses from one recording are
       // fifty copies of one observation, not fifty observations — and lets a
       // long recording outweigh a short one purely on row count.
       //
@@ -14668,7 +15077,7 @@
       // so the significance test in _tempCalibUsable passes almost anything
       // (500 rows from 10 recordings is judged against the critical |r| for
       // n=500). Meanwhile r² is deflated, because the denominator carries the
-      // train-to-train scatter within each recording that temperature cannot
+      // pulse-to-pulse scatter within each recording that temperature cannot
       // explain, so real thermal responses can fail TEMP_CALIB_MIN_R2.
       //
       // Collapsing to a mean per recording makes n the number of recordings,
@@ -14812,7 +15221,7 @@
               // out because it is the number the r² and the significance
               // gate should be read against. n_rows_total says how much
               // audio stands behind those means — 10 recordings is 10
-              // observations whether each holds 5 trains or 500.
+              // observations whether each holds 5 pulses or 500.
               n_recordings: fit.n,
               n_rows_total: nRowsTotal,
               adj_mean: round4(amean),
@@ -14967,7 +15376,7 @@
         if (!calib.length) return { estimates: [], detail: [], nCalib: 0 };
 
         // 2. Gather the recordings with no temperature, grouped by audio file
-        //    — one estimate per recording, not per train or per peak.
+        //    — one estimate per recording, not per pulse or per envelope peak.
         const groups = new Map();
         SUMM_CATS.forEach((cat) => {
           (merged[cat] || []).forEach((r) => {
@@ -15142,12 +15551,12 @@
           (s) => s.selection === SUMM_SEL_ALL,
         );
         const sheets = [
-          [SUMM_SHEET_NAME.peaks, summMerged.peaks],
-          [SUMM_SHEET_NAME.trains, summMerged.trains],
+          [SUMM_SHEET_NAME.envPeaks, summMerged.envPeaks],
+          [SUMM_SHEET_NAME.pulses, summMerged.pulses],
           [SUMM_SHEET_NAME.motifs, summMerged.motifs],
           [SUMM_SHEET_NAME.motseq, summMerged.motseq],
           [SUMM_SHEET_NAME.spectral, summMerged.spectral],
-          ["Summary", _summWithFormulaCols(allStats)],
+          ["Summary_Obs", _summWithFormulaCols(allStats)],
         ].filter(([, data]) => data && data.length);
 
         // One pair of sheets per structure selection: the rows it matched,
@@ -15181,7 +15590,11 @@
             // D adj_mean, E adj_sd, F adj_min, G adj_max — hence D..G here.
             sheets.push([
               "Temp_Regression",
-              _withFormulaCols(model, ["adj_mean", "adj_sd", "adj_min", "adj_max"]),
+              _withFormulaCols(
+                model,
+                ["adj_mean", "adj_sd", "adj_min", "adj_max"],
+                "adj",
+              ),
             ]);
             sheets.push(["Temp_Adjusted", adjusted]);
           }
@@ -15194,8 +15607,8 @@
           summSelResults.forEach((res) => {
             if (!res.ok || !res.rows.length) return;
             const sub = {
-              peaks: [],
-              trains: [],
+              envPeaks: [],
+              pulses: [],
               motifs: [],
               motseq: [],
               spectral: [],
@@ -15206,7 +15619,11 @@
             const stem = _summSelSheetStem(res.sel.name);
             sheets.push([
               stem + "_TempReg",
-              _withFormulaCols(r.model, ["adj_mean", "adj_sd", "adj_min", "adj_max"]),
+              _withFormulaCols(
+                r.model,
+                ["adj_mean", "adj_sd", "adj_min", "adj_max"],
+                "adj",
+              ),
             ]);
             sheets.push([stem + "_TempAdj", r.adjusted]);
           });
@@ -15239,6 +15656,10 @@
             filename,
             bytes,
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            // exactName: this workbook summarises every merged recording, so
+            // naming it after the one currently open in the viewer is wrong.
+            // _summFilenameStub() already built species_locality.
+            { exactName: true },
           );
           log("Saved merged workbook with " + sheets.length + " sheets.", "ok");
         } catch (e) {
@@ -15264,6 +15685,8 @@
             filename,
             bytes,
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            // Same reasoning as the workbook above.
+            { exactName: true },
           );
           log("Saved summary report.", "ok");
         } catch (e) {

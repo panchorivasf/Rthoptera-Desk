@@ -31,7 +31,7 @@
 //
 // The R version calls normalize() INSIDE the loop, so the running
 // concatenation is re-centred and re-scaled on every append. Repeated
-// peak normalisation is near enough idempotent, but repeated centring is
+// envelope peak normalisation is near enough idempotent, but repeated centring is
 // not: each pass subtracts the mean of a different, longer signal, so
 // the samples that arrived first are shifted once per later file. Doing
 // it once at the end is both cheaper and the only version with a
@@ -39,7 +39,7 @@
 //
 // What normalising costs is worth saying plainly, because merge_waves()
 // does it unconditionally and this module defaults to matching it:
-// scaling the concatenation to a single peak destroys the RELATIVE
+// scaling the concatenation to a single envelope peak destroys the RELATIVE
 // levels between the source recordings. If the amplitudes were
 // comparable — same gain, same distance — that comparison does not
 // survive the merge. Turn it off to keep it.
@@ -646,10 +646,10 @@
     const { samples, rate, bounds } = mwResult;
     const n = samples.length;
     const mid = h / 2;
-    let peak = 1e-9;
+    let envPeak = 1e-9;
     for (let i = 0; i < n; i += Math.max(1, Math.floor(n / 20000)))
-      peak = Math.max(peak, Math.abs(samples[i]));
-    const sc = (mid - 3) / peak;
+      envPeak = Math.max(envPeak, Math.abs(samples[i]));
+    const sc = (mid - 3) / envPeak;
 
     g.strokeStyle = "#7ee787";
     g.lineWidth = 1;

@@ -60,7 +60,7 @@
            with nothing loaded to tag, and clutters the toolbar on the
            landing view. -->
       <div id="recordingMetaGroup" style="display: none; align-items: center; gap: 7px">
-        <span style="color: var(--txt2); font-size: 11px; margin-left: 4px" title="Tagged per loaded recording — carried into every exported table (Peaks/Trains/Motifs/Spectral) as its first column, and used by Summarize to count individuals correctly.">🏷 Specimen ID</span>
+        <span style="color: var(--txt2); font-size: 11px; margin-left: 4px" title="Tagged per loaded recording — carried into every exported table (Peaks/Pulses/Motifs/Spectral) as its first column, and used by Summarize to count individuals correctly.">🏷 Specimen ID</span>
         <input
           type="text"
           id="specimenIdInput"
@@ -493,8 +493,8 @@
           </div>
           <div
             class="tab"
-            id="maintab-peaks"
-            onclick="switchMainTab('peaks', this)"
+            id="maintab-envpeaks"
+            onclick="switchMainTab('envpeaks', this)"
             style="font-size: 12px; padding: 4px 14px"
           >
             Temporal Analysis
@@ -588,7 +588,7 @@
                 or more files (<code>.wav .mp3 .flac .ogg .aiff</code>). Once
                 loaded, you can optionally bring in existing annotations with
                 <b>📋 Import Selections</b> (Raven-style text/CSV) or
-                <b>📊 Add Excel Selection Table</b> (Train/Motif tables
+                <b>📊 Add Excel Selection Table</b> (Pulse/Motif tables
                 exported from Temporal Analysis). Tag the recording with a
                 <b>🏷 Specimen ID</b> (also in the toolbar) if you plan to
                 pool several recordings later in Summarize.
@@ -618,8 +618,8 @@
                 3. Temporal Analysis
               </div>
               <div style="font-size: 12px; color: var(--txt2); line-height: 1.6">
-                Detect peaks/pulses from the envelope and organize them into
-                Trains and Motifs. Results tabs (Peak / Train / Motif /
+                Detect envelope peaks/pulses from the envelope and organize them into
+                Pulses and Motifs. Results tabs (Envelope peak / Pulse / Motif /
                 MotifSeq / Summary) can be exported together as one Excel
                 workbook.
               </div>
@@ -1012,7 +1012,7 @@
                 </div>
                 <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px">
                   <span style="color: var(--txt2); font-size: 10px">Target</span>
-                  <input type="number" id="batchNormDb" value="0" max="0" step="0.5" style="width: 56px; font-size: 10px" title="Target peak level in dBFS (0 = full scale)." />
+                  <input type="number" id="batchNormDb" value="0" max="0" step="0.5" style="width: 56px; font-size: 10px" title="Target envelope peak level in dBFS (0 = full scale)." />
                   <span style="color: var(--txt2); font-size: 10px">dBFS</span>
                   <button onclick="applyBatchNormalize()" id="btnBatchNormalize" class="pri" style="font-size: 10px; padding: 2px 8px" disabled>
                     📶 Normalize selected
@@ -1309,11 +1309,11 @@
               type="number"
               id="playSpeed"
               value="100"
-              min="5"
+              min="1"
               max="400"
-              step="5"
+              step="1"
               style="width: 58px"
-              title="Playback speed as a percentage of real time. Slowing down also lowers the pitch, which brings ultrasonic song into hearing range."
+              title="Playback speed as a percentage of real time, from 1 to 400. Slowing down also lowers the pitch, which brings ultrasonic song into hearing range: 1% plays a 120 kHz carrier at about 1.2 kHz. Note that it stretches the recording by the same factor, so 1% takes 100x as long to play. To lower the pitch WITHOUT stretching time, use Freq drop instead."
               onchange="onPlaySpeedChange()"
             />
             <span style="color: var(--txt2); font-size: 11px">%</span>
@@ -1492,7 +1492,7 @@
               id="btnXlsxSel"
               disabled
               style="font-size: 10px; padding: 2px 8px"
-              title="Import the Train or Motif table from a Temporal Analysis Excel export as selections."
+              title="Import the Pulse or Motif table from a Temporal Analysis Excel export as selections."
             >
               📊 Add Excel Selection Table
             </button>
@@ -1644,7 +1644,7 @@
 
         <!-- ═══ TEMPORAL ANALYSIS VIEW ═══════════════════════════════════════════ -->
         <div
-          id="mainview-peaks"
+          id="mainview-envpeaks"
           style="
             flex: 1;
             display: none;
@@ -1674,9 +1674,9 @@
                 margin-bottom: 6px;
               "
             >
-              <!-- Peak Detection -->
+              <!-- Envelope peak Detection -->
               <div class="panel" style="min-width: 210px">
-                <h2>Peak Detection</h2>
+                <h2>Envelope peak Detection</h2>
                 <div style="display: flex; flex-direction: column; gap: 4px">
                   <div class="row">
                     <span
@@ -1697,7 +1697,7 @@
                   <div class="row">
                     <span
                       style="color: var(--txt2); font-size: 11px; width: 110px"
-                      >Peak window (ms)</span
+                      >Envelope peak window (ms)</span
                     >
                     <input
                       type="number"
@@ -1712,7 +1712,7 @@
                   <div class="row">
                     <span
                       style="color: var(--txt2); font-size: 11px; width: 110px"
-                      >Peak threshold (%)</span
+                      >Envelope peak threshold (%)</span
                     >
                     <input
                       type="number"
@@ -1741,7 +1741,7 @@
                   </div>
                   <div
                     class="row"
-                    title="Optional lower floor: weak peaks above this value are kept ONLY when they sit within one Max-peak-gap of an accepted (strong) peak. Catches the quiet onset/offset peaks of a train without picking up isolated inter-train noise. Leave blank to disable."
+                    title="Optional lower floor: weak envelope peaks above this value are kept ONLY when they sit within one Max-envelope peak-gap of an accepted (strong) envelope peak. Catches the quiet onset/offset envelope peaks of a pulse without picking up isolated inter-pulse noise. Leave blank to disable."
                   >
                     <span
                       style="color: var(--txt2); font-size: 11px; width: 110px"
@@ -1760,11 +1760,11 @@
                   </div>
                   <div
                     class="row"
-                    title="After detection, removes near-baseline 'peaks' that pass the prominence check on their own tiny local dip but aren't real signal. A peak is dropped only if it BOTH sits within this much of the recording's floor AND is more than this much below the real peaks on either side — so a low bump between two pulses goes, while the quiet onset/offset peaks of a real train stay. Runs of several bumps at the same low level are judged as one unit against the taller peaks flanking the whole run. Leave blank to disable."
+                    title="After detection, removes near-baseline 'envelope peaks' that pass the prominence check on their own tiny local dip but aren't real signal. A envelope peak is dropped only if it BOTH sits within this much of the recording's floor AND is more than this much below the real envelope peaks on either side — so a low bump between two pulses goes, while the quiet onset/offset envelope peaks of a real pulse stay. Runs of several bumps at the same low level are judged as one unit against the taller envelope peaks flanking the whole run. Leave blank to disable."
                   >
                     <span
                       style="color: var(--txt2); font-size: 11px; width: 110px"
-                      >False peak Δ (%)</span
+                      >False envelope peak Δ (%)</span
                     >
                     <input
                       type="number"
@@ -1780,14 +1780,14 @@
                 </div>
               </div>
 
-              <!-- Train Grouping -->
+              <!-- Pulse Grouping -->
               <div class="panel" style="min-width: 180px">
-                <h2>Train Grouping</h2>
+                <h2>Pulse Grouping</h2>
                 <div style="display: flex; flex-direction: column; gap: 4px">
                   <div class="row">
                     <span
                       style="color: var(--txt2); font-size: 11px; width: 110px"
-                      >Max peak gap (ms)</span
+                      >Max envelope peak gap (ms)</span
                     >
                     <input
                       type="number"
@@ -1818,11 +1818,11 @@
                   <div class="row">
                     <span
                       style="color: var(--txt2); font-size: 11px; width: 110px"
-                      >Min peaks/train</span
+                      >Min envelope peaks/pulse</span
                     >
                     <input
                       type="number"
-                      id="pkMinPeaks"
+                      id="pkMinEnvPeaks"
                       value="3"
                       min="1"
                       max="20"
@@ -1833,12 +1833,12 @@
                   <div class="row">
                     <span
                       style="color: var(--txt2); font-size: 11px; width: 110px"
-                      title="Expand every train (and therefore every motif/sequence) by this many milliseconds on EACH side, to capture the true acoustic onset/offset that precedes/follows each peak's amplitude maximum. Pulse rate and other peak-timing metrics are unaffected."
+                      title="Expand every pulse (and therefore every motif/sequence) by this many milliseconds on EACH side, to capture the true acoustic onset/offset that precedes/follows each envelope peak's amplitude maximum. Pulse rate and other envelope peak-timing metrics are unaffected."
                       >Edge pad (ms/side)</span
                     >
                     <input
                       type="number"
-                      id="pkTrainPad"
+                      id="pkPulsePad"
                       value="0.5"
                       min="0"
                       max="50"
@@ -1853,7 +1853,7 @@
                 </div>
               </div>
 
-              <!-- Arch Detection — subdivides trains the gap rule left joined,
+              <!-- Arch Detection — subdivides pulses the gap rule left joined,
                    cutting at the valley between two amplitude arches. -->
               <div class="panel" style="min-width: 180px">
                 <h2>Arch Detection</h2>
@@ -1861,13 +1861,13 @@
                   <label
                     class="chk"
                     style="font-size: 11px"
-                    title="For species whose trains run back to back, where the silence between trains is no longer than the spacing between peaks inside one, so Max peak gap cannot separate them. Splits at the valley between two amplitude arches instead. Runs AFTER the gap rule and only subdivides what it produced — it never merges trains the gap rule separated."
+                    title="For species whose pulses run back to back, where the silence between pulses is no longer than the spacing between envelope peaks inside one, so Max envelope peak gap cannot separate them. Splits at the valley between two amplitude arches instead. Runs AFTER the gap rule and only subdivides what it produced — it never merges pulses the gap rule separated."
                   >
                     <input type="checkbox" id="pkArchEnable" /> Split on arches
                   </label>
                   <div
                     class="row"
-                    title="How far a valley must fall below the crests on either side, as a percentage of those crests. Relative, so quiet and loud trains are judged alike. Lower = more splits."
+                    title="How far a valley must fall below the crests on either side, as a percentage of those crests. Relative, so quiet and loud pulses are judged alike. Lower = more splits."
                   >
                     <span
                       style="color: var(--txt2); font-size: 11px; width: 110px"
@@ -1885,11 +1885,11 @@
                   </div>
                   <div
                     class="row"
-                    title="Refuses any arch cut that would leave a train shorter than this — shallow amplitude modulation inside one train can look like a valley. Leave blank to derive it from the recording: half the median duration of the trains the unmistakable valleys produce."
+                    title="Refuses any arch cut that would leave a pulse shorter than this — shallow amplitude modulation inside one pulse can look like a valley. Leave blank to derive it from the recording: half the median duration of the pulses the unmistakable valleys produce."
                   >
                     <span
                       style="color: var(--txt2); font-size: 11px; width: 110px"
-                      >Min train (ms)</span
+                      >Min pulse (ms)</span
                     >
                     <input
                       type="number"
@@ -1912,11 +1912,11 @@
                   <div class="row">
                     <span
                       style="color: var(--txt2); font-size: 11px; width: 110px"
-                      >Max train gap (ms)</span
+                      >Max pulse gap (ms)</span
                     >
                     <input
                       type="number"
-                      id="pkMaxTrainGap"
+                      id="pkMaxPulseGap"
                       value="300"
                       min="10"
                       max="5000"
@@ -1958,21 +1958,21 @@
                     "
                   >
                     Frequency resolution of the spectral measurements. Nothing
-                    here affects peak detection or grouping. Hold these constant
+                    here affects envelope peak detection or grouping. Hold these constant
                     to compare recordings — stated in Hz, they mean the same
                     thing at any sample rate.
                   </div>
                   <div
                     class="row"
-                    title="Target frequency resolution for PEAK spectra, in Hz. Resolution is 1/window, so 1500 Hz means a 0.67 ms window — but stating it in Hz keeps it identical across recordings with different sample rates, which a duration in milliseconds does not. The signal is still capped at half the distance to the neighbouring peak, so where pulses are tighter than this asks for, the row reports the coarser resolution it actually achieved in spec_res_hz. Keep this constant across a study."
+                    title="Target frequency resolution for TOOTH spectra, in Hz. Resolution is 1/window, so 1500 Hz means a 0.67 ms window — but stating it in Hz keeps it identical across recordings with different sample rates, which a duration in milliseconds does not. The signal is still capped at half the distance to the neighbouring peak, so where pulses are tighter than this asks for, the row reports the coarser resolution it actually achieved in spec_res_hz. Keep this constant across a study."
                   >
                     <span
                       style="color: var(--txt2); font-size: 11px; width: 110px"
-                      >Peak freq. res (Hz)</span
+                      >Envelope peak freq. res (Hz)</span
                     >
                     <input
                       type="number"
-                      id="pkSpecResPeak"
+                      id="pkSpecResEnvPeak"
                       value="1500"
                       min="1"
                       max="20000"
@@ -1982,15 +1982,15 @@
                   </div>
                   <div
                     class="row"
-                    title="Target frequency resolution for TRAIN spectra, in Hz. 50 Hz means a 20 ms window. A train longer than that is Welch-averaged over overlapping frames at this resolution; a shorter train reports the coarser resolution it could actually achieve. The motif columns ending in _tmean are the average of these train rows. Keep it constant across a study."
+                    title="Target frequency resolution for PULSE spectra, in Hz. 50 Hz means a 20 ms window. A pulse longer than that is Welch-averaged over overlapping frames at this resolution; a shorter pulse reports the coarser resolution it could actually achieve. The motif columns ending in _tmean are the average of these pulse rows. Keep it constant across a study."
                   >
                     <span
                       style="color: var(--txt2); font-size: 11px; width: 110px"
-                      >Train freq. res (Hz)</span
+                      >Pulse freq. res (Hz)</span
                     >
                     <input
                       type="number"
-                      id="pkSpecResTrain"
+                      id="pkSpecResPulse"
                       value="50"
                       min="1"
                       max="20000"
@@ -2000,7 +2000,7 @@
                   </div>
                   <div
                     class="row"
-                    title="Target frequency resolution for MOTIF spectra, in Hz. 10 Hz means a 100 ms window, long enough to resolve structure the train window cannot. This measures the whole motif span, so its frames also cross the silence between trains — on a low duty cycle that raises spec_entropy and spec_flatness. The motif row also carries _tmean columns, the average of its train rows, which contain no silence; compare the two. Keep this constant across a study."
+                    title="Target frequency resolution for MOTIF spectra, in Hz. 10 Hz means a 100 ms window, long enough to resolve structure the pulse window cannot. This measures the whole motif span, so its frames also cross the silence between pulses — on a low duty cycle that raises spec_entropy and spec_flatness. The motif row also carries _tmean columns, the average of its pulse rows, which contain no silence; compare the two. Keep this constant across a study."
                   >
                     <span
                       style="color: var(--txt2); font-size: 11px; width: 110px"
@@ -2110,7 +2110,7 @@
                     class="pri"
                     style="width: 100%"
                   >
-                    &#128269; Detect Peaks
+                    &#128269; Detect Envelope peaks
                   </button>
                   <button
                     onclick="pkApplyDetectionsToSpectral()"
@@ -2129,31 +2129,31 @@
                       font-size: 10px;
                       color: var(--txt2);
                     "
-                    title="Choose whether detected units become train or motif selections."
+                    title="Choose whether detected units become pulse or motif selections."
                   >
                     Apply as:
                     <select
                       id="pkApplySelectionType"
                       style="font-size: 11px; flex: 1"
                     >
-                      <option value="train" selected>Train selections</option>
+                      <option value="pulse" selected>Pulse selections</option>
                       <option value="motif">Motif selections</option>
                     </select>
                   </label>
                   <button
-                    id="btnPkImportPeaks"
-                    onclick="document.getElementById('pkPeaksFile').click()"
+                    id="btnPkImportEnvPeaks"
+                    onclick="document.getElementById('pkEnvPeaksFile').click()"
                     style="font-size: 10px; padding: 2px 8px; width: 100%"
-                    title="Load a Peaks table from a Temporal Analysis Excel export, restoring the peaks and the train boundaries exactly as they were saved, including any you edited by hand. Needs the matching audio loaded. Does not re-run detection."
+                    title="Load a Envelope peaks table from a Temporal Analysis Excel export, restoring the envelope peaks and the pulse boundaries exactly as they were saved, including any you edited by hand. Needs the matching audio loaded. Does not re-run detection."
                   >
-                    &#128229; Import detected Peaks
+                    &#128229; Import detected Envelope peaks
                   </button>
                   <input
                     type="file"
-                    id="pkPeaksFile"
+                    id="pkEnvPeaksFile"
                     accept=".xlsx"
                     style="display: none"
-                    onchange="pkImportPeaksFile(this.files[0]); this.value = '';"
+                    onchange="pkImportEnvPeaksFile(this.files[0]); this.value = '';"
                   />
                 </div>
               </div>
@@ -2166,16 +2166,16 @@
                     id="btnPkFit"
                     onclick="pkFitGrouping()"
                     style="font-size: 10px; padding: 2px 8px; width: 100%"
-                    title="Correct a few trains by hand, select their peaks (shift-drag), then press this. Searches the train-grouping parameters for the combination that best reproduces the boundaries you set. Peak DETECTION is only fitted if you tick the box below. Nothing changes until you press Apply."
+                    title="Correct a few pulses by hand, select their envelope peaks (shift-drag), then press this. Searches the pulse-grouping parameters for the combination that best reproduces the boundaries you set. Envelope peak DETECTION is only fitted if you tick the box below. Nothing changes until you press Apply."
                   >
                     &#127919; Fit to selection
                   </button>
                   <label
                     class="chk"
                     style="font-size: 10px; color: var(--txt2)"
-                    title="Also fit the peak-detection parameters (peak window, peak/detection/onset thresholds, false peak delta) to the peaks you kept, added and deleted by hand. Smoothing is never fitted. Slower, and Apply then re-runs detection over the whole recording, which replaces manual peak edits as well as boundary edits."
+                    title="Also fit the envelope peak-detection parameters (envelope peak window, envelope peak/detection/onset thresholds, false envelope peak delta) to the envelope peaks you kept, added and deleted by hand. Smoothing is never fitted. Slower, and Apply then re-runs detection over the whole recording, which replaces manual envelope peak edits as well as boundary edits."
                   >
-                    <input type="checkbox" id="pkFitDetect" /> incl. peak
+                    <input type="checkbox" id="pkFitDetect" /> incl. envelope peak
                     detection
                   </label>
                   <button
@@ -2183,7 +2183,7 @@
                     onclick="pkFitApply()"
                     disabled
                     style="font-size: 10px; padding: 2px 8px; width: 100%"
-                    title="Write the fitted parameters into the panels and re-apply them over the whole recording. This replaces manual boundary edits, including the ones just trained on."
+                    title="Write the fitted parameters into the panels and re-apply them over the whole recording. This replaces manual boundary edits, including the ones just pulseed on."
                   >
                     &#10004; Apply
                   </button>
@@ -2253,9 +2253,9 @@
                 id="btnPkModeAdd"
                 onclick="pkSetMode('add')"
                 style="font-size: 10px; padding: 2px 8px"
-                title="Click anywhere on the plot to add a peak, snapped to the envelope at that time."
+                title="Click anywhere on the plot to add a envelope peak, snapped to the envelope at that time."
               >
-                ➕ Add Peak
+                ➕ Add Envelope peak
               </button>
               <button
                 id="btnPkUndo"
@@ -2269,23 +2269,23 @@
               <button
                 onclick="pkClearOverrides()"
                 style="font-size: 10px; padding: 2px 8px"
-                title="Re-run the detected segmentation, discarding manual boundary edits (added/removed peaks are kept)."
+                title="Re-run the detected segmentation, discarding manual boundary edits (added/removed envelope peaks are kept)."
               >
                 ↩ Reset boundaries
               </button>
               <button
                 id="btnPkFilterFalse"
-                onclick="pkFilterFalsePeaks()"
+                onclick="pkFilterFalseEnvPeaks()"
                 disabled
                 style="font-size: 10px; padding: 2px 8px"
-                title="Re-apply the False peak Δ filter to the current peaks (e.g. after manually adding one, or after changing the Δ value)."
+                title="Re-apply the False envelope peak Δ filter to the current envelope peaks (e.g. after manually adding one, or after changing the Δ value)."
               >
-                🧹 Remove False Peaks
+                🧹 Remove False Envelope peaks
               </button>
               <span
                 id="pkEditHint"
                 style="font-size: 10px; color: var(--txt3); margin-left: 4px"
-                >Select mode · click selects a peak · shift-drag to box-select
+                >Select mode · click selects a envelope peak · shift-drag to box-select
                 (or shift-click) · use the panel for actions · Del to delete
                 selection · Ctrl+Z to undo</span
               >
@@ -2294,7 +2294,7 @@
               </div>
 
               <div class="panel" style="flex: 1; min-width: 320px">
-                <h2>Peak Actions</h2>
+                <h2>Envelope peak Actions</h2>
                 <div class="row" style="gap: 4px; flex-wrap: wrap">
 
               <button
@@ -2302,7 +2302,7 @@
                 onclick="pkAssignSelection('left')"
                 disabled
                 style="font-size: 10px; padding: 2px 8px"
-                title="Assign the selected peak(s) to the left train."
+                title="Assign the selected envelope peak(s) to the left pulse."
               >
                 ◀ Assign left
               </button>
@@ -2311,7 +2311,7 @@
                 onclick="pkAssignSelection('right')"
                 disabled
                 style="font-size: 10px; padding: 2px 8px"
-                title="Assign the selected peak(s) to the right train."
+                title="Assign the selected envelope peak(s) to the right pulse."
               >
                 ▶ Assign right
               </button>
@@ -2320,7 +2320,7 @@
                 onclick="pkMergeSelection('left')"
                 disabled
                 style="font-size: 10px; padding: 2px 8px"
-                title="Merge the left gap for the selected peak."
+                title="Merge the left gap for the selected envelope peak."
               >
                 ⇤ Merge left
               </button>
@@ -2329,7 +2329,7 @@
                 onclick="pkMergeSelection('right')"
                 disabled
                 style="font-size: 10px; padding: 2px 8px"
-                title="Merge the right gap for the selected peak."
+                title="Merge the right gap for the selected envelope peak."
               >
                 ⇥ Merge right
               </button>
@@ -2338,7 +2338,7 @@
                 onclick="pkSplitSelection('left')"
                 disabled
                 style="font-size: 10px; padding: 2px 8px"
-                title="Split the left gap for the selected peak."
+                title="Split the left gap for the selected envelope peak."
               >
                 ✂ Split left
               </button>
@@ -2347,7 +2347,7 @@
                 onclick="pkSplitSelection('right')"
                 disabled
                 style="font-size: 10px; padding: 2px 8px"
-                title="Split the right gap for the selected peak."
+                title="Split the right gap for the selected envelope peak."
               >
                 ✂ Split right
               </button>
@@ -2356,7 +2356,7 @@
                 onclick="pkBulkIsolate()"
                 disabled
                 style="font-size: 10px; padding: 2px 8px"
-                title="Make the selected peaks into a single train."
+                title="Make the selected envelope peaks into a single pulse."
               >
                 ▭ Isolate
               </button>
@@ -2365,7 +2365,7 @@
                 onclick="pkBulkJoin()"
                 disabled
                 style="font-size: 10px; padding: 2px 8px"
-                title="Join internal gaps within the selected peaks."
+                title="Join internal gaps within the selected envelope peaks."
               >
                 ⇎ Join
               </button>
@@ -2375,7 +2375,7 @@
                 disabled
                 class="warn"
                 style="font-size: 10px; padding: 2px 8px"
-                title="Remove the selected peak(s)."
+                title="Remove the selected envelope peak(s)."
               >
                 ✕ Remove
               </button>
@@ -2384,7 +2384,7 @@
                 onclick="pkClearSelectionAction()"
                 disabled
                 style="font-size: 10px; padding: 2px 8px"
-                title="Clear the current peak selection."
+                title="Clear the current envelope peak selection."
               >
                 ○ Clear selection
               </button>
@@ -2424,7 +2424,7 @@
               <button
                 onclick="pkAmpZoom(1.5)"
                 style="font-size: 10px; padding: 1px 7px"
-                title="Magnify amplitude — reveals faint peaks (clips tall ones at the top)."
+                title="Magnify amplitude — reveals faint envelope peaks (clips tall ones at the top)."
               >
                 +
               </button>
@@ -2452,7 +2452,7 @@
                   align-items: center;
                   gap: 3px;
                 "
-                title="Show a small synced spectrogram below the envelope to tell real tooth impacts from noise."
+                title="Show a small synced spectrogram below the envelope to tell real envelope peak impacts from noise."
               >
                 <input
                   type="checkbox"
@@ -2560,8 +2560,8 @@
                 "
               >
                 <button
-                  id="pkTabBtnPeak"
-                  onclick="pkShowTable('peak')"
+                  id="pkTabBtnEnvPeak"
+                  onclick="pkShowTable('envpeak')"
                   class="pri"
                   style="
                     font-size: 11px;
@@ -2569,14 +2569,14 @@
                     border-radius: var(--rad) 0 0 var(--rad);
                   "
                 >
-                  Peaks
+                  Envelope peaks
                 </button>
                 <button
-                  id="pkTabBtnTrain"
-                  onclick="pkShowTable('train')"
+                  id="pkTabBtnPulse"
+                  onclick="pkShowTable('pulse')"
                   style="font-size: 11px; padding: 3px 10px; border-radius: 0"
                 >
-                  Trains
+                  Pulses
                 </button>
                 <button
                   id="pkTabBtnMotif"
@@ -2618,7 +2618,7 @@
                   onclick="pkExportAll()"
                   class="suc"
                   style="font-size: 11px; padding: 3px 10px; margin-left: 4px"
-                  title="Export all tables (Peaks, Trains, Motifs, MotifSeqs, Summary) into one Excel workbook — one sheet each."
+                  title="Export all tables (Envelope peaks, Pulses, Motifs, MotifSeqs, Summary) into one Excel workbook — one sheet each."
                 >
                   ⬇ Export All (Excel)
                 </button>
@@ -2641,9 +2641,9 @@
               </div>
             </div>
           </div>
-          <!-- /tab-peaks -->
+          <!-- /tab-envelope peaks -->
         </div>
-        <!-- /mainview-peaks -->
+        <!-- /mainview-envelope peaks -->
 
         <!-- ═══ PLOTTING SUB-TABS ══════════════════════════════════════════════════ -->
         <div
@@ -3636,7 +3636,7 @@
                 step="100"
                 onchange="anOnRange()"
                 style="width: 76px"
-                title="Wind and handling noise routinely exceed an insect call in absolute level. Set this above the rumble or it will capture the peak and drag the band down to DC."
+                title="Wind and handling noise routinely exceed an insect call in absolute level. Set this above the rumble or it will capture the envelope peak and drag the band down to DC."
               />
               <span style="font-size: 10px; color: var(--txt2)">–</span>
               <input
@@ -3669,7 +3669,7 @@
                 title="outer — outermost crossings, harmonics included (and any neighbour calling in the same window). around peak — the one lobe around the carrier."
               >
                 <option value="outer">edges: outer</option>
-                <option value="contiguous">edges: around peak</option>
+                <option value="contiguous">edges: around envelope peak</option>
               </select>
 
               <label class="chk" title="Re-derive the band from the threshold whenever the selection changes."
@@ -3846,16 +3846,16 @@
               <div class="row" style="gap: 6px; flex-wrap: wrap">
                 <span style="font-size: 10px; color: var(--txt2)">Smooth ms</span>
                 <input id="anSmooth" type="number" value="1" step="0.5" style="width: 60px" />
-                <span style="font-size: 10px; color: var(--txt2)">Peak win ms</span>
-                <input id="anPeakWin" type="number" value="1" step="0.5" style="width: 60px" />
-                <span style="font-size: 10px; color: var(--txt2)">Peak thr %</span>
-                <input id="anPeakThr" type="number" value="10" step="1" style="width: 56px" />
+                <span style="font-size: 10px; color: var(--txt2)">Envelope peak win ms</span>
+                <input id="anEnvPeakWin" type="number" value="1" step="0.5" style="width: 60px" />
+                <span style="font-size: 10px; color: var(--txt2)">Envelope peak thr %</span>
+                <input id="anEnvPeakThr" type="number" value="10" step="1" style="width: 56px" />
                 <span style="font-size: 10px; color: var(--txt2)">Det thr %</span>
                 <input id="anDetThr" type="number" value="5" step="1" style="width: 56px" />
-                <span style="font-size: 10px; color: var(--txt2)">Peak gap ms</span>
-                <input id="anPeakGap" type="number" value="30" step="5" style="width: 62px" />
-                <span style="font-size: 10px; color: var(--txt2)">Train gap ms</span>
-                <input id="anTrainGap" type="number" value="200" step="10" style="width: 62px" />
+                <span style="font-size: 10px; color: var(--txt2)">Envelope peak gap ms</span>
+                <input id="anEnvPeakGap" type="number" value="30" step="5" style="width: 62px" />
+                <span style="font-size: 10px; color: var(--txt2)">Pulse gap ms</span>
+                <input id="anPulseGap" type="number" value="200" step="10" style="width: 62px" />
               </div>
               <div class="row" style="gap: 6px; margin-top: 6px; flex-wrap: wrap">
                 <button onclick="anDetectView()">▶ Detect in view</button>
@@ -3869,10 +3869,10 @@
                   line-height: 1.5;
                 "
               >
-                Peak gap splits one train from the next; train gap splits one motif
+                Envelope peak gap splits one pulse from the next; pulse gap splits one motif
                 from the next — the same meanings as Temporal Analysis, but measured
                 on the band-limited envelope, so a second species elsewhere in the
-                spectrum cannot fuse its pulses into these trains. Re-running tops up
+                spectrum cannot fuse its pulses into these pulses. Re-running tops up
                 rather than duplicates: a motif more than half covered by an existing
                 selection of the same species is skipped, and overlap with a
                 <em>different</em> species is not a conflict.
@@ -4006,7 +4006,7 @@
                 <label class="chk" title="Subtract the mean of the whole merged signal, as tuneR's normalize(center = TRUE) does."
                   ><input type="checkbox" id="mwCenter" checked />centre</label
                 >
-                <label class="chk" title="Peak-normalize the merged signal. NOTE: this destroys the relative levels between the source recordings."
+                <label class="chk" title="Envelope peak-normalize the merged signal. NOTE: this destroys the relative levels between the source recordings."
                   ><input type="checkbox" id="mwNormalize" checked />normalize to</label
                 >
                 <input id="mwNormDb" type="number" value="0" step="1" style="width: 58px" />
@@ -4016,7 +4016,7 @@
               <div
                 style="font-size: 10px; color: var(--txt2); margin-top: 6px; line-height: 1.5; flex-shrink: 0"
               >
-                Normalizing scales the whole concatenation to one peak, so amplitudes
+                Normalizing scales the whole concatenation to one envelope peak, so amplitudes
                 are no longer comparable <em>between</em> the source recordings — turn
                 it off if that comparison matters. Unlike the R version, it is applied
                 once at the end rather than after every append.
@@ -4329,7 +4329,7 @@
                     length longer than its panel is capped at the panel's span.
                   </div>
                   <label class="chk" style="font-size: 11px">
-                    <input type="checkbox" id="ozRescalePanels" /> Rescale each panel to its own peak
+                    <input type="checkbox" id="ozRescalePanels" /> Rescale each panel to its own envelope peak
                   </label>
                   <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
                     Drag across any panel to open that slice below it. Shift/Ctrl-drag selects labels instead of zooming.
@@ -4731,11 +4731,11 @@
                   type="number"
                   id="cePlaySpeed"
                   value="100"
-                  min="5"
+                  min="1"
                   max="400"
-                  step="5"
+                  step="1"
                   style="width: 58px"
-                  title="Playback speed as a percentage of real time — the same scale as the main transport. Slowing down also lowers the pitch, which brings ultrasonic song into hearing range: 6% plays a 42 kHz song at about 2.6 kHz."
+                  title="Playback speed as a percentage of real time, from 1 to 400 — the same scale as the main transport. Slowing down also lowers the pitch, which brings ultrasonic song into hearing range: 6% plays a 42 kHz song at about 2.6 kHz, and 1% reaches a 120 kHz carrier. It stretches the recording by the same factor, so 1% takes 100x as long to play."
                   onchange="ceSetSpeed()"
                 />
                 <span style="font-size: 10px; color: var(--txt2)">%</span>
@@ -4892,7 +4892,7 @@
                     <input type="number" id="habYMin" value="-50" style="width: 64px" />
                   </div>
                   <label class="chk" style="font-size: 11px">
-                    <input type="checkbox" id="habNormalize" /> Normalize each recording (peak) before averaging
+                    <input type="checkbox" id="habNormalize" /> Normalize each recording (envelope peak) before averaging
                   </label>
                 </div>
               </div>
@@ -5049,6 +5049,17 @@
                     </div>
                     <div id="summTempNote" style="color: var(--txt2); font-size: 10px; line-height: 1.3; margin-top: 4px"></div>
                   </div>
+                  <div class="row" style="gap: 4px">
+                    <span style="color: var(--txt2); font-size: 11px">Range brackets</span>
+                    <select
+                      id="summBracket"
+                      style="width: 62px; font-size: 11px"
+                      title="How the min-max range is wrapped in the LaTeX and Word convenience columns of the saved workbook, e.g. 12.00±1.50 (9.80–14.20) versus 12.00±1.50 [9.80–14.20].&#10;&#10;The columns are Excel formulas, so this is baked in when the workbook is written — change it and save again to switch."
+                    >
+                      <option value="round">( )</option>
+                      <option value="square">[ ]</option>
+                    </select>
+                  </div>
                   <button onclick="summSaveWorkbook()" id="btnSummSaveXlsx" disabled style="font-size: 11px">
                     💾 Save Merged Workbook
                   </button>
@@ -5059,15 +5070,15 @@
               </div>
 
               <!-- Structure selections: summarize a named subset of
-                   structures (the first train of every echeme, the odd
+                   structures (the first pulse of every echeme, the odd
                    "opening" strokes, …) beside the pooled totals. -->
               <div class="panel">
                 <h2>Structure selections</h2>
                 <div style="display: flex; flex-direction: column; gap: 6px">
                   <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
                     Summarize a named subset of structures separately — the
-                    first train of every echeme, the odd-numbered (opening)
-                    strokes, the last train, and so on. Positions are counted
+                    first pulse of every echeme, the odd-numbered (opening)
+                    strokes, the last pulse, and so on. Positions are counted
                     inside each parent structure, per recording. Each
                     selection gets its own rows in the summary table, its own
                     sheets in the workbook, and its own paragraph in the
@@ -5075,17 +5086,17 @@
                     <br /><br />
                     The <b>gap</b> levels select the silences instead, named
                     after the pair they separate: <code>1-2, 3-4, 5-6</code>
-                    (or just <code>odd</code>) on “Gaps between trains within
+                    (or just <code>odd</code>) on “Gaps between pulses within
                     each echeme” gives the intra-syllable gaps, and
                     <code>even</code> the inter-syllable ones.
                     <br /><br />
                     The <b>run</b> levels take several structures as one sound
-                    — a disyllabic species is “Syllables (runs of trains)”
+                    — a disyllabic species is “Syllables (runs of pulses)”
                     with runs of 2. A syllable is measured across its whole
-                    span, first train’s onset to last train’s offset, so its
+                    span, first pulse’s onset to last pulse’s offset, so its
                     duration includes the silence in the middle. Runs must be
-                    complete: a motif of 5 trains read in pairs gives two
-                    syllables, and the leftover train is reported as left over
+                    complete: a motif of 5 pulses read in pairs gives two
+                    syllables, and the leftover pulse is reported as left over
                     rather than counted as a short syllable.
                   </div>
                   <div id="summSelList" style="display: flex; flex-direction: column; gap: 4px">
@@ -5121,6 +5132,33 @@
                     </thead>
                     <tbody id="summTableBody"></tbody>
                   </table>
+                </div>
+              </div>
+
+              <!-- ═══ TEMPERATURE RESPONSE ═══════════════════════════════════
+                   One point per recording that carries a temperature, with the
+                   least-squares line and its 95% band. The band is the point:
+                   it shows directly how much of the fitted slope the data
+                   actually supports. See summRenderTempPlots. ═══ -->
+              <div class="panel" id="summTempPlotsPanel" style="display: none">
+                <div class="row" style="justify-content: space-between; align-items: baseline">
+                  <h2 style="margin: 0">Temperature response</h2>
+                  <div class="row" style="gap: 5px">
+                    <span style="font-size: 10px; color: var(--txt2)">Fit</span>
+                    <select
+                      id="summFitMode"
+                      onchange="summRenderTempPlots(summMerged)"
+                      style="width: 116px; font-size: 11px"
+                      title="linear fits y = a + bT, a straight line in the metric's own units.&#10;&#10;log (Q10) fits log y = a + bT: a constant PROPORTIONAL change per degree. It is curved in the original units and cannot predict a negative duration, yet costs the same two parameters, so it needs no extra data. Its slope converts directly to Q10, which is comparable with published values.&#10;&#10;A metric with a zero or negative value falls back to linear, since its logarithm is undefined."
+                    >
+                      <option value="linear">linear</option>
+                      <option value="log">log (Q₁₀)</option>
+                    </select>
+                    <span id="summTempPlotsNote" style="font-size: 10px; color: var(--txt2)"></span>
+                  </div>
+                </div>
+                <div style="margin-top: 5px">
+                  <canvas id="summPlot0" style="width: 100%; height: 300px"></canvas>
                 </div>
               </div>
 

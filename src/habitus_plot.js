@@ -210,7 +210,7 @@
   // depends on its sample rate. Converting to the display scale is
   // deliberately NOT done here: recordings are first resampled onto one
   // shared frequency grid (see resampleSpectrum), and only then scaled, so
-  // that a "normalise to the peak" happens over the same band for every
+  // that a "normalise to the envelope peak" happens over the same band for every
   // recording rather than over each one's private range.
   function computeMeanSpectrum(wave, opts) {
     const { wl, ovlpPct, wn, normalize } = opts;
@@ -223,7 +223,7 @@
     const nBinsFull = fftN >> 1;
     const nyq = rate / 2;
 
-    // Peak-normalize the recording (to full scale) before analysis, so
+    // Envelope peak-normalize the recording (to full scale) before analysis, so
     // recordings captured at different gain levels contribute equally to
     // the averaged contour/band instead of the louder one dominating.
     const gain = normalize ? 1 / peakAbs(samples) : 1;
