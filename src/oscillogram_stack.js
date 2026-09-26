@@ -561,7 +561,19 @@
   }
 
   // ── Drawing ───────────────────────────────────────────────────────
+  // Thin wrapper so the busy overlay (spinner) is up before the heavy,
+  // synchronous per-wave envelope + SVG build in _oscDrawInner runs —
+  // otherwise a stack of long/many waves freezes the window with no sign
+  // of life.
   function oscDraw() {
+    if (typeof withBusy === "function") {
+      withBusy("Osc. Stack — drawing…", async () => _oscDrawInner());
+    } else {
+      _oscDrawInner();
+    }
+  }
+
+  function _oscDrawInner() {
     if (!oscWaves.length) return;
     attachKeyHandler();
     currentSlotEls = new Map();

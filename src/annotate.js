@@ -1543,7 +1543,20 @@
 
   // Band-pass samples[lo..hi), group its pulses into motifs with
   // Rthoptera's own grouping, and commit each one.
+  // Thin wrapper so the busy overlay is up before the filtfilt + envelope
+  // + grouping pass in _anDetectBetweenInner runs — a "detect in view" over
+  // a long, high-sample-rate stretch is not instant.
   function anDetectBetween(lo, hi, where) {
+    if (typeof withBusy === "function") {
+      withBusy("Annotator — detecting…", async () =>
+        _anDetectBetweenInner(lo, hi, where),
+      );
+    } else {
+      _anDetectBetweenInner(lo, hi, where);
+    }
+  }
+
+  function _anDetectBetweenInner(lo, hi, where) {
     if (!st.band) {
       anSay("no band yet — select a motif, or load a band", false);
       return;

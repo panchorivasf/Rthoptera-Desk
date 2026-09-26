@@ -135,6 +135,18 @@
         "
       ></span>
       <span id="statusBadge" class="badge warn">No file</span>
+      <div class="sep"></div>
+      <select
+        id="langSelect"
+        onchange="setLanguage(this.value)"
+        title="Language — English default; the app remembers your choice."
+        style="font-size: 11px"
+      >
+        <option value="en">🌐 English</option>
+        <option value="es">🌐 Español</option>
+        <option value="it">🌐 Italiano</option>
+        <option value="pt">🌐 Português</option>
+      </select>
     </div>
 
     <!-- MAIN LAYOUT -->
@@ -155,7 +167,7 @@
         "
       >
         <div class="panel">
-          <h2>Time Axis</h2>
+          <h2 data-i18n>Time Axis</h2>
           <div style="display: flex; flex-direction: column; gap: 5px">
             <div>
               <div
@@ -180,7 +192,7 @@
         </div>
 
         <div class="panel">
-          <h2>Frequency Axis</h2>
+          <h2 data-i18n>Frequency Axis</h2>
           <div style="display: flex; flex-direction: column; gap: 5px">
             <div>
               <div
@@ -227,7 +239,7 @@
         </div>
 
         <div class="panel">
-          <h2>Spectrogram</h2>
+          <h2 data-i18n>Spectrogram</h2>
           <div style="display: flex; flex-direction: column; gap: 5px">
             <div>
               <div
@@ -299,7 +311,7 @@
         </div>
 
         <div class="panel">
-          <h2>Envelope &amp; Floor</h2>
+          <h2 data-i18n>Envelope &amp; Floor</h2>
           <div style="display: flex; flex-direction: column; gap: 5px">
             <div class="row">
               <span style="color: var(--txt2); font-size: 11px; width: 72px"
@@ -402,7 +414,7 @@
               margin-bottom: 4px;
             "
           >
-            <h2 style="margin: 0">
+            <h2 data-i18n style="margin: 0">
               Annotations <span id="aBadge" style="color: var(--txt3)"></span>
             </h2>
           </div>
@@ -425,7 +437,7 @@
 
         <!-- Detections -->
         <div class="panel">
-          <h2>
+          <h2 data-i18n>
             Detections
             <span id="detBadge" style="color: #f78166; font-size: 11px"></span>
           </h2>
@@ -477,7 +489,7 @@
         >
           <div
             class="tab active"
-            id="maintab-preprocess"
+            id="maintab-preprocess" data-i18n
             onclick="switchMainTab('preprocess', this)"
             style="font-size: 12px; padding: 4px 14px"
           >
@@ -485,7 +497,7 @@
           </div>
           <div
             class="tab"
-            id="maintab-merge"
+            id="maintab-merge" data-i18n
             onclick="switchMainTab('merge', this)"
             style="font-size: 12px; padding: 4px 14px"
           >
@@ -493,7 +505,7 @@
           </div>
           <div
             class="tab"
-            id="maintab-envpeaks"
+            id="maintab-envpeaks" data-i18n
             onclick="switchMainTab('envpeaks', this)"
             style="font-size: 12px; padding: 4px 14px"
           >
@@ -501,7 +513,7 @@
           </div>
           <div
             class="tab"
-            id="maintab-analyzer"
+            id="maintab-analyzer" data-i18n
             onclick="switchMainTab('analyzer', this)"
             style="font-size: 12px; padding: 4px 14px"
           >
@@ -509,7 +521,7 @@
           </div>
           <div
             class="tab"
-            id="maintab-annotate"
+            id="maintab-annotate" data-i18n
             onclick="switchMainTab('annotate', this)"
             style="font-size: 12px; padding: 4px 14px"
           >
@@ -517,7 +529,7 @@
           </div>
           <div
             class="tab"
-            id="maintab-plotting"
+            id="maintab-plotting" data-i18n
             onclick="switchMainTab('plotting', this)"
             style="font-size: 12px; padding: 4px 14px"
           >
@@ -525,7 +537,7 @@
           </div>
           <div
             class="tab"
-            id="maintab-summarize"
+            id="maintab-summarize" data-i18n
             onclick="switchMainTab('summarize', this)"
             style="font-size: 12px; padding: 4px 14px"
           >
@@ -595,7 +607,7 @@
               </div>
               <button
                 onclick="pickAudioFiles()"
-                class="pri"
+                class="pri" data-i18n
                 style="font-size: 12px; padding: 6px 16px; margin-top: 10px"
               >
                 📂 Load Audio
@@ -692,7 +704,7 @@
               "
             >
               <div class="panel">
-                <h2>Audio Info</h2>
+                <h2 data-i18n>Audio Info</h2>
                 <div
                   style="
                     font-size: 12px;
@@ -721,7 +733,7 @@
               </div>
 
               <div class="panel">
-                <h2>Edit Audio</h2>
+                <h2 data-i18n>Edit Audio</h2>
                 <div style="display: flex; flex-direction: column; gap: 6px">
                   <div style="font-size: 10px; color: var(--txt2); line-height: 1.3">
                     Edits apply to the active recording for both Temporal and
@@ -942,6 +954,48 @@
                     </div>
                   </div>
 
+                  <!-- Downsample -->
+                  <div style="border-top: 1px solid var(--border); padding-top: 5px">
+                    <div style="font-size: 11px; font-weight: 600; color: var(--txt3); margin-bottom: 3px">
+                      Downsample
+                    </div>
+                    <div style="font-size: 10px; color: var(--txt2); line-height: 1.3; margin-bottom: 4px">
+                      Lowers the sample rate (and with it, the Nyquist limit —
+                      everything above it is gone for good). An anti-aliasing
+                      filter runs first so content above the new Nyquist is
+                      removed rather than folded back down into the passband.
+                    </div>
+                    <div class="row" style="gap: 4px">
+                      <select
+                        id="editDownsampleSr"
+                        disabled
+                        style="flex: 1; font-size: 11px"
+                        title="Only rates below the current sample rate are offered — this reduces resolution, it never increases it."
+                      >
+                        <option value="">— choose a rate —</option>
+                      </select>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <button
+                        id="btnApplyDownsample"
+                        onclick="applyDownsampleEdit()"
+                        disabled
+                        style="font-size: 11px; flex: 1"
+                      >
+                        ↓⟳ Downsample
+                      </button>
+                      <button
+                        id="btnClearDownsample"
+                        onclick="clearDownsample()"
+                        disabled
+                        style="font-size: 11px"
+                        title="Restore the original sample rate."
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+
                   <div
                     id="editStatus"
                     style="
@@ -986,7 +1040,7 @@
                    Preprocessing. Empty + collapsed until then. -->
               <div id="preprocessViewerSlot" style="flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--border); border-radius: var(--rad); overflow: hidden"></div>
               <div class="panel">
-                <h2>Batch Edit</h2>
+                <h2 data-i18n>Batch Edit</h2>
                 <div style="display: flex; flex-direction: column; gap: 8px; font-size: 11px; color: var(--txt2); line-height: 1.4">
                   Check the recordings to edit in the Loaded Audio panel at
                   the bottom of the window, then apply here. These act on
@@ -1006,7 +1060,7 @@
                   <input type="number" id="batchHp" value="0" min="0" step="100" style="width: 56px; font-size: 10px" title="High-pass cutoff in Hz. 0 = off." />
                   <span style="color: var(--txt2); font-size: 10px">LP</span>
                   <input type="number" id="batchLp" value="0" min="0" step="100" style="width: 56px; font-size: 10px" title="Low-pass cutoff in Hz. 0 = Nyquist (off)." />
-                  <button onclick="applyBatchBandpass()" id="btnBatchBandpass" class="pri" style="font-size: 10px; padding: 2px 8px" disabled>
+                  <button onclick="applyBatchBandpass()" id="btnBatchBandpass" class="pri" data-i18n style="font-size: 10px; padding: 2px 8px" disabled>
                     ⌁ Filter selected
                   </button>
                 </div>
@@ -1014,7 +1068,7 @@
                   <span style="color: var(--txt2); font-size: 10px">Target</span>
                   <input type="number" id="batchNormDb" value="0" max="0" step="0.5" style="width: 56px; font-size: 10px" title="Target envelope peak level in dBFS (0 = full scale)." />
                   <span style="color: var(--txt2); font-size: 10px">dBFS</span>
-                  <button onclick="applyBatchNormalize()" id="btnBatchNormalize" class="pri" style="font-size: 10px; padding: 2px 8px" disabled>
+                  <button onclick="applyBatchNormalize()" id="btnBatchNormalize" class="pri" data-i18n style="font-size: 10px; padding: 2px 8px" disabled>
                     📶 Normalize selected
                   </button>
                 </div>
@@ -1022,8 +1076,21 @@
                   <span style="color: var(--txt2); font-size: 10px">Freq. drop</span>
                   <input type="number" id="batchFreqDrop" value="50" min="1" max="99" step="1" style="width: 56px; font-size: 10px" title="Scale every frequency down by this percentage, keeping each recording's duration unchanged." />
                   <span style="color: var(--txt2); font-size: 10px">%</span>
-                  <button onclick="applyBatchFreqDrop()" id="btnBatchFreqDrop" class="pri" style="font-size: 10px; padding: 2px 8px" disabled>
+                  <button onclick="applyBatchFreqDrop()" id="btnBatchFreqDrop" class="pri" data-i18n style="font-size: 10px; padding: 2px 8px" disabled>
                     ↓ Drop selected
+                  </button>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px">
+                  <span style="color: var(--txt2); font-size: 10px">Downsample to</span>
+                  <select
+                    id="batchDownsampleSr"
+                    style="font-size: 10px; width: 168px"
+                    title="Rates are offered below the highest-rate checked recording. A checked recording already at or below the chosen rate is left untouched. An anti-aliasing filter runs before each one is decimated."
+                  >
+                    <option value="">— choose a rate —</option>
+                  </select>
+                  <button onclick="applyBatchDownsample()" id="btnBatchDownsample" class="pri" data-i18n style="font-size: 10px; padding: 2px 8px" disabled>
+                    ↓⟳ Downsample selected
                   </button>
                 </div>
                 <div style="margin-top: 8px">
@@ -1676,7 +1743,7 @@
             >
               <!-- Envelope peak Detection -->
               <div class="panel" style="min-width: 210px">
-                <h2>Envelope peak Detection</h2>
+                <h2 data-i18n>Envelope peak Detection</h2>
                 <div style="display: flex; flex-direction: column; gap: 4px">
                   <div class="row">
                     <span
@@ -1780,10 +1847,27 @@
                 </div>
               </div>
 
-              <!-- Pulse Grouping -->
+              <!-- Grouping — the pulse rules and the motif rules in ONE box.
+                   They were two panels side by side, which at this width
+                   pushed the pane into a second row; and they are read
+                   together anyway, since a pulse boundary is what the motif
+                   rule then groups over. Arch Detection stays separate below:
+                   it is an override of the pulse gap rule, not a rule of its
+                   own, and burying it here would hide that. -->
               <div class="panel" style="min-width: 180px">
-                <h2>Pulse Grouping</h2>
+                <h2 data-i18n>Grouping</h2>
                 <div style="display: flex; flex-direction: column; gap: 4px">
+                  <div
+                    style="
+                      color: var(--txt3);
+                      font-size: 10px;
+                      letter-spacing: 0.04em;
+                      text-transform: uppercase;
+                    "
+                  >
+                    Pulses
+                  </div>
+
                   <div class="row">
                     <span
                       style="color: var(--txt2); font-size: 11px; width: 110px"
@@ -1850,13 +1934,60 @@
                       "
                     />
                   </div>
+                  <div
+                    style="
+                      color: var(--txt3);
+                      font-size: 10px;
+                      letter-spacing: 0.04em;
+                      text-transform: uppercase;
+                      margin-top: 6px;
+                      padding-top: 6px;
+                      border-top: 1px solid var(--border2);
+                    "
+                  >
+                    Motifs
+                  </div>
+
+                  <div class="row">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 110px"
+                      >Max pulse gap (ms)</span
+                    >
+                    <input
+                      type="number"
+                      id="pkMaxPulseGap"
+                      value="300"
+                      min="10"
+                      max="5000"
+                      step="10"
+                      style="width: 54px"
+                    />
+                  </div>
+                  <label class="chk" style="font-size: 11px">
+                    <input type="checkbox" id="pkMotifSeq" /> Motif sequences
+                  </label>
+                  <div class="row" id="pkMotifSeqRow" style="display: none">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 110px"
+                      >Max motif gap (ms)</span
+                    >
+                    <input
+                      type="number"
+                      id="pkMaxMotifGap"
+                      value="800"
+                      min="50"
+                      max="10000"
+                      step="50"
+                      style="width: 54px"
+                    />
+                  </div>
                 </div>
               </div>
 
               <!-- Arch Detection — subdivides pulses the gap rule left joined,
                    cutting at the valley between two amplitude arches. -->
               <div class="panel" style="min-width: 180px">
-                <h2>Arch Detection</h2>
+                <h2 data-i18n>Arch Detection</h2>
                 <div style="display: flex; flex-direction: column; gap: 4px">
                   <label
                     class="chk"
@@ -1905,49 +2036,9 @@
                 </div>
               </div>
 
-              <!-- Motif Grouping -->
-              <div class="panel" style="min-width: 180px">
-                <h2>Motif Grouping</h2>
-                <div style="display: flex; flex-direction: column; gap: 4px">
-                  <div class="row">
-                    <span
-                      style="color: var(--txt2); font-size: 11px; width: 110px"
-                      >Max pulse gap (ms)</span
-                    >
-                    <input
-                      type="number"
-                      id="pkMaxPulseGap"
-                      value="300"
-                      min="10"
-                      max="5000"
-                      step="10"
-                      style="width: 54px"
-                    />
-                  </div>
-                  <label class="chk" style="font-size: 11px">
-                    <input type="checkbox" id="pkMotifSeq" /> Motif sequences
-                  </label>
-                  <div class="row" id="pkMotifSeqRow" style="display: none">
-                    <span
-                      style="color: var(--txt2); font-size: 11px; width: 110px"
-                      >Max motif gap (ms)</span
-                    >
-                    <input
-                      type="number"
-                      id="pkMaxMotifGap"
-                      value="800"
-                      min="50"
-                      max="10000"
-                      step="50"
-                      style="width: 54px"
-                    />
-                  </div>
-                </div>
-              </div>
-
               <!-- Spectral Parameters -->
               <div class="panel" style="min-width: 180px">
-                <h2>Spectral Parameters</h2>
+                <h2 data-i18n>Spectral Parameters</h2>
                 <div style="display: flex; flex-direction: column; gap: 6px">
                   <div
                     style="
@@ -2021,7 +2112,7 @@
 
               <!-- Parameter Presets -->
               <div class="panel" style="min-width: 215px; max-width: 260px">
-                <h2>Parameter Presets</h2>
+                <h2 data-i18n>Parameter Presets</h2>
                 <div style="display: flex; flex-direction: column; gap: 4px">
                   <select
                     id="pkPresetSelect"
@@ -2101,13 +2192,13 @@
 
               <!-- Detect & Apply -->
               <div class="panel" style="min-width: 205px">
-                <h2>Detect &amp; Apply</h2>
+                <h2 data-i18n>Detect &amp; Apply</h2>
                 <div style="display: flex; flex-direction: column; gap: 4px">
                   <button
                     onclick="pkDetect()"
                     id="btnPkDetect"
                     disabled
-                    class="pri"
+                    class="pri" data-i18n
                     style="width: 100%"
                   >
                     &#128269; Detect Envelope peaks
@@ -2160,7 +2251,7 @@
 
               <!-- Learn from Edits -->
               <div class="panel" style="min-width: 205px; max-width: 260px">
-                <h2>Learn from Edits</h2>
+                <h2 data-i18n>Learn from Edits</h2>
                 <div style="display: flex; flex-direction: column; gap: 4px">
                   <button
                     id="btnPkFit"
@@ -2238,12 +2329,12 @@
               "
             >
               <div class="panel" style="min-width: 260px">
-                <h2>Edit Mode</h2>
+                <h2 data-i18n>Edit Mode</h2>
                 <div class="row" style="gap: 4px; flex-wrap: wrap">
               <button
                 id="btnPkModeSelect"
                 onclick="pkSetMode('select')"
-                class="pri"
+                class="pri" data-i18n
                 style="font-size: 10px; padding: 2px 8px"
                 title="Left-click a marker to select it."
               >
@@ -2294,7 +2385,7 @@
               </div>
 
               <div class="panel" style="flex: 1; min-width: 320px">
-                <h2>Envelope peak Actions</h2>
+                <h2 data-i18n>Envelope peak Actions</h2>
                 <div class="row" style="gap: 4px; flex-wrap: wrap">
 
               <button
@@ -2562,7 +2653,7 @@
                 <button
                   id="pkTabBtnEnvPeak"
                   onclick="pkShowTable('envpeak')"
-                  class="pri"
+                  class="pri" data-i18n
                   style="
                     font-size: 11px;
                     padding: 3px 10px;
@@ -2572,21 +2663,21 @@
                   Envelope peaks
                 </button>
                 <button
-                  id="pkTabBtnPulse"
+                  id="pkTabBtnPulse" data-i18n
                   onclick="pkShowTable('pulse')"
                   style="font-size: 11px; padding: 3px 10px; border-radius: 0"
                 >
                   Pulses
                 </button>
                 <button
-                  id="pkTabBtnMotif"
+                  id="pkTabBtnMotif" data-i18n
                   onclick="pkShowTable('motif')"
                   style="font-size: 11px; padding: 3px 10px; border-radius: 0"
                 >
                   Motifs
                 </button>
                 <button
-                  id="pkTabBtnMotSeq"
+                  id="pkTabBtnMotSeq" data-i18n
                   onclick="pkShowTable('motseq')"
                   style="
                     font-size: 11px;
@@ -2598,7 +2689,7 @@
                   Motif Sequences
                 </button>
                 <button
-                  id="pkTabBtnSumm"
+                  id="pkTabBtnSumm" data-i18n
                   onclick="pkShowTable('summ')"
                   style="
                     font-size: 11px;
@@ -2660,7 +2751,7 @@
         >
           <div
             class="tab active"
-            id="plotsubtab-plot"
+            id="plotsubtab-plot" data-i18n
             onclick="switchPlotSubtab('plot', this)"
             style="font-size: 11px; padding: 3px 12px"
           >
@@ -2668,7 +2759,7 @@
           </div>
           <div
             class="tab"
-            id="plotsubtab-oscstack"
+            id="plotsubtab-oscstack" data-i18n
             onclick="switchPlotSubtab('oscstack', this)"
             style="font-size: 11px; padding: 3px 12px"
           >
@@ -2676,7 +2767,7 @@
           </div>
           <div
             class="tab"
-            id="plotsubtab-osczoom"
+            id="plotsubtab-osczoom" data-i18n
             onclick="switchPlotSubtab('osczoom', this)"
             style="font-size: 11px; padding: 3px 12px"
           >
@@ -2684,7 +2775,7 @@
           </div>
           <div
             class="tab"
-            id="plotsubtab-cetpe"
+            id="plotsubtab-cetpe" data-i18n
             onclick="switchPlotSubtab('cetpe', this)"
             title="Auto-coded Oscillogram — an oscillogram whose colour marks the frequency bands present above a threshold. After Brizio (2023), Colour Enhanced Time/Pressure Envelope"
             style="font-size: 11px; padding: 3px 12px"
@@ -2693,7 +2784,7 @@
           </div>
           <div
             class="tab"
-            id="plotsubtab-habitus"
+            id="plotsubtab-habitus" data-i18n
             onclick="switchPlotSubtab('habitus', this)"
             style="font-size: 11px; padding: 3px 12px"
           >
@@ -2763,7 +2854,7 @@
                 </select>
                 <button
                   onclick="loadPreset()"
-                  class="pri"
+                  class="pri" data-i18n
                   style="font-size: 11px; padding: 3px 8px"
                 >
                   📂 Load
@@ -2853,6 +2944,15 @@
                   max="30"
                   style="width: 50px; font-size: 11px"
                 />
+                <span style="font-size: 10px; color: var(--txt2)">Scale</span>
+                <select
+                  id="plotScale"
+                  style="font-size: 11px; width: 70px"
+                  title="Shared scale for the Power Spectrum curve and the spectrogram's colour mapping. dB compresses the range so quieter shoulders stay visible; Linear puts everything relative to the peak, so the dominant band reads as a sharp spike and the rest fades fast."
+                >
+                  <option value="dB" selected>dB</option>
+                  <option value="linear">Linear</option>
+                </select>
               </div>
 
               <div class="sep" style="height: 22px"></div>
@@ -2936,7 +3036,7 @@
               <!-- Render/Download always visible -->
               <button
                 onclick="renderPlot()"
-                class="pri"
+                class="pri" data-i18n
                 style="font-size: 12px; padding: 4px 12px; flex-shrink: 0"
               >
                 🖼 Render
@@ -3136,7 +3236,7 @@
               "
             >
               <div class="panel">
-                <h2>Figure Layout</h2>
+                <h2 data-i18n>Figure Layout</h2>
                 <div style="display: flex; flex-direction: column; gap: 4px">
                   <div class="row">
                     <span
@@ -3200,7 +3300,7 @@
               </div>
 
               <div class="panel">
-                <h2>FFT</h2>
+                <h2 data-i18n>FFT</h2>
                 <div style="display: flex; flex-direction: column; gap: 4px">
                   <div style="font-size: 10px; color: var(--txt2)">
                     Auto WL:
@@ -3236,7 +3336,7 @@
               </div>
 
               <div class="panel">
-                <h2>Colors</h2>
+                <h2 data-i18n>Colors</h2>
                 <div style="display: flex; flex-direction: column; gap: 4px">
                   <div class="row" style="justify-content: space-between">
                     <span style="color: var(--txt2); font-size: 11px"
@@ -3414,7 +3514,7 @@
               </div>
 
               <div class="panel">
-                <h2>Power Spectrum</h2>
+                <h2 data-i18n>Power Spectrum</h2>
                 <div style="display: flex; flex-direction: column; gap: 4px">
                   <div class="row" style="justify-content: space-between">
                     <span style="color: var(--txt2); font-size: 11px"
@@ -3513,7 +3613,7 @@
               </div>
 
               <div class="panel">
-                <h2>Typography</h2>
+                <h2 data-i18n>Typography</h2>
                 <div style="display: flex; flex-direction: column; gap: 4px">
                   <div class="row" style="justify-content: space-between">
                     <span style="color: var(--txt2); font-size: 11px"
@@ -3781,7 +3881,7 @@
             </div>
             <div class="row" style="gap: 6px; flex-wrap: wrap">
               <button
-                class="pri"
+                class="pri" data-i18n
                 onclick="anAdd()"
                 title="Commit the pending box (Enter / A)"
               >
@@ -3842,7 +3942,7 @@
               class="panel"
               style="width: 380px; flex-shrink: 0; overflow-y: auto"
             >
-              <h2>Detect motifs in the band</h2>
+              <h2 data-i18n>Detect motifs in the band</h2>
               <div class="row" style="gap: 6px; flex-wrap: wrap">
                 <span style="font-size: 10px; color: var(--txt2)">Smooth ms</span>
                 <input id="anSmooth" type="number" value="1" step="0.5" style="width: 60px" />
@@ -3877,7 +3977,7 @@
                 selection of the same species is skipped, and overlap with a
                 <em>different</em> species is not a conflict.
               </div>
-              <h2 style="margin-top: 9px">Rename a species</h2>
+              <h2 data-i18n style="margin-top: 9px">Rename a species</h2>
               <div class="row" style="gap: 6px; flex-wrap: wrap">
                 <select id="anRelabelFrom" style="width: 160px"></select>
                 <span style="font-size: 10px; color: var(--txt2)">→ Species box</span>
@@ -3901,7 +4001,7 @@
                 class="row"
                 style="justify-content: space-between; align-items: baseline"
               >
-                <h2 style="margin: 0">Selections</h2>
+                <h2 data-i18n style="margin: 0">Selections</h2>
                 <span id="anCount" style="font-size: 11px; color: var(--txt2)"></span>
               </div>
               <div id="anLegend" style="margin: 4px 0 6px"></div>
@@ -3931,13 +4031,13 @@
           <div style="display: flex; gap: 8px; flex: 1; min-height: 0">
             <!-- ── Pick ── -->
             <div class="panel" style="width: 268px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0">
-              <h2>1 &nbsp;Loaded audio</h2>
+              <h2 data-i18n>1 &nbsp;Loaded audio</h2>
               <div
                 id="mwLibPicker"
                 style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; font-size: 11px; min-height: 0"
               ></div>
               <div class="row" style="gap: 6px; margin-top: 7px; flex-shrink: 0">
-                <button class="pri" onclick="mwAddChecked()">Add ▸</button>
+                <button class="pri" data-i18n onclick="mwAddChecked()">Add ▸</button>
                 <button onclick="mwClear()">Clear list</button>
               </div>
             </div>
@@ -3945,7 +4045,7 @@
             <!-- ── Order and merge ── -->
             <div class="panel" style="flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0">
               <div class="row" style="justify-content: space-between; align-items: baseline">
-                <h2 style="margin: 0">2 &nbsp;Merge list — top plays first</h2>
+                <h2 data-i18n style="margin: 0">2 &nbsp;Merge list — top plays first</h2>
                 <span id="mwStatus" style="font-size: 11px; color: var(--txt3)"></span>
               </div>
               <div id="mwList" style="flex: 1; overflow-y: auto; margin-top: 5px; min-height: 0"></div>
@@ -4042,7 +4142,7 @@
                   "
                 />
                 <span id="mwNamePlaceholder" style="font-size: 10px; color: var(--txt2)"></span>
-                <button id="btnMwMerge" class="pri" onclick="mwMerge()" disabled>
+                <button id="btnMwMerge" class="pri" data-i18n onclick="mwMerge()" disabled>
                   ⇄ Merge
                 </button>
                 <button id="btnMwExport" onclick="mwExport()" disabled title="Write the merged audio as a 16-bit mono WAV.">
@@ -4063,7 +4163,7 @@
 
           <!-- ── Result ── -->
           <div class="panel" style="flex-shrink: 0">
-            <h2>3 &nbsp;Result</h2>
+            <h2 data-i18n>3 &nbsp;Result</h2>
             <canvas
               id="mwPreview"
               style="
@@ -4110,7 +4210,7 @@
               "
             >
               <div class="panel">
-                <h2>Loaded Audio</h2>
+                <h2 data-i18n>Loaded Audio</h2>
                 <div style="display: flex; flex-direction: column; gap: 6px">
                   <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
                     Use the 📂 Audio button in the top bar to import files
@@ -4120,12 +4220,12 @@
                   <div id="oscLibPicker" style="display: flex; flex-direction: column; gap: 2px; font-size: 11px; max-height: 160px; overflow-y: auto;">
                     <div style="color: var(--txt2); font-size: 11px">No audio loaded yet.</div>
                   </div>
-                  <button onclick="oscAddFromLibrary()" class="pri" style="font-size: 11px">➕ Add selected</button>
+                  <button onclick="oscAddFromLibrary()" class="pri" data-i18n style="font-size: 11px">➕ Add selected</button>
                 </div>
               </div>
 
               <div class="panel">
-                <h2>Waves</h2>
+                <h2 data-i18n>Waves</h2>
                 <div style="display: flex; flex-direction: column; gap: 6px">
                   <div id="oscWaveList" style="display: flex; flex-direction: column; gap: 2px; font-size: 11px;">
                     <div style="color: var(--txt2); font-size: 11px">No waves loaded.</div>
@@ -4134,7 +4234,7 @@
               </div>
 
               <div class="panel">
-                <h2>Axis</h2>
+                <h2 data-i18n>Axis</h2>
                 <div style="display: flex; flex-direction: column; gap: 5px">
                   <div class="row">
                     <span style="color: var(--txt2); font-size: 11px; width: 100px">Axis buffer (s)</span>
@@ -4158,7 +4258,7 @@
               </div>
 
               <div class="panel">
-                <h2>Style</h2>
+                <h2 data-i18n>Style</h2>
                 <div style="display: flex; flex-direction: column; gap: 5px">
                   <div class="row" style="justify-content: space-between">
                     <span style="color: var(--txt2); font-size: 11px">Trace color</span>
@@ -4182,7 +4282,7 @@
               </div>
 
               <div class="panel">
-                <h2>Extras</h2>
+                <h2 data-i18n>Extras</h2>
                 <div style="display: flex; flex-direction: column; gap: 6px">
                   <button onclick="oscToggleLetters()" id="btnOscLetters" disabled style="font-size: 11px">🔤 Add letters</button>
                   <button onclick="oscAddAnnotation()" id="btnOscAddAnno" disabled style="font-size: 11px">📝 Add annotation</button>
@@ -4195,7 +4295,7 @@
               </div>
 
               <div class="panel">
-                <h2>Selected label style</h2>
+                <h2 data-i18n>Selected label style</h2>
                 <div style="display: flex; flex-direction: column; gap: 5px">
                   <div class="row">
                     <span style="color: var(--txt2); font-size: 11px; width: 60px">Font</span>
@@ -4221,14 +4321,14 @@
                   <label class="chk" style="font-size: 11px">
                     <input type="checkbox" id="oscApplyAllLabels" /> Apply to all labels
                   </label>
-                  <button onclick="oscApplyStyle()" id="btnOscApplyStyle" disabled class="pri" style="font-size: 11px">Apply style</button>
+                  <button onclick="oscApplyStyle()" id="btnOscApplyStyle" disabled class="pri" data-i18n style="font-size: 11px">Apply style</button>
                   <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
                     "Thickness"/"Color" also restyle a selected scale bar's line.
                   </div>
                 </div>
               </div>
 
-              <button onclick="oscDraw()" id="btnOscDraw" class="pri" disabled style="font-size: 12px">🖼 Draw</button>
+              <button onclick="oscDraw()" id="btnOscDraw" class="pri" data-i18n disabled style="font-size: 12px">🖼 Draw</button>
               <button onclick="oscExportSvg()" id="btnOscSvg" disabled style="font-size: 11px">⬇ SVG</button>
               <button onclick="oscExportPng()" id="btnOscPng" disabled style="font-size: 11px">⬇ PNG</button>
               <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
@@ -4274,7 +4374,7 @@
               "
             >
               <div class="panel">
-                <h2>Wave</h2>
+                <h2 data-i18n>Wave</h2>
                 <div style="display: flex; flex-direction: column; gap: 6px">
                   <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
                     Use the 📂 Audio button in the top bar to import files.
@@ -4288,7 +4388,7 @@
               </div>
 
               <div class="panel">
-                <h2>Panels</h2>
+                <h2 data-i18n>Panels</h2>
                 <div style="display: flex; flex-direction: column; gap: 5px">
                   <div class="row">
                     <span style="color: var(--txt2); font-size: 11px; width: 110px">Maximum panels</span>
@@ -4339,7 +4439,7 @@
               </div>
 
               <div class="panel">
-                <h2>Style</h2>
+                <h2 data-i18n>Style</h2>
                 <div style="display: flex; flex-direction: column; gap: 5px">
                   <div class="row" style="justify-content: space-between">
                     <span style="color: var(--txt2); font-size: 11px">Trace color</span>
@@ -4356,7 +4456,7 @@
               </div>
 
               <div class="panel">
-                <h2>Extras</h2>
+                <h2 data-i18n>Extras</h2>
                 <div style="display: flex; flex-direction: column; gap: 6px">
                   <button onclick="ozToggleLetters()" id="btnOzLetters" disabled style="font-size: 11px">🔤 Add letters</button>
                   <button onclick="ozAddAnnotation()" id="btnOzAddAnno" disabled style="font-size: 11px">📝 Add annotation</button>
@@ -4369,7 +4469,7 @@
               </div>
 
               <div class="panel">
-                <h2>Selected label style</h2>
+                <h2 data-i18n>Selected label style</h2>
                 <div style="display: flex; flex-direction: column; gap: 5px">
                   <div class="row">
                     <span style="color: var(--txt2); font-size: 11px; width: 60px">Font</span>
@@ -4395,7 +4495,7 @@
                   <label class="chk" style="font-size: 11px">
                     <input type="checkbox" id="ozApplyAllLabels" /> Apply to all labels
                   </label>
-                  <button onclick="ozApplyStyle()" id="btnOzApplyStyle" disabled class="pri" style="font-size: 11px">Apply style</button>
+                  <button onclick="ozApplyStyle()" id="btnOzApplyStyle" disabled class="pri" data-i18n style="font-size: 11px">Apply style</button>
                   <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
                     "Thickness"/"Color" also restyle a selected scale bar's
                     line or a selected zoom bracket.
@@ -4404,7 +4504,7 @@
               </div>
 
               <div class="panel">
-                <h2>Preset</h2>
+                <h2 data-i18n>Preset</h2>
                 <div style="display: flex; flex-direction: column; gap: 5px">
                   <div class="row" style="gap: 6px">
                     <button onclick="ozExportPreset()" style="font-size: 11px; flex: 1" title="Write the current Osc. Zoom settings to a .json file you can reuse or share.">📤 Export…</button>
@@ -4420,7 +4520,7 @@
                 </div>
               </div>
 
-              <button onclick="ozDraw()" id="btnOzDraw" class="pri" disabled style="font-size: 12px">🖼 Draw</button>
+              <button onclick="ozDraw()" id="btnOzDraw" class="pri" data-i18n disabled style="font-size: 12px">🖼 Draw</button>
               <button onclick="ozExportSvg()" id="btnOzSvg" disabled style="font-size: 11px">⬇ SVG</button>
               <button onclick="ozExportPng()" id="btnOzPng" disabled style="font-size: 11px">⬇ PNG</button>
               <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
@@ -4464,7 +4564,7 @@
               "
             >
               <div class="panel">
-                <h2>Wave</h2>
+                <h2 data-i18n>Wave</h2>
                 <div style="display: flex; flex-direction: column; gap: 6px">
                   <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
                     Use the 📂 Audio button in the top bar to import files, then
@@ -4481,7 +4581,7 @@
               </div>
 
               <div class="panel">
-                <h2>Analysis</h2>
+                <h2 data-i18n>Analysis</h2>
                 <div style="display: flex; flex-direction: column; gap: 5px">
                   <div class="row" title="FFT size sets the frequency resolution and, inversely, the time resolution of the whole rendering: t = nfft / fs.">
                     <span style="color: var(--txt2); font-size: 11px; width: 108px">FFT size</span>
@@ -4508,7 +4608,7 @@
                       <option value="24">Multicolour — 24 bands</option>
                     </select>
                   </div>
-                  <button onclick="ceAnalyze()" id="btnCeAnalyze" class="pri" disabled style="font-size: 12px">
+                  <button onclick="ceAnalyze()" id="btnCeAnalyze" class="pri" data-i18n disabled style="font-size: 12px">
                     ⚙ Analyze
                   </button>
                   <span id="ceStatus" style="font-size: 10px; color: var(--txt3); line-height: 1.35"></span>
@@ -4516,7 +4616,7 @@
               </div>
 
               <div class="panel">
-                <h2>Frequency window</h2>
+                <h2 data-i18n>Frequency window</h2>
                 <div style="display: flex; flex-direction: column; gap: 5px">
                   <div class="row">
                     <span style="color: var(--txt2); font-size: 11px; width: 108px" title="Frequency Range Bottom">FRB (Hz)</span>
@@ -4541,7 +4641,7 @@
               </div>
 
               <div class="panel">
-                <h2>Pressure range (optional)</h2>
+                <h2 data-i18n>Pressure range (optional)</h2>
                 <div style="display: flex; flex-direction: column; gap: 5px">
                   <label class="chk" style="font-size: 11px" title="Restrict colour to columns whose OVERALL level falls in a range — a way to exclude the loudest or the feeblest parts of the recording.">
                     <input type="checkbox" id="cePrEnable" onchange="ceRecolor()" /> Restrict by overall level
@@ -4558,7 +4658,7 @@
               </div>
 
               <div class="panel">
-                <h2>Figure</h2>
+                <h2 data-i18n>Figure</h2>
                 <div style="display: flex; flex-direction: column; gap: 5px">
                   <label class="chk" style="font-size: 11px">
                     <input type="checkbox" id="ceShowTpe" checked onchange="ceRecolor()" /> Reference oscillogram
@@ -4596,7 +4696,7 @@
               </div>
 
               <div class="panel">
-                <h2>Spectrogram panel</h2>
+                <h2 data-i18n>Spectrogram panel</h2>
                 <div style="display: flex; flex-direction: column; gap: 5px">
                   <div class="row">
                     <span style="color: var(--txt2); font-size: 11px; width: 108px">Colormap</span>
@@ -4624,7 +4724,7 @@
               </div>
 
               <div class="panel">
-                <h2>Preset</h2>
+                <h2 data-i18n>Preset</h2>
                 <div style="display: flex; flex-direction: column; gap: 5px">
                   <div class="row" style="gap: 6px">
                     <button onclick="ceExportPreset()" style="font-size: 11px; flex: 1" title="Write the current Auto-coded Oscillogram settings to a .json file you can reuse or share.">📤 Export…</button>
@@ -4634,7 +4734,7 @@
                 </div>
               </div>
 
-              <button onclick="ceDraw()" id="btnCeDraw" class="pri" disabled style="font-size: 12px">🖼 Redraw</button>
+              <button onclick="ceDraw()" id="btnCeDraw" class="pri" data-i18n disabled style="font-size: 12px">🖼 Redraw</button>
               <div class="row" style="gap: 6px">
                 <button onclick="ceExportSvg()" id="btnCeSvg" disabled style="font-size: 11px; flex: 1">⬇ SVG</button>
                 <button onclick="ceExportPng()" id="btnCePng" disabled style="font-size: 11px; flex: 1">⬇ PNG</button>
@@ -4720,7 +4820,7 @@
                   border-bottom: 1px solid var(--border);
                 "
               >
-                <button onclick="cePlayToggle()" id="btnCePlay" disabled class="pri" style="font-size: 11px; min-width: 68px" title="Play or pause the visible range (Space)">
+                <button onclick="cePlayToggle()" id="btnCePlay" disabled class="pri" data-i18n style="font-size: 11px; min-width: 68px" title="Play or pause the visible range (Space)">
                   ▶ Play
                 </button>
                 <button onclick="ceStopPlay(true)" id="btnCeStop" disabled style="font-size: 11px" title="Stop and return the playhead to the start of the view">
@@ -4824,7 +4924,7 @@
               "
             >
               <div class="panel">
-                <h2>Recordings</h2>
+                <h2 data-i18n>Recordings</h2>
                 <div style="display: flex; flex-direction: column; gap: 6px">
                   <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
                     Check the recordings to average in the Loaded Audio
@@ -4838,7 +4938,7 @@
               </div>
 
               <div class="panel">
-                <h2>Spectrum</h2>
+                <h2 data-i18n>Spectrum</h2>
                 <div style="display: flex; flex-direction: column; gap: 5px">
                   <div class="row">
                     <span style="color: var(--txt2); font-size: 11px; width: 90px">Window (wl)</span>
@@ -4898,7 +4998,7 @@
               </div>
 
               <div class="panel">
-                <h2>Contour + Band</h2>
+                <h2 data-i18n>Contour + Band</h2>
                 <div style="display: flex; flex-direction: column; gap: 5px">
                   <div class="row">
                     <span style="color: var(--txt2); font-size: 11px; width: 90px">Central stat</span>
@@ -4929,7 +5029,7 @@
               </div>
 
               <div class="panel">
-                <h2>Habitus photo</h2>
+                <h2 data-i18n>Habitus photo</h2>
                 <div style="display: flex; flex-direction: column; gap: 6px">
                   <button onclick="document.getElementById('habImgFile').click()" style="font-size: 11px">🖼 Select image…</button>
                   <input type="file" id="habImgFile" accept="image/png,image/jpeg,image/tiff" style="display: none" onchange="habOnImageFile(this.files)" />
@@ -4949,7 +5049,7 @@
                 </div>
               </div>
 
-              <button onclick="habDraw()" id="btnHabDraw" class="pri" disabled style="font-size: 12px">🖼 Draw</button>
+              <button onclick="habDraw()" id="btnHabDraw" class="pri" data-i18n disabled style="font-size: 12px">🖼 Draw</button>
               <button onclick="habExportSvg()" id="btnHabSvg" disabled style="font-size: 11px">⬇ SVG</button>
               <button onclick="habExportPng()" id="btnHabPng" disabled style="font-size: 11px">⬇ PNG</button>
               <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
@@ -5002,7 +5102,7 @@
               "
             >
               <div class="panel">
-                <h2>Source files</h2>
+                <h2 data-i18n>Source files</h2>
                 <div style="display: flex; flex-direction: column; gap: 6px">
                   <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
                     Add the Temporal Analysis and/or Spectral Analysis .xlsx
@@ -5011,7 +5111,7 @@
                     missing or wrong, fix it below — that's what groups
                     recordings by animal in the summary.
                   </div>
-                  <button onclick="document.getElementById('summFiles').click()" class="pri" style="font-size: 12px">
+                  <button onclick="document.getElementById('summFiles').click()" class="pri" data-i18n style="font-size: 12px">
                     📂 Add Excel Files
                   </button>
                   <input
@@ -5032,7 +5132,7 @@
               </div>
 
               <div class="panel">
-                <h2>Merge & Summarize</h2>
+                <h2 data-i18n>Merge & Summarize</h2>
                 <div style="display: flex; flex-direction: column; gap: 6px">
                   <button onclick="summRun()" id="btnSummRun" class="suc" disabled style="font-size: 12px">
                     🧬 Merge &amp; Summarize
@@ -5073,7 +5173,7 @@
                    structures (the first pulse of every echeme, the odd
                    "opening" strokes, …) beside the pooled totals. -->
               <div class="panel">
-                <h2>Structure selections</h2>
+                <h2 data-i18n>Structure selections</h2>
                 <div style="display: flex; flex-direction: column; gap: 6px">
                   <div class="osc-note" style="font-size: 10px; color: var(--txt2); line-height: 1.3">
                     Summarize a named subset of structures separately — the
@@ -5114,7 +5214,7 @@
             <!-- Results -->
             <div style="flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px">
               <div class="panel">
-                <h2>Pooled summary</h2>
+                <h2 data-i18n>Pooled summary</h2>
                 <div id="summCards" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-bottom: 4px">
                   <div style="color: var(--txt2); font-size: 11px">
                     Add files and click Merge &amp; Summarize to see pooled
@@ -5124,7 +5224,7 @@
               </div>
 
               <div class="panel" style="flex: 1; display: flex; flex-direction: column; min-height: 0">
-                <h2>Summary table (by specimen)</h2>
+                <h2 data-i18n>Summary table (by specimen)</h2>
                 <div style="overflow: auto; flex: 1; min-height: 0">
                   <table class="dtable" id="summTable">
                     <thead>
@@ -5142,28 +5242,40 @@
                    actually supports. See summRenderTempPlots. ═══ -->
               <div class="panel" id="summTempPlotsPanel" style="display: none">
                 <div class="row" style="justify-content: space-between; align-items: baseline">
-                  <h2 style="margin: 0">Temperature response</h2>
-                  <div class="row" style="gap: 5px">
-                    <span style="font-size: 10px; color: var(--txt2)">Fit</span>
-                    <select
-                      id="summFitMode"
-                      onchange="summRenderTempPlots(summMerged)"
-                      style="width: 116px; font-size: 11px"
-                      title="linear fits y = a + bT, a straight line in the metric's own units.&#10;&#10;log (Q10) fits log y = a + bT: a constant PROPORTIONAL change per degree. It is curved in the original units and cannot predict a negative duration, yet costs the same two parameters, so it needs no extra data. Its slope converts directly to Q10, which is comparable with published values.&#10;&#10;A metric with a zero or negative value falls back to linear, since its logarithm is undefined."
-                    >
-                      <option value="linear">linear</option>
-                      <option value="log">log (Q₁₀)</option>
-                    </select>
+                  <h2 data-i18n style="margin: 0">Temperature response</h2>
+                  <div class="row" style="gap: 5px; align-items: center">
                     <span id="summTempPlotsNote" style="font-size: 10px; color: var(--txt2)"></span>
+                    <button
+                      onclick="summDownloadTempFigure('svg')"
+                      style="font-size: 10px; padding: 2px 8px"
+                      title="Save the figure as SVG — vector, so it stays sharp at any size and can be edited in Illustrator or Inkscape. This is the format most journals ask for."
+                    >
+                      &#11015; SVG
+                    </button>
+                    <button
+                      onclick="summDownloadTempFigure('png')"
+                      style="font-size: 10px; padding: 2px 8px"
+                      title="Save the figure as a 300 dpi PNG, rasterized from the same drawing — for journals that will not take vector art."
+                    >
+                      &#11015; PNG 300 dpi
+                    </button>
                   </div>
                 </div>
-                <div style="margin-top: 5px">
-                  <canvas id="summPlot0" style="width: 100%; height: 300px"></canvas>
-                </div>
+                <div
+                  id="summTempFigure"
+                  style="
+                    margin-top: 6px;
+                    background: #ffffff;
+                    padding: 10px;
+                    border-radius: 4px;
+                    display: flex;
+                    justify-content: center;
+                  "
+                ></div>
               </div>
 
               <div class="panel">
-                <h2>Text report</h2>
+                <h2 data-i18n>Text report</h2>
                 <textarea
                   id="summReportText"
                   style="
@@ -5300,7 +5412,7 @@
     >
       <div class="modal-box" style="width: min(420px, 90vw)">
         <div class="modal-header">
-          <h2>Save edited audio as…</h2>
+          <h2 data-i18n>Save edited audio as…</h2>
           <button
             onclick="closeSaveEditedAudioModal()"
             style="font-size: 11px; padding: 2px 8px"
@@ -5360,7 +5472,7 @@
     >
       <div class="modal-box">
         <div class="modal-header">
-          <h2>Measurement columns explained</h2>
+          <h2 data-i18n>Measurement columns explained</h2>
           <button
             onclick="closeMetricsExplainer()"
             style="font-size: 11px; padding: 2px 8px"
@@ -5402,5 +5514,6 @@
     <script src="habitus_plot.js"></script>
     <script src="annotate.js"></script>
     <script src="merge_waves.js"></script>
+    <script src="i18n.js"></script>
   </body>
 </html>

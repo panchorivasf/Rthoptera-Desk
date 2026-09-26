@@ -353,7 +353,19 @@
   }
 
   // ── Draw ─────────────────────────────────────────────────────────
+  // Thin wrapper so the busy overlay (spinner) is up before the heavy,
+  // synchronous per-recording FFT analysis in _habDrawInner runs —
+  // otherwise several recordings at a fine window length freeze the window
+  // with no sign of life.
   function habDraw() {
+    if (typeof withBusy === "function") {
+      withBusy("Habitus — analysing…", async () => _habDrawInner());
+    } else {
+      _habDrawInner();
+    }
+  }
+
+  function _habDrawInner() {
     const waves = habSelectedEntries();
     if (waves.length < 2) {
       alert("Check at least two recordings in the Loaded Audio panel first.");

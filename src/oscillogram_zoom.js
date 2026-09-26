@@ -699,7 +699,19 @@
   }
 
   // ── Drawing ───────────────────────────────────────────────────────
+  // Thin wrapper so the busy overlay (spinner) is up before the heavy,
+  // synchronous zoom-panel + SVG build in _ozDrawInner runs — otherwise a
+  // long recording with several zoom panels freezes the window with no
+  // sign of life.
   function ozDraw() {
+    if (typeof withBusy === "function") {
+      withBusy("Osc. Zoom — drawing…", async () => _ozDrawInner());
+    } else {
+      _ozDrawInner();
+    }
+  }
+
+  function _ozDrawInner() {
     if (!ozSamples) return;
     attachKeyHandler();
     currentSlotEls = new Map();

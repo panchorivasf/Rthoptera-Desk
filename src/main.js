@@ -635,6 +635,9 @@
             if (i1 > i0) sig = sig.slice(i0, i1);
           } else if (ed.type === "bandpass") {
             sig = applyBandpass(sig, sr, ed.hp, ed.lp);
+          } else if (ed.type === "resample") {
+            sig = applyResample(sig, sr, ed.targetSr);
+            sr = ed.targetSr;
           }
         }
         // Frequency drop runs last, whatever order the chain is in: it moves
@@ -978,6 +981,21 @@
         return _resampleLinear(_pvTimeScale(sig, ratio), ratio, sig.length);
       }
 
+      // ── Downsample ───────────────────────────────────────────────────
+      // Lowers the sample rate to targetSr. The low-pass runs FIRST, at a
+      // hair below the new Nyquist: without it, content that the new rate
+      // can no longer represent doesn't disappear, it folds back down into
+      // the passband as aliasing, which is worse than just losing it.
+      // Returns a NEW Float32Array; never mutates the input.
+      function applyResample(sig, sr, targetSr) {
+        if (!(targetSr > 0) || targetSr >= sr)
+          return sig instanceof Float32Array ? sig : Float32Array.from(sig);
+        const cutoff = (targetSr / 2) * 0.9;
+        const filtered = applyBandpass(sig, sr, 0, cutoff);
+        const outLen = Math.max(1, Math.round((sig.length * targetSr) / sr));
+        return _resampleLinear(filtered, sr / targetSr, outLen);
+      }
+
       function audioHasEdit(type) {
         return audioEdits.some((e) => e.type === type);
       }
@@ -995,6 +1013,10 @@
       function setFreqDropEdit(pct) {
         audioEdits = audioEdits.filter((e) => e.type !== "freqdrop");
         audioEdits.push({ type: "freqdrop", pct });
+      }
+      function setDownsampleEdit(targetSr) {
+        audioEdits = audioEdits.filter((e) => e.type !== "resample");
+        audioEdits.push({ type: "resample", targetSr });
       }
 
       // ── UI actions ──────────────────────────────────────────────────────
@@ -1250,6 +1272,65 @@
         log("Frequency drop removed", "ok");
       }
 
+      // Candidate target rates for the Downsample dropdown, spanning
+      // consumer audio through the ultrasonic range these recordings can
+      // reach. Filtered down to whatever sits below the file's OWN rate —
+      // downsampling only ever lowers it.
+      const DOWNSAMPLE_RATES = [
+        8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000, 96000, 176400,
+        192000, 250000, 256000, 384000, 500000,
+      ];
+
+      // (Re)builds the Downsample dropdown for the file now active, against
+      // its ORIGINAL rate — not whatever the chain currently produces — so
+      // the list of choices doesn't shrink out from under a user re-opening
+      // a Downsample they already applied.
+      function populateDownsampleOptions() {
+        const sel = $("editDownsampleSr");
+        if (!sel) return;
+        const cur = sel.value;
+        sel.innerHTML = '<option value="">— choose a rate —</option>';
+        DOWNSAMPLE_RATES.filter((sr) => sr < origSampleRate)
+          .sort((a, b) => b - a)
+          .forEach((sr) => {
+            const opt = document.createElement("option");
+            opt.value = sr;
+            opt.textContent = `${sr.toLocaleString()} Hz (Nyquist: ${fmtHz(sr / 2)})`;
+            sel.appendChild(opt);
+          });
+        // Keep the active downsample's target selected across a repopulate
+        // (e.g. re-entering this file), rather than snapping back to blank.
+        const active = audioEdits.find((e) => e.type === "resample");
+        sel.value = active ? String(active.targetSr) : cur;
+      }
+
+      function applyDownsampleEdit() {
+        if (!origSamples) {
+          log("Load audio first", "warn");
+          return;
+        }
+        const sel = $("editDownsampleSr");
+        const targetSr = parseInt(sel && sel.value, 10);
+        if (!targetSr || !(targetSr < origSampleRate)) {
+          log("Choose a sample rate below the current one.", "warn");
+          return;
+        }
+        setDownsampleEdit(targetSr);
+        rebuildAudioFromEdits({ resetView: false });
+        log(
+          `Downsampled to ${targetSr.toLocaleString()} Hz (Nyquist ${fmtHz(targetSr / 2)}).`,
+          "ok",
+        );
+      }
+      function clearDownsample() {
+        if (!audioHasEdit("resample")) return;
+        audioEdits = audioEdits.filter((e) => e.type !== "resample");
+        const sel = $("editDownsampleSr");
+        if (sel) sel.value = "";
+        rebuildAudioFromEdits({ resetView: false });
+        log("Downsample removed", "ok");
+      }
+
       // Trim changes the timeline, invalidating envelope peak detections, measurement
       // detections, and imported annotations. Clear them so stale times don't
       // point at the wrong audio.
@@ -1397,6 +1478,7 @@
         if (trimMode) exitTrimUi();
         if ($("editHp")) $("editHp").value = "0";
         if ($("editLp")) $("editLp").value = Math.round(nyq);
+        populateDownsampleOptions();
       }
 
       // Enable edit controls + reflect which edits are active.
@@ -1412,6 +1494,9 @@
           "editFreqDrop",
           "btnApplyFreqDrop",
           "btnClearFreqDrop",
+          "editDownsampleSr",
+          "btnApplyDownsample",
+          "btnClearDownsample",
           "btnSaveEditedAudio",
         ].forEach((id) => {
           const el = $(id);
@@ -1423,6 +1508,9 @@
         // Same for the frequency-drop Reset.
         const cf = $("btnClearFreqDrop");
         if (cf) cf.disabled = !has || !audioHasEdit("freqdrop");
+        // Same for the downsample Reset.
+        const cd = $("btnClearDownsample");
+        if (cd) cd.disabled = !has || !audioHasEdit("resample");
         const st = $("editStatus");
         if (st) {
           if (!has) {
@@ -1447,6 +1535,11 @@
                   "–" +
                   (bp.lp < origSampleRate / 2 ? fmtHz(bp.lp) : "Nyq"),
               );
+            const rs = audioEdits.find((e) => e.type === "resample");
+            if (rs)
+              parts.push(
+                "downsampled to " + rs.targetSr.toLocaleString() + " Hz",
+              );
             st.textContent = parts.length
               ? "Active: " + parts.join(" · ")
               : "No edits applied.";
@@ -1457,7 +1550,12 @@
           const last = audioEdits[audioEdits.length - 1];
           undoBtn.disabled = !has || !last;
           undoBtn.title = last
-            ? "Undo " + (last.type === "trim" ? "trim" : "bandpass filter")
+            ? "Undo " +
+              (last.type === "trim"
+                ? "trim"
+                : last.type === "resample"
+                  ? "downsample"
+                  : "bandpass filter")
             : "Nothing to undo.";
         }
       }
@@ -1475,6 +1573,7 @@
         const last = audioEdits[audioEdits.length - 1];
         if (last.type === "trim") clearTrim();
         else if (last.type === "bandpass") clearBandpass();
+        else if (last.type === "resample") clearDownsample();
       }
 
       // ═══════════════════════════════════════════════════════════════════
@@ -1862,19 +1961,48 @@
         if (typeof mwRenderLibPicker === "function") mwRenderLibPicker();
       }
 
+      // (Re)builds the batch Downsample dropdown against whatever's
+      // currently checked (or the whole library, if nothing is) — options
+      // are offered below the highest rate among them, since a rate that
+      // isn't below at least one checked recording's own rate would be a
+      // no-op for all of them. A recording already at or below the chosen
+      // rate is simply skipped at apply time (see applyBatchDownsample).
+      function populateBatchDownsampleOptions() {
+        const sel = $("batchDownsampleSr");
+        if (!sel) return;
+        const cur = sel.value;
+        const pool = audioLibBatchSelected.size
+          ? audioLibrary.filter((e) => audioLibBatchSelected.has(e.id))
+          : audioLibrary;
+        const maxRate = pool.reduce((m, e) => Math.max(m, e.rate), 0);
+        sel.innerHTML = '<option value="">— choose a rate —</option>';
+        DOWNSAMPLE_RATES.filter((sr) => sr < maxRate)
+          .sort((a, b) => b - a)
+          .forEach((sr) => {
+            const opt = document.createElement("option");
+            opt.value = sr;
+            opt.textContent = `${sr.toLocaleString()} Hz (Nyquist: ${fmtHz(sr / 2)})`;
+            sel.appendChild(opt);
+          });
+        sel.value = cur; // keep the choice across a repopulate
+      }
+
       // ── Batch edit: apply one filter to every checked Loaded Audio entry ──
       function updateBatchEditStatus() {
         const n = audioLibBatchSelected.size;
         const btn = $("btnBatchBandpass");
         const nBtn = $("btnBatchNormalize");
         const fBtn = $("btnBatchFreqDrop");
+        const dBtn = $("btnBatchDownsample");
         const sBtn = $("btnBatchSave");
         const label = $("batchSelCount");
         if (btn) btn.disabled = n === 0;
         if (nBtn) nBtn.disabled = n === 0;
         if (fBtn) fBtn.disabled = n === 0;
+        if (dBtn) dBtn.disabled = n === 0;
         if (sBtn) sBtn.disabled = n === 0;
         if (label) label.textContent = n ? n + " selected" : "";
+        populateBatchDownsampleOptions();
         // The Loaded Audio panel carries its own copy of the Select
         // all/Clear selection pair, since that panel is where the
         // checkboxes actually are and it stays visible on every tab (the
@@ -1902,8 +2030,15 @@
       // applyBandpass, but writes straight into the library rather than
       // going through the single-active-file edit chain). If the active
       // entry is among the selection, its live view is refreshed too.
+      // Thin wrapper so the busy overlay is up before the filtfilt passes
+      // in _applyBatchBandpassInner run — those can take a while across
+      // several long recordings.
       function applyBatchBandpass() {
         if (!audioLibBatchSelected.size) return;
+        withBusy("Batch bandpass…", () => _applyBatchBandpassInner());
+      }
+
+      function _applyBatchBandpassInner() {
         let hp = parseFloat($("batchHp").value);
         let lp = parseFloat($("batchLp").value);
         if (!isFinite(hp) || hp < 0) hp = 0;
@@ -2023,6 +2158,68 @@
         renderAudioLibraryPanel();
         log(
           `Frequency drop ${pct}% applied to ${count} recording(s) (duration unchanged).`,
+          "ok",
+        );
+      }
+
+      // Lowers the rate of every checked entry independently, in place —
+      // same "batch touches the library directly" model as the other batch
+      // edits. A recording already at or below the chosen rate is left
+      // untouched rather than treated as an error, since one batch often
+      // spans recordings from more than one recorder/rate.
+      async function applyBatchDownsample() {
+        if (!audioLibBatchSelected.size) return;
+        const targetSr = parseInt($("batchDownsampleSr").value, 10);
+        if (!targetSr) {
+          log("Choose a target sample rate.", "warn");
+          return;
+        }
+        const targets = audioLibrary.filter((e) =>
+          audioLibBatchSelected.has(e.id),
+        );
+        let touchedActive = false;
+        let count = 0,
+          skipped = 0;
+        await withBusy("Downsampling…", async (progress) => {
+          for (let i = 0; i < targets.length; i++) {
+            const entry = targets[i];
+            progress(
+              `${entry.name} (${i + 1}/${targets.length})…`,
+              i / targets.length,
+            );
+            await busyTick();
+            if (targetSr >= entry.rate) {
+              skipped++;
+              continue;
+            }
+            entry.samples = applyResample(entry.samples, entry.rate, targetSr);
+            entry.rate = targetSr;
+            entry.dur = entry.samples.length / entry.rate;
+            // Replace any previous downsample tag rather than stacking them —
+            // the samples already carry the earlier rate change.
+            entry.editTags = entry.editTags.filter(
+              (t) => !/^ds[\d.]+k$/.test(t),
+            );
+            entry.editTags.push("ds" + freqSuffixLabel(targetSr) + "k");
+            count++;
+            if (entry.id === audioLibActiveId) touchedActive = true;
+          }
+        });
+        if (!count) {
+          log(
+            skipped
+              ? "Batch downsample: every checked recording is already at or below that rate."
+              : "Batch downsample: nothing to apply.",
+            "warn",
+          );
+          return;
+        }
+        if (touchedActive) selectLibraryAudio(audioLibActiveId);
+        renderAudioLibraryPanel();
+        log(
+          `Downsampled ${count} recording(s) to ${targetSr.toLocaleString()} Hz` +
+            (skipped ? ` (${skipped} already at or below that rate, left alone)` : "") +
+            ".",
           "ok",
         );
       }
@@ -4396,7 +4593,17 @@
         return saveSpectralMetricsExcel();
       }
 
+      // Thin wrapper so the busy overlay is up before the per-selection/
+      // per-detection FFT analysis in _computeUnifiedSpectralMetricsInner
+      // runs — negligible for a handful of calls, but noticeable once there
+      // are dozens.
       function computeUnifiedSpectralMetrics() {
+        withBusy("Computing spectral metrics…", () =>
+          _computeUnifiedSpectralMetricsInner(),
+        );
+      }
+
+      function _computeUnifiedSpectralMetricsInner() {
         if (annotations && annotations.length) {
           computeSelectionSpectralMetrics();
           return;
@@ -5699,11 +5906,19 @@
         return best;
       }
 
+      // Thin wrapper so the busy overlay (spinner) is up before the heavy
+      // work in _renderPlotInner starts — that work is a big synchronous FFT
+      // + high-DPI canvas build that would otherwise freeze the window with
+      // no sign of life beyond the small plotStatus line.
       async function renderPlot() {
         if (!rawSamples) {
           alert("Load audio first");
           return;
         }
+        await withBusy("Rendering Multiplot…", () => _renderPlotInner());
+      }
+
+      async function _renderPlotInner() {
         $("plotStatus").textContent = "Initialising…";
         await yieldUI();
 
@@ -5731,6 +5946,9 @@
         const contrast = parseFloat($("plotContrast").value) || 60;
         const bright = parseFloat($("plotBright").value) || 0;
         const noiseFloor = parseFloat($("plotNoiseFloor").value) || -50;
+        // Shared by the Power Spectrum curve and the spectrogram colour
+        // mapping below, so the two panels never disagree about scale.
+        const linearScale = ($("plotScale")?.value || "dB") === "linear";
         const t0 = Math.max(0, parseFloat($("plotT0").value) || 0);
         const t1 = Math.min(
           duration,
@@ -5882,6 +6100,19 @@
         const dBfloor = globalMaxLog - contrast;
         // Effective contrast: invert direction so higher value = tighter window = more vivid
         const effectiveContrast = Math.max(1, 130 - contrast);
+        const effFloor = globalMaxLog - effectiveContrast;
+        // Linear-domain equivalents of the same contrast window, used when
+        // linearScale is on. This is linear AMPLITUDE (sqrt of power, i.e.
+        // pow(10, dB/20)), not linear power (pow(10, dB/10) — power's
+        // dynamic range is the square of amplitude's, so a genuine
+        // linear-power ramp puts anything more than ~20 dB below the peak at
+        // under 1% brightness and the whole spectrogram reads as empty. This
+        // is also the conventional meaning of "linear" for a spectrogram
+        // (as opposed to "dB"/log), matching the amplitude convention other
+        // audio tools use.
+        const globalMaxAmp = Math.pow(10, globalMaxLog / 20);
+        const effFloorAmp = Math.pow(10, effFloor / 20);
+        const ampRange = Math.max(globalMaxAmp - effFloorAmp, 1e-30);
         const imgSpec = ctx.createImageData(specW, specH);
         for (let x = 0; x < specW; x++) {
           const fr = Math.min(
@@ -5898,12 +6129,17 @@
             // Track whether this pixel is at or below the noise floor
             const atFloor = dB <= noiseFloor;
             if (atFloor) dB = noiseFloor;
-            // Use inverted contrast so higher value = narrower window = more vivid
-            const effFloor = globalMaxLog - effectiveContrast;
-            let tn = Math.max(
-              0,
-              Math.min(1, (dB - effFloor) / effectiveContrast),
-            );
+            let tn;
+            if (linearScale) {
+              const amp = Math.pow(10, dB / 20);
+              tn = Math.max(0, Math.min(1, (amp - effFloorAmp) / ampRange));
+            } else {
+              // Use inverted contrast so higher value = narrower window = more vivid
+              tn = Math.max(
+                0,
+                Math.min(1, (dB - effFloor) / effectiveContrast),
+              );
+            }
             // Brightness: positive = brighter (add positive offset to tn)
             tn = Math.max(0, Math.min(1, tn + bright / 30));
             let [r, g, bl] = cmap(tn, cm);
@@ -6019,13 +6255,23 @@
           ctx.fillRect(psLeft, specTop, psW, specH);
           // psPad: usable width with right-padding so curve/fill never touch the frame
           const psPad = Math.round(psW * 0.88);
+          // Normalized [0,1] position along the PS x-axis for bin b. Linear:
+          // fraction of peak power. dB: peak-relative dB stretched from the
+          // Noise floor control (0) up to the peak (1) — same floor the
+          // spectrogram uses, so the two panels agree on what "off" looks
+          // like.
+          const floorSpan = Math.max(1e-6, -noiseFloor);
+          function psFrac(b) {
+            if (linearScale) return meanPsLinear[b] / maxPS;
+            const dB = 10 * Math.log10(meanPsLinear[b] / maxPS + 1e-30);
+            return Math.max(0, Math.min(1, (dB - noiseFloor) / floorSpan));
+          }
           // Curve
           ctx.beginPath();
           for (let b = 0; b < bRange; b++) {
             const f = f0 + ((b + 0.5) / bRange) * fRange;
             const y = FY_ps(f);
-            const pNorm = meanPsLinear[b] / maxPS;
-            const x = psLeft + pNorm * psPad;
+            const x = psLeft + psFrac(b) * psPad;
             b === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
           }
           ctx.strokeStyle = psLineColor;
@@ -6039,8 +6285,7 @@
           for (let b = bRange - 1; b >= 0; b--) {
             const f = f0 + ((b + 0.5) / bRange) * fRange;
             const y = FY_ps(f);
-            const pNorm = meanPsLinear[b] / maxPS;
-            const x = psLeft + pNorm * psPad;
+            const x = psLeft + psFrac(b) * psPad;
             ctx.lineTo(x, y);
           }
           ctx.lineTo(psLeft, FY_ps(f0)); // bottom-left
@@ -6051,8 +6296,17 @@
           ctx.textAlign = "center";
           ctx.textBaseline = "top";
           ctx.font = `${FS}px ${font}`;
-          [0.5, 1].forEach((v) => {
-            const x = psLeft + v * psPad;
+          const psTicks = linearScale
+            ? [
+                { frac: 0.5, lbl: "0.5" },
+                { frac: 1, lbl: "1.0" },
+              ]
+            : [
+                { frac: 0, lbl: String(Math.round(noiseFloor)) },
+                { frac: 1, lbl: "0" },
+              ];
+          psTicks.forEach(({ frac, lbl }) => {
+            const x = psLeft + frac * psPad;
             ctx.strokeStyle = FG;
             ctx.lineWidth = D2 * 0.8;
             ctx.beginPath();
@@ -6060,7 +6314,7 @@
             ctx.lineTo(x, specTop + specH + 4 * D2);
             ctx.stroke();
             ctx.fillStyle = FG;
-            ctx.fillText(v.toFixed(1), x, specTop + specH + 5 * D2);
+            ctx.fillText(lbl, x, specTop + specH + 5 * D2);
           });
           // PS X label
           ctx.save();
@@ -6071,7 +6325,7 @@
           ctx.textAlign = "center";
           ctx.font = `${FSL}px ${font}`;
           ctx.fillStyle = FG;
-          ctx.fillText("Relative Power", 0, 0);
+          ctx.fillText(linearScale ? "Relative Power" : "Power (dB)", 0, 0);
           ctx.restore();
           // PS Y label (right side)
           ctx.save();
@@ -8785,12 +9039,19 @@
 
         // Find the sheet that looks like a Envelope peaks table, by columns not name,
         // so a renamed sheet still works.
-        const key = (row, want) =>
-          Object.keys(row).find((k) => k.toLowerCase() === want);
+        // Accepts several spellings per column. The env_peak/pulse/motif
+        // rename changed these headers, and the sheet-detection test below
+        // already fell back to the legacy names — but the extraction that
+        // follows did not, so a workbook exported before the rename was
+        // recognised as a Envelope peaks table and then read as though every
+        // row were unparseable ("No usable rows"). One lookup, one list of
+        // accepted names, so the two cannot disagree again.
+        const key = (row, ...names) =>
+          Object.keys(row).find((k) => names.includes(k.toLowerCase()));
         let rows = null;
         for (const name of Object.keys(workbook)) {
           const r = workbook[name];
-          if (r && r.length && (key(r[0], "env_peak_time") || key(r[0], "peak_time"))) {
+          if (r && r.length && key(r[0], "env_peak_time", "peak_time")) {
             rows = r;
             break;
           }
@@ -8803,9 +9064,9 @@
           return;
         }
 
-        const tK = key(rows[0], "env_peak_time"),
-          aK = key(rows[0], "env_peak_amp"),
-          trK = key(rows[0], "pulse_id"),
+        const tK = key(rows[0], "env_peak_time", "peak_time"),
+          aK = key(rows[0], "env_peak_amp", "peak_amp"),
+          trK = key(rows[0], "pulse_id", "train_id"),
           moK = key(rows[0], "motif_id");
 
         const parsed = [];
@@ -11997,6 +12258,67 @@
         spectral: "Spectral_Analysis",
       };
 
+      // Pre-rename column names → their current spellings. The classifier
+      // below already accepts a workbook exported before the
+      // env_peak/pulse/motif rename — but nothing downstream did, so every
+      // renamed metric in such a file read as absent while temp_c, which was
+      // never renamed, kept reading fine. That mismatch is what put a single
+      // point on the temperature plot ("n = 1 - too few to fit") beside a
+      // report correctly listing six temperatures: only the one post-rename
+      // workbook carried pulse_rate_pps at all.
+      //
+      // Applied once, where rows enter the merge, so statistics, selections,
+      // temperature fits and the report all see ONE vocabulary and no lookup
+      // downstream needs a fallback list of its own to drift out of step.
+      const SUMM_LEGACY_COLS = {
+        peak_time: "env_peak_time",
+        peak_amp: "env_peak_amp",
+        peak_id: "env_peak_id",
+        peak_period_ms: "env_peak_period_ms",
+        peak_rate_pps: "env_peak_rate_eps",
+        peak_rate_mean: "env_peak_rate_mean",
+        peak_rate_sd: "env_peak_rate_sd",
+        peaks_per_train_mean: "env_peaks_per_pulse_mean",
+        peaks_per_train_sd: "env_peaks_per_pulse_sd",
+        n_peaks: "n_env_peaks",
+        n_trains: "n_pulses",
+        n_trains_per_motif_mean: "n_pulses_per_motif_mean",
+        n_trains_per_motif_sd: "n_pulses_per_motif_sd",
+        train_id: "pulse_id",
+        train_start: "pulse_start",
+        train_end: "pulse_end",
+        train_dur_ms: "pulse_dur_ms",
+        train_dur_mean: "pulse_dur_mean",
+        train_dur_sd: "pulse_dur_sd",
+        train_gap_ms: "pulse_gap_ms",
+        train_gap_mean: "pulse_gap_mean",
+        train_gap_sd: "pulse_gap_sd",
+        train_period_ms: "pulse_period_ms",
+        train_rate_tps: "pulse_rate_pps",
+      };
+
+      // One row in the current vocabulary. A file already using the new names
+      // is returned untouched rather than copied, and a legacy name never
+      // overwrites a current one that is also present — a workbook carrying
+      // both (a re-export of a re-import) keeps the current column's value.
+      function _summCanonRow(r) {
+        let legacy = false;
+        for (const k in r) {
+          if (SUMM_LEGACY_COLS[k.toLowerCase()]) {
+            legacy = true;
+            break;
+          }
+        }
+        if (!legacy) return r;
+        const o = {};
+        Object.keys(r).forEach((k) => {
+          const to = SUMM_LEGACY_COLS[k.toLowerCase()];
+          if (to && !(to in r)) o[to] = r[k];
+          else o[k] = r[k];
+        });
+        return o;
+      }
+
       // Identify which of the 5 known table kinds a sheet holds — first by
       // its name (matches Rthoptera's own export sheet names), falling back
       // to its columns so renamed/re-saved sheets still classify correctly.
@@ -12196,7 +12518,9 @@
             Object.keys(workbook).forEach((sn) => {
               const kind = _summClassifySheet(sn, workbook[sn]);
               if (kind)
-                sheets[kind] = (sheets[kind] || []).concat(workbook[sn]);
+                sheets[kind] = (sheets[kind] || []).concat(
+                  workbook[sn].map((r) => _summCanonRow(r)),
+                );
             });
             if (!Object.keys(sheets).length) {
               log(
@@ -13062,41 +13386,335 @@
         return df <= 30 ? SUMM_T95[df] : 1.96 + 2.4 / df;
       }
 
+      // ── Temperature figure ──────────────────────────────────────────────
+      // Built as SVG, not drawn on a canvas. One renderer produces both what
+      // is on screen and what is saved, so the figure that reaches the paper
+      // cannot drift from the one that was checked — and vector output is
+      // what journals ask for, where a canvas bitmap is resolution-bound the
+      // moment it is drawn.
+      //
+      // Styled for print rather than for the app: white ground, black ink,
+      // ticks outside the axes, no grid, and a fit whose 95% band is plain
+      // grey so the figure survives greyscale reproduction.
+      //
+      // The geometry is fixed in px at 1:1 so the saved file has a definite
+      // physical size: 340 px is 90 mm at 96 dpi, the single-column width
+      // most journals specify. On screen the same markup is scaled to the
+      // panel; the file is unaffected.
+      const SUMM_FIG = {
+        w: 340,
+        h: 240,
+        L: 56,
+        R: 12,
+        T: 14,
+        B: 44,
+        font: "Arial, Helvetica, sans-serif",
+      };
+
+      // Tick values at 1/2/5×10ⁿ, the steps a reader can do arithmetic on.
+      // The four evenly-spaced values this replaces landed on numbers like
+      // 12.7 and 13.3, which say nothing about where the data sits.
+      function _summNiceTicks(lo, hi, target) {
+        if (!(hi > lo) || !isFinite(lo) || !isFinite(hi))
+          return { ticks: [lo], step: 1 };
+        const raw = (hi - lo) / Math.max(1, target);
+        const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+        const n = raw / mag;
+        // Thresholds at 1.5/3/7, not at the step values themselves.
+        // Rounding UP at 1/2/5 sent a raw step of 2.06 to 5, which put just
+        // two labels (15 and 20) on a 12-22 degC axis.
+        const step = (n < 1.5 ? 1 : n < 3 ? 2 : n < 7 ? 5 : 10) * mag;
+        const out = [];
+        // The epsilon is a floating-point guard, not slack: without it a tick
+        // landing exactly on `hi` is dropped about half the time.
+        for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step)
+          out.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+        return { ticks: out, step };
+      }
+
+      // Decimals implied by the tick step, so 0.5 steps print "13.0" rather
+      // than "13" beside "13.5".
+      function _summTickFmt(step) {
+        const d = Math.max(0, Math.min(6, -Math.floor(Math.log10(step) + 1e-9)));
+        return (v) => v.toFixed(d);
+      }
+
+      const _summXmlEsc = (s) =>
+        String(s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+
+      // The figure as standalone SVG markup. Returns null when there is
+      // nothing to draw, so the caller can hide the panel rather than show an
+      // empty frame.
+      function summTempFigureSVG({ spec, pts, fit }) {
+        if (!pts || !pts.length) return null;
+        const F = SUMM_FIG;
+        const pw = F.w - F.L - F.R,
+          ph = F.h - F.T - F.B;
+
+        let x0 = Math.min(...pts.map((q) => q.t)),
+          x1 = Math.max(...pts.map((q) => q.t));
+        let y0 = Math.min(...pts.map((q) => q.v)),
+          y1 = Math.max(...pts.map((q) => q.v));
+        const model = fit ? (t) => fit.intercept + fit.slope * t : null;
+        if (model) {
+          y0 = Math.min(y0, model(x0), model(x1));
+          y1 = Math.max(y1, model(x0), model(x1));
+        }
+        // Never degenerate: one temperature, or a flat response, would
+        // otherwise divide by zero when the scale is built.
+        const padX = (x1 - x0) * 0.1 || Math.abs(x0) * 0.05 || 1;
+        const padY = (y1 - y0) * 0.12 || Math.abs(y0) * 0.05 || 1;
+        x0 -= padX;
+        x1 += padX;
+        y0 -= padY;
+        y1 += padY;
+
+        const xt = _summNiceTicks(x0, x1, 5),
+          yt = _summNiceTicks(y0, y1, 5);
+        const fx = _summTickFmt(xt.step),
+          fy = _summTickFmt(yt.step);
+        const X = (t) => F.L + ((t - x0) / (x1 - x0)) * pw;
+        const Y = (v) => F.T + ph - ((v - y0) / (y1 - y0)) * ph;
+        const rr = (n) => Math.round(n * 100) / 100;
+
+        const el = [];
+        el.push(
+          '<rect x="0" y="0" width="' +
+            F.w +
+            '" height="' +
+            F.h +
+            '" fill="#ffffff"/>',
+        );
+        el.push(
+          '<clipPath id="rtPlotArea"><rect x="' +
+            F.L +
+            '" y="' +
+            F.T +
+            '" width="' +
+            pw +
+            '" height="' +
+            ph +
+            '"/></clipPath>',
+        );
+
+        // Band, then line, then points: a recording is never hidden by the
+        // model drawn through it.
+        if (fit) {
+          const tc = _summT95(fit.n - 2);
+          if (isFinite(tc) && isFinite(fit.se) && fit.sxx > 0) {
+            const hi = [],
+              lo = [];
+            for (let i = 0; i <= 40; i++) {
+              const t = x0 + ((x1 - x0) * i) / 40;
+              const half =
+                tc * fit.se * Math.sqrt(1 / fit.n + (t - fit.mx) ** 2 / fit.sxx);
+              hi.push(rr(X(t)) + "," + rr(Y(model(t) + half)));
+              lo.push(rr(X(t)) + "," + rr(Y(model(t) - half)));
+            }
+            el.push(
+              '<polygon clip-path="url(#rtPlotArea)" points="' +
+                hi.concat(lo.reverse()).join(" ") +
+                '" fill="#d8d8d8"/>',
+            );
+          }
+          el.push(
+            '<line clip-path="url(#rtPlotArea)" x1="' +
+              rr(X(x0)) +
+              '" y1="' +
+              rr(Y(model(x0))) +
+              '" x2="' +
+              rr(X(x1)) +
+              '" y2="' +
+              rr(Y(model(x1))) +
+              '" stroke="#000000" stroke-width="1.2"/>',
+          );
+        }
+
+        pts.forEach((q) => {
+          // White rim, so two recordings at similar values still read as two.
+          el.push(
+            '<circle cx="' +
+              rr(X(q.t)) +
+              '" cy="' +
+              rr(Y(q.v)) +
+              '" r="3.4" fill="#1a1a1a" stroke="#ffffff" stroke-width="0.8"/>',
+          );
+        });
+
+        // Axes: left and bottom only, ticks pointing out of the data area.
+        el.push(
+          '<polyline points="' +
+            F.L +
+            "," +
+            F.T +
+            " " +
+            F.L +
+            "," +
+            (F.T + ph) +
+            " " +
+            (F.L + pw) +
+            "," +
+            (F.T + ph) +
+            '" fill="none" stroke="#000000" stroke-width="1"/>',
+        );
+        xt.ticks.forEach((t) => {
+          const x = rr(X(t));
+          if (x < F.L - 0.5 || x > F.L + pw + 0.5) return;
+          el.push(
+            '<line x1="' +
+              x +
+              '" y1="' +
+              (F.T + ph) +
+              '" x2="' +
+              x +
+              '" y2="' +
+              (F.T + ph + 4) +
+              '" stroke="#000000" stroke-width="1"/>',
+          );
+          el.push(
+            '<text x="' +
+              x +
+              '" y="' +
+              (F.T + ph + 16) +
+              '" font-family="' +
+              F.font +
+              '" font-size="10" fill="#000000" text-anchor="middle">' +
+              fx(t) +
+              "</text>",
+          );
+        });
+        yt.ticks.forEach((v) => {
+          const y = rr(Y(v));
+          if (y < F.T - 0.5 || y > F.T + ph + 0.5) return;
+          el.push(
+            '<line x1="' +
+              (F.L - 4) +
+              '" y1="' +
+              y +
+              '" x2="' +
+              F.L +
+              '" y2="' +
+              y +
+              '" stroke="#000000" stroke-width="1"/>',
+          );
+          el.push(
+            '<text x="' +
+              (F.L - 7) +
+              '" y="' +
+              (y + 3.5) +
+              '" font-family="' +
+              F.font +
+              '" font-size="10" fill="#000000" text-anchor="end">' +
+              fy(v) +
+              "</text>",
+          );
+        });
+
+        el.push(
+          '<text x="' +
+            (F.L + pw / 2) +
+            '" y="' +
+            (F.h - 10) +
+            '" font-family="' +
+            F.font +
+            '" font-size="11" fill="#000000" text-anchor="middle">Temperature (°C)</text>',
+        );
+        el.push(
+          '<text transform="translate(13,' +
+            (F.T + ph / 2) +
+            ') rotate(-90)" font-family="' +
+            F.font +
+            '" font-size="11" fill="#000000" text-anchor="middle">' +
+            _summXmlEsc(spec.label + " (" + spec.unit + ")") +
+            "</text>",
+        );
+
+        // The fit, stated in the panel the way a caption would state it.
+        // Placed on whichever top corner the line leaves empty — the left
+        // with a positive slope, the right with a negative one.
+        if (fit) {
+          const sig = Math.abs(fit.slope) > _summT95(fit.n - 2) * fit.seSlope;
+          const dec = Math.abs(fit.slope) < 0.1 ? 4 : 3;
+          const lines = [
+            "y = " +
+              fit.intercept.toFixed(2) +
+              (fit.slope < 0 ? " − " : " + ") +
+              Math.abs(fit.slope).toFixed(dec) +
+              "x",
+            "r² = " +
+              fit.r2.toFixed(2) +
+              ", n = " +
+              fit.n +
+              (isFinite(fit.seSlope)
+                ? ", b = " +
+                  fit.slope.toFixed(dec) +
+                  " ± " +
+                  fit.seSlope.toFixed(dec)
+                : "") +
+              (sig ? "" : " (n.s.)"),
+          ];
+          const left = fit.slope >= 0;
+          const ax = left ? F.L + 8 : F.L + pw - 8;
+          lines.forEach((s, i) => {
+            el.push(
+              '<text x="' +
+                ax +
+                '" y="' +
+                (F.T + 12 + i * 12) +
+                '" font-family="' +
+                F.font +
+                '" font-size="10" fill="#000000" text-anchor="' +
+                (left ? "start" : "end") +
+                '">' +
+                _summXmlEsc(s) +
+                "</text>",
+            );
+          });
+        }
+
+        return (
+          '<svg xmlns="http://www.w3.org/2000/svg" width="' +
+          F.w +
+          '" height="' +
+          F.h +
+          '" viewBox="0 0 ' +
+          F.w +
+          " " +
+          F.h +
+          '">' +
+          el.join("") +
+          "</svg>"
+        );
+      }
+
+      // The markup last rendered, so a download saves exactly what is on
+      // screen rather than re-deriving it from state that may have moved on.
+      let summTempFigSvg = null;
+
       function summRenderTempPlots(merged) {
         const panel = $("summTempPlotsPanel");
         if (!panel) return;
+        summTempFigSvg = null;
         if (!merged) {
           panel.style.display = "none";
           return;
         }
-        let anyPoints = false;
-        // log(y) = a + bT is a CURVED model in the metric's own units that
-        // costs the same two parameters as the straight line — so the choice
-        // between them is about which shape is right, not about how much data
-        // there is to spend.
-        const wantLog = $("summFitMode")?.value === "log";
         const series = SUMM_TEMP_PLOTS.map((spec) => {
           const src = merged[spec.cat] || [];
           const pts = _summByRecording(
             spec.filter ? src.filter(spec.filter) : src,
             spec.key,
           );
-          if (pts.length) anyPoints = true;
-          // A non-positive value has no logarithm. Falling back per metric
-          // rather than refusing the whole panel keeps one odd column from
-          // silently changing the model under the others.
-          const loggable = pts.length > 0 && pts.every((q) => q.v > 0);
-          const log = wantLog && loggable;
           return {
             spec,
             pts,
-            log,
-            logRefused: wantLog && pts.length > 0 && !loggable,
-            fit: _summFitTemp(
-              pts.map((q) => ({ t: q.t, v: log ? Math.log(q.v) : q.v })),
-            ),
+            fit: _summFitTemp(pts.map((q) => ({ t: q.t, v: q.v }))),
           };
         });
+        const anyPoints = series.some((x) => x.pts.length);
         panel.style.display = anyPoints ? "block" : "none";
         if (!anyPoints) return;
 
@@ -13104,170 +13722,77 @@
         if (note) {
           const n = Math.max(...series.map((x) => x.pts.length));
           note.textContent =
-            "one point per recording with a temperature · shaded band = 95% CI for the line";
+            "one point per recording with a temperature · band = 95% CI for the line";
           if (n && n < 5)
-            note.textContent += " · n = " + n + ", so the band is wide by construction";
+            note.textContent +=
+              " · n = " + n + ", so the band is wide by construction";
         }
-        series.forEach((x, i) => summDrawTempPlot("summPlot" + i, x));
+
+        const host = $("summTempFigure");
+        if (!host) return;
+        summTempFigSvg = summTempFigureSVG(series[0]);
+        host.innerHTML = summTempFigSvg || "";
+        const svg = host.querySelector("svg");
+        // Scaled to the panel for reading, while the saved string keeps the
+        // width/height that give the file its physical size.
+        if (svg) {
+          svg.style.width = "100%";
+          svg.style.height = "auto";
+          svg.style.maxWidth = "620px";
+        }
       }
 
-      function summDrawTempPlot(canvasId, { spec, pts, fit, log, logRefused }) {
-        const cv = $(canvasId);
-        if (!cv) return;
-        const w = cv.clientWidth || 300;
-        const h = cv.clientHeight || 168;
-        if (!w || !h) return;
-        const dpr = window.devicePixelRatio || 1;
-        cv.width = Math.round(w * dpr);
-        cv.height = Math.round(h * dpr);
-        const g = cv.getContext("2d");
-        g.setTransform(dpr, 0, 0, dpr, 0, 0);
-        g.fillStyle = "#0d1117";
-        g.fillRect(0, 0, w, h);
-        g.font = "10px Consolas, monospace";
-
-        // Two header lines: the metric on the first, its fit on the second.
-        // They shared one line until the annotation was found overprinting
-        // the title on a narrow panel, and right-aligning it only moved the
-        // collision to a different width rather than removing it.
-        const L = 48, R = 8, T = 30, B = 26;
-        const pw = w - L - R, ph = h - T - B;
-
-        g.fillStyle = "#e6edf3";
-        g.fillText(spec.label + " (" + spec.unit + ")", 4, 12);
-
-        if (!pts.length) {
-          g.fillStyle = "#8b949e";
-          g.fillText("no recordings carry both this metric and a temperature", 6, h / 2);
+      // SVG for a journal, PNG at 300 dpi for the ones that will not take it.
+      // The PNG is rasterized from the same markup, so the two cannot differ.
+      async function summDownloadTempFigure(fmt) {
+        if (!summTempFigSvg) {
+          log(
+            "No temperature figure to save yet — run Merge & Summarize first.",
+            "warn",
+          );
           return;
         }
-
-        // Ranges, padded, and never degenerate — a single temperature or a
-        // flat response would otherwise divide by zero.
-        let x0 = Math.min(...pts.map((q) => q.t)), x1 = Math.max(...pts.map((q) => q.t));
-        let y0 = Math.min(...pts.map((q) => q.v)), y1 = Math.max(...pts.map((q) => q.v));
-        // In log mode the fit lives in log space, so everything drawn from
-        // it comes back through exp(). model() is therefore the curve in the
-        // metric's own units, and a straight line is just the special case.
-        const inv = log ? Math.exp : (z) => z;
-        const model = fit ? (t) => inv(fit.intercept + fit.slope * t) : null;
-        if (model) {
-          // Sampled across the span rather than at the two ends: a curve can
-          // leave the frame between them.
-          for (let i = 0; i <= 20; i++) {
-            const v = model(x0 + ((x1 - x0) * i) / 20);
-            if (isFinite(v)) {
-              y0 = Math.min(y0, v);
-              y1 = Math.max(y1, v);
-            }
-          }
+        const stem = (_summFilenameStub() || "Rthoptera") + "_temp_response";
+        if (fmt === "svg") {
+          await dlFile(stem + ".svg", summTempFigSvg, "image/svg+xml", {
+            exactName: true,
+          });
+          return;
         }
-        const padX = (x1 - x0) * 0.12 || 1;
-        const padY = (y1 - y0) * 0.15 || Math.abs(y0) * 0.1 || 1;
-        x0 -= padX; x1 += padX; y0 -= padY; y1 += padY;
-        const X = (t) => L + ((t - x0) / (x1 - x0)) * pw;
-        const Y = (v) => T + ph - ((v - y0) / (y1 - y0)) * ph;
-
-        // Axes
-        g.strokeStyle = "#30363d";
-        g.lineWidth = 1;
-        g.beginPath();
-        g.moveTo(L, T); g.lineTo(L, T + ph); g.lineTo(L + pw, T + ph);
-        g.stroke();
-        g.fillStyle = "#8b949e";
-        for (let i = 0; i <= 3; i++) {
-          const t = x0 + ((x1 - x0) * i) / 3;
-          const v = y0 + ((y1 - y0) * i) / 3;
-          g.fillText(t.toFixed(1), X(t) - 10, T + ph + 12);
-          const lab = Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 1 ? v.toFixed(1) : v.toFixed(3);
-          g.fillText(lab, 4, Y(v) + 3);
-          g.strokeStyle = "#21262d";
-          g.beginPath(); g.moveTo(L, Y(v)); g.lineTo(L + pw, Y(v)); g.stroke();
+        try {
+          const scale = 300 / 96; // CSS px are 96 dpi by definition
+          const img = new Image();
+          await new Promise((res, rej) => {
+            img.onload = res;
+            img.onerror = () =>
+              rej(new Error("the figure could not be rasterized"));
+            img.src =
+              "data:image/svg+xml;charset=utf-8," +
+              encodeURIComponent(summTempFigSvg);
+          });
+          const cv = document.createElement("canvas");
+          cv.width = Math.round(SUMM_FIG.w * scale);
+          cv.height = Math.round(SUMM_FIG.h * scale);
+          const g = cv.getContext("2d");
+          // Painted white first: the SVG carries its own background rect, but
+          // a PNG that ever lost it would go transparent and print as
+          // whatever sits underneath.
+          g.fillStyle = "#ffffff";
+          g.fillRect(0, 0, cv.width, cv.height);
+          g.drawImage(img, 0, 0, cv.width, cv.height);
+          const b64 = cv.toDataURL("image/png").split(",")[1];
+          const bin = atob(b64);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          await dlFile(stem + ".png", bytes, "image/png", { exactName: true });
+        } catch (err) {
+          log(
+            "Could not build the PNG (" +
+              err.message +
+              ") — save the SVG instead.",
+            "err",
+          );
         }
-        g.fillStyle = "#8b949e";
-        g.fillText("\u00b0C", L + pw / 2, h - 3);
-
-        if (fit) {
-          const df = fit.n - 2;
-          const tc = _summT95(df);
-          // 95% band for the FITTED LINE (not a prediction interval): the
-          // range of straight lines the data is consistent with. Its waist at
-          // the mean temperature and flare at the ends are what make an
-          // underdetermined slope legible at a glance.
-          if (isFinite(tc) && isFinite(fit.se) && fit.sxx > 0) {
-            const band = [];
-            for (let i = 0; i <= 40; i++) {
-              const t = x0 + ((x1 - x0) * i) / 40;
-              const half = tc * fit.se * Math.sqrt(1 / fit.n + ((t - fit.mx) ** 2) / fit.sxx);
-              // Transformed through exp() in log mode, which makes the band
-              // asymmetric about the curve — correctly so: a proportional
-              // error is wider above the curve than below it.
-              band.push({ t, lo: inv(fit.intercept + fit.slope * t - half),
-                          hi: inv(fit.intercept + fit.slope * t + half) });
-            }
-            g.fillStyle = "rgba(88,166,255,0.14)";
-            g.beginPath();
-            band.forEach((b, i) => (i ? g.lineTo(X(b.t), Y(b.hi)) : g.moveTo(X(b.t), Y(b.hi))));
-            for (let i = band.length - 1; i >= 0; i--) g.lineTo(X(band[i].t), Y(band[i].lo));
-            g.closePath();
-            g.fill();
-          }
-          g.strokeStyle = "#58a6ff";
-          g.lineWidth = 1.4;
-          g.beginPath();
-          for (let i = 0; i <= 40; i++) {
-            const t = x0 + ((x1 - x0) * i) / 40;
-            const py = Y(model(t));
-            if (i === 0) g.moveTo(X(t), py);
-            else g.lineTo(X(t), py);
-          }
-          g.stroke();
-        }
-
-        // Points last, so the line never hides a recording.
-        pts.forEach((q) => {
-          g.fillStyle = "#7ee787";
-          g.beginPath();
-          g.arc(X(q.t), Y(q.v), 3.2, 0, 2 * Math.PI);
-          g.fill();
-          g.strokeStyle = "#0d1117";
-          g.lineWidth = 1;
-          g.stroke();
-        });
-
-        // The numbers, stated rather than left to be inferred from the slope.
-        g.font = "9px Consolas, monospace";
-        let msg;
-        if (!fit) {
-          msg =
-            pts.length < 3
-              ? "n = " + pts.length + " - too few to fit"
-              : "no temperature spread to fit";
-          g.fillStyle = "#d29922";
-        } else {
-          const df = fit.n - 2;
-          const sig = Math.abs(fit.slope) > _summT95(df) * fit.seSlope;
-          if (log) {
-            // exp(10*slope) is the factor per 10 degC, which is Q10 by
-            // definition; exp(slope)-1 is the proportional change per degree.
-            const q10 = Math.exp(fit.slope * 10);
-            const pct = (Math.exp(fit.slope) - 1) * 100;
-            msg =
-              "Q\u2081\u2080 " + q10.toFixed(2) +
-              "  " + (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%/\u00b0C" +
-              "  r\u00b2 " + fit.r2.toFixed(2) +
-              "  n " + fit.n + (sig ? "" : "  n.s.");
-          } else {
-            msg =
-              "slope " + fit.slope.toFixed(3) +
-              (isFinite(fit.seSlope) ? " \u00b1 " + fit.seSlope.toFixed(3) : "") +
-              "/\u00b0C  r\u00b2 " + fit.r2.toFixed(2) +
-              "  n " + fit.n + (sig ? "" : "  n.s.");
-          }
-          if (logRefused) msg += "  (linear: value \u2264 0)";
-          g.fillStyle = sig ? "#7ee787" : "#8b949e";
-        }
-        g.fillText(msg, 4, 24);
       }
 
       function summRenderTable(stats) {
