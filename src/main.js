@@ -184,6 +184,117 @@
         $("waveHeightLbl").textContent = h + "px";
         render();
       }
+
+      // Temporal Analysis: each ROW of boxes (marked data-collapse-row in
+      // index.html) gets one slim header bar with a ▾/▸ button, and starts
+      // collapsed so the envelope and spectrogram panes get the height.
+      function setupCollapsiblePanels() {
+        document
+          .querySelectorAll(
+            "#mainview-envpeaks [data-collapse-row], #mainview-annotate [data-collapse-row]",
+          )
+          .forEach((row) => {
+            if (row.dataset.collapseReady === "true") return;
+            const label = row.dataset.collapseRow;
+
+            const bar = document.createElement("div");
+            bar.className = "row-collapse-bar";
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "panel-toggle";
+            const title = document.createElement("span");
+            title.textContent = label;
+            bar.append(btn, title);
+
+            // The row's own inline display (flex) must come back on expand.
+            const shown = row.style.display || "";
+            const set = (collapsed) => {
+              row.style.display = collapsed ? "none" : shown;
+              btn.textContent = collapsed ? "▸" : "▾";
+              btn.title = collapsed ? "Expand " + label : "Collapse " + label;
+              if (typeof pkDrawEnvelope === "function")
+                requestAnimationFrame(() => pkDrawEnvelope());
+            };
+            bar.addEventListener("click", () => set(row.style.display !== "none"));
+
+            // Parameter Presets menu lives in the Detection parameters bar.
+            const presets = $("pkPresetMenuWrap");
+            if (presets && label === "Detection parameters") {
+              presets.style.display = "";
+              presets.style.marginLeft = "8px";
+              bar.appendChild(presets);
+            }
+
+            row.parentNode.insertBefore(bar, row);
+            row.dataset.collapseReady = "true";
+            // Temporal Analysis rows start folded; Annotation rows open.
+            set(!!row.closest("#mainview-envpeaks"));
+          });
+        setupLibraryCollapse();
+      }
+
+      // Loaded Audio panel (bottom of the window): ▾/▸ folds the grid away.
+      function setupLibraryCollapse() {
+        const panel = $("audioLibPanel");
+        if (!panel || panel.dataset.collapseReady === "true") return;
+        const head = panel.firstElementChild;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "panel-toggle";
+        head.insertBefore(btn, head.firstChild);
+        const set = (collapsed) => {
+          btn.textContent = collapsed ? "▸" : "▾";
+          btn.title = collapsed ? "Expand Loaded Audio" : "Collapse Loaded Audio";
+          Array.from(panel.children).forEach((n) => {
+            if (n === head) return;
+            // Keep each child's own inline display (the grid is display:grid).
+            if (n.dataset.libDisplay === undefined)
+              n.dataset.libDisplay = n.style.display || "";
+            n.style.display = collapsed ? "none" : n.dataset.libDisplay;
+          });
+          try {
+            localStorage.setItem("rt_audiolib_collapsed", collapsed ? "1" : "0");
+          } catch (e) {}
+          if (typeof render === "function" && rawSamples) render();
+        };
+        btn.addEventListener("click", () => set(btn.textContent === "▾"));
+        panel.dataset.collapseReady = "true";
+        let was = false;
+        try {
+          was = localStorage.getItem("rt_audiolib_collapsed") === "1";
+        } catch (e) {}
+        set(was);
+      }
+
+      function pkTogglePresetMenu(force) {
+        const m = $("pkPresetMenu");
+        if (!m) return;
+        const open = typeof force === "boolean" ? force : m.style.display === "none";
+        m.style.display = open ? "" : "none";
+      }
+      document.addEventListener("click", (e) => {
+        if (!e.target.closest || !e.target.closest("#pkPresetMenuWrap"))
+          pkTogglePresetMenu(false);
+      });
+
+      // ⓘ icons: click to read the description (kept in the title attribute,
+      // so hover still works and translations keep applying).
+      document.addEventListener("click", (e) => {
+        document.querySelectorAll(".info-pop").forEach((n) => n.remove());
+        const ic = e.target.closest && e.target.closest(".info-icon");
+        if (!ic || !ic.title) return;
+        const pop = document.createElement("div");
+        pop.className = "info-pop";
+        pop.textContent = ic.title;
+        document.body.appendChild(pop);
+        const r = ic.getBoundingClientRect();
+        pop.style.left =
+          Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8)) +
+          "px";
+        pop.style.top = r.bottom + 4 + "px";
+        e.stopPropagation();
+      });
+
       function setSpecHeight(h) {
         h = parseInt(h);
         $("sWrap").style.height = h + "px";
@@ -711,6 +822,7 @@
         $("btnRaven").disabled = false;
         $("btnXlsxSel").disabled = false;
         $("btnPkDetect").disabled = false;
+        if ($("btnPkAmpDetect")) $("btnPkAmpDetect").disabled = false;
         if (typeof onMeasResChange === "function") onMeasResChange();
         $("statusBadge").textContent = "Loaded";
         $("statusBadge").className = "badge ok";
@@ -1684,6 +1796,16 @@
         pkSummaryData = null;
         pkSelection.clear();
         pkConfirmed = false;
+        // Selections layer (amplitude detections + manual annotations) belongs
+        // to the recording just left too.
+        pkAmpDetections = [];
+        pkAnnotations = [];
+        pkNextSelId = 1;
+        pkSelSelected = null;
+        pkSelDrag = null;
+        pkSelExtra = [];
+        pkAnnotDrawing = null;
+        if (typeof pkUpdateSelUi === "function") pkUpdateSelUi();
         if ($("pkTableHead")) $("pkTableHead").innerHTML = "";
         if ($("pkTableBody")) $("pkTableBody").innerHTML = "";
         if ($("pkStatus")) $("pkStatus").textContent = "";
@@ -7134,6 +7256,7 @@
         // Applies the default tool's button highlight and canvas cursor —
         // the markup carries the highlight, but only setTool sets the cursor.
         setTool(activeTool);
+        setupCollapsiblePanels();
         initDragHandles();
         initMinimap();
         pkWatchCanvasResize();
@@ -7212,7 +7335,7 @@
       let pkDragStartX = 0;
       let pkDragStartViewStart = 0;
       // Manual editing state
-      let pkEditMode = "select"; // 'select' | 'add'
+      let pkEditMode = "select"; // 'select' | 'add' | 'annotate'
       let pkDidDrag = false; // distinguishes a pan from a click
       let pkHoverTime = null; // for add-mode preview guide
       // Pulse segmentation is FROZEN after detection: each envelope peak carries a boolean
@@ -7221,6 +7344,26 @@
       const pkSelection = new Set(); // selected envelope peak objects (references)
       let pkBand = null; // {x0,y0,x1,y1} rubber-band in canvas px
       let pkDidBand = false; // suppress the click after a band drag
+
+      // ── Selections layer: amplitude detections + manual temporal
+      // annotations. Entirely independent of the envelope peak/pulse/motif
+      // pipeline above — its own detector, its own edge-drag editing, its
+      // own export. See pkRunAmpDetector / pkSetMode('annotate') / pkExportSelections.
+      let pkAmpDetections = []; // {id, start, end}
+      let pkAnnotations = []; // {id, start, end, label, unit, maxAmp, boundary}
+      let pkNextSelId = 1; // id counter shared by both lists; export renumbers chronologically regardless
+      let pkSelDrag = null; // in-progress edge-resize: {list:'det'|'annot', id, edge:'start'|'end'}
+      let pkAnnotDrawing = null; // in-progress new-annotation drag: {anchor}
+      let pkSplitHeld = false; // "S" is down: next click on a detection/annotation splits it there
+      let pkSelExtra = []; // additional ctrl/shift-selected {list,id}, valid only alongside pkSelSelected (for Merge)
+      let pkSelSelected = null; // {list:'det'|'annot', id} currently selected selection (delete/boundary toggle/highlight)
+      const PK_SEL_UNIT_LABEL = {
+        env_peak: "Envelope peak",
+        pulse: "Pulse (train)",
+        echeme: "Echeme (motif)",
+        motseq: "Motif sequence",
+        other: "Other",
+      };
 
       // Wire motif-seq checkbox + live regrouping of pulses/motifs/sequences.
       document.addEventListener("DOMContentLoaded", () => {
@@ -7265,6 +7408,10 @@
           const el = $(id);
           if (el) el.addEventListener("input", () => regroupBoundaries(note));
         });
+        // "Max pulse gap" also drives the manual Pulse (train) → Echeme
+        // clustering below — same threshold, independent data.
+        const mpg = $("pkMaxPulseGap");
+        if (mpg) mpg.addEventListener("input", () => pkRefreshManualEchemes());
       });
 
       // ── Envelope computation ────────────────────────────────────────────
@@ -7742,6 +7889,521 @@
         }
         if (cur.length) seqs.push(cur);
         return seqs;
+      }
+
+      // ═══════════════════════════════════════════════════════════════════
+      // SELECTIONS LAYER — amplitude detections + manual temporal annotations.
+      // Independent of the envelope peak/pulse/motif pipeline above: its own
+      // detector (pkRunAmpDetector), its own edge-drag editing (wired into the
+      // pkCanvas mouse handlers below), its own export (pkExportSelections).
+      // ═══════════════════════════════════════════════════════════════════
+
+      // Max sample of pkEnv over [t0,t1] (seconds) — the "max amplitude"
+      // registered for a Pulse (train) annotation.
+      function pkMaxEnvIn(t0, t1) {
+        if (!pkEnv) return null;
+        const i0 = Math.max(0, Math.floor(t0 * sampleRate));
+        const i1 = Math.min(pkEnv.length - 1, Math.ceil(t1 * sampleRate));
+        let mx = 0;
+        for (let i = i0; i <= i1; i++) if (pkEnv[i] > mx) mx = pkEnv[i];
+        return mx;
+      }
+
+      // ── Amplitude detector — same threshold→segments→merge→filter algorithm
+      // as Spectral Analysis's runAmpDetector, but run directly on pkEnv
+      // (already normalised 0..1) so no dependency on Spectral's own
+      // envelope/peakAmp globals.
+      function pkRunAmpDetector() {
+        if (!pkEnv) {
+          log("Load audio first", "warn");
+          return;
+        }
+        pkSnapshot("run amplitude detector");
+        const thr = parseFloat($("pkAmpThreshPct").value) / 100;
+        const minDurSamp = Math.round(
+          (parseFloat($("pkAmpMinDurMs").value) / 1000) * sampleRate,
+        );
+        const minGapSamp = Math.round(
+          (parseFloat($("pkAmpMinGapMs").value) / 1000) * sampleRate,
+        );
+        const n = pkEnv.length;
+        const segs = [];
+        let inSeg = false,
+          ss = 0;
+        for (let i = 0; i < n; i++) {
+          const above = pkEnv[i] >= thr;
+          if (!inSeg && above) {
+            inSeg = true;
+            ss = i;
+          } else if (inSeg && !above) {
+            segs.push({ s: ss, e: i });
+            inSeg = false;
+          }
+        }
+        if (inSeg) segs.push({ s: ss, e: n - 1 });
+        const merged = [];
+        segs.forEach((seg) => {
+          if (merged.length && seg.s - merged[merged.length - 1].e < minGapSamp)
+            merged[merged.length - 1].e = seg.e;
+          else merged.push({ ...seg });
+        });
+        pkAmpDetections = merged
+          .filter((s) => s.e - s.s >= minDurSamp)
+          .map((s) => ({
+            id: pkNextSelId++,
+            start: s.s / sampleRate,
+            end: s.e / sampleRate,
+          }));
+        log(
+          "Temporal amplitude detector: " + pkAmpDetections.length + " detections",
+          "ok",
+        );
+        pkSelSelected = null;
+        pkUpdateSelUi();
+        pkDrawEnvelope();
+      }
+
+      function pkClearAmpDetections() {
+        if (!pkAmpDetections.length) return;
+        pkSnapshot("clear amplitude detections");
+        pkAmpDetections = [];
+        if (pkSelSelected && pkSelSelected.list === "det") pkSelSelected = null;
+        pkUpdateSelUi();
+        pkDrawEnvelope();
+      }
+
+      // Refresh every piece of UI the selections layer touches: the list
+      // panel, the manual-echeme table, and the enabled/disabled state of
+      // the buttons that depend on there being something to act on.
+      function pkUpdateSelUi() {
+        const cnt = $("pkAmpDetCount");
+        if (cnt)
+          cnt.textContent = pkAmpDetections.length
+            ? pkAmpDetections.length + " detection(s)"
+            : "None yet";
+        const clearBtn = $("btnPkClearAmpDet");
+        if (clearBtn) clearBtn.disabled = !pkAmpDetections.length;
+        const mergeBtn = $("btnPkMergeSel");
+        if (mergeBtn) mergeBtn.disabled = !(pkSelSelected && pkSelExtra.length);
+        const exportBtn = $("btnPkExportSel");
+        if (exportBtn)
+          exportBtn.disabled = !(pkAmpDetections.length || pkAnnotations.length);
+        pkRefreshSelList();
+        pkRefreshManualEchemes();
+      }
+
+      // Merged view of both lists, tagged with which one each item came
+      // from, sorted chronologically and numbered — the exact order/numbering
+      // the export uses, previewed live in the list panel.
+      function pkSortedSelections() {
+        const items = [
+          ...pkAmpDetections.map((d) => ({ list: "det", ...d })),
+          ...pkAnnotations.map((a) => ({ list: "annot", ...a })),
+        ].sort((a, b) => a.start - b.start);
+        items.forEach((it, i) => (it.n = i + 1));
+        return items;
+      }
+
+      function pkFindSelItem(list, id) {
+        const arr = list === "det" ? pkAmpDetections : pkAnnotations;
+        return arr.find((x) => x.id === id) || null;
+      }
+
+      function pkDeleteSelection(list, id) {
+        pkSnapshot("delete selection");
+        if (list === "det")
+          pkAmpDetections = pkAmpDetections.filter((d) => d.id !== id);
+        else pkAnnotations = pkAnnotations.filter((a) => a.id !== id);
+        if (pkSelSelected && pkSelSelected.list === list && pkSelSelected.id === id)
+          pkSelSelected = null;
+        pkUpdateSelUi();
+        pkDrawEnvelope();
+      }
+
+      // Cycles a Pulse (train) annotation's echeme-boundary override:
+      // auto → force split → force merge → auto.
+      function pkCycleBoundary(id) {
+        const a = pkFindSelItem("annot", id);
+        if (!a || a.unit !== "pulse") return;
+        pkSnapshot("change echeme boundary");
+        a.boundary =
+          a.boundary === null || a.boundary === undefined
+            ? "split"
+            : a.boundary === "split"
+              ? "merge"
+              : null;
+        pkUpdateSelUi();
+      }
+
+      function pkSelIsSel(list, id) {
+        if (!pkSelSelected) return false;
+        if (pkSelSelected.list === list && pkSelSelected.id === id) return true;
+        return pkSelExtra.some((x) => x.list === list && x.id === id);
+      }
+
+      // Ctrl/shift-click: add or remove one detection/annotation from the
+      // multi-selection that Merge acts on.
+      function pkSelToggle(list, id) {
+        if (!pkSelSelected) {
+          pkSelSelected = { list, id };
+          pkSelExtra = [];
+        } else if (pkSelSelected.list === list && pkSelSelected.id === id) {
+          const nxt = pkSelExtra.shift();
+          pkSelSelected = nxt || null;
+        } else {
+          const k = pkSelExtra.findIndex((x) => x.list === list && x.id === id);
+          if (k >= 0) pkSelExtra.splice(k, 1);
+          else pkSelExtra.push({ list, id });
+        }
+        pkUpdateSelUi();
+        pkDrawEnvelope();
+      }
+
+      // Merge every selected detection (or every selected annotation) into
+      // one spanning first start → last end. Mixed detections/annotations
+      // are refused: they are different layers.
+      function pkMergeSelections() {
+        const group = pkSelSelected ? [pkSelSelected, ...pkSelExtra] : [];
+        const items = group.map((g) => ({ g, it: pkFindSelItem(g.list, g.id) })).filter((x) => x.it);
+        if (items.length < 2) {
+          log("Select two or more detections (Ctrl/Shift-click) to merge", "warn");
+          return;
+        }
+        const list = items[0].g.list;
+        if (items.some((x) => x.g.list !== list)) {
+          log("Can't merge detections with annotations — select one kind", "warn");
+          return;
+        }
+        pkSnapshot("merge selections");
+        items.sort((a, b) => a.it.start - b.it.start);
+        const keep = items[0].it;
+        keep.start = items[0].it.start;
+        keep.end = Math.max(...items.map((x) => x.it.end));
+        if (list === "annot") keep.maxAmp = pkMaxEnvIn(keep.start, keep.end);
+        const drop = new Set(items.slice(1).map((x) => x.it.id));
+        if (list === "det") pkAmpDetections = pkAmpDetections.filter((d) => !drop.has(d.id));
+        else pkAnnotations = pkAnnotations.filter((a) => !drop.has(a.id));
+        pkSelSelected = { list, id: keep.id };
+        pkSelExtra = [];
+        log("Merged " + items.length + " selections", "ok");
+        pkUpdateSelUi();
+        pkDrawEnvelope();
+      }
+
+      // Split the detection/annotation under time t into two at t. Both halves
+      // keep the original's properties; annotations get their max amplitude
+      // recomputed. A split within 1 ms of an edge is refused (zero-length).
+      function pkSplitSelectionAt(list, id, t) {
+        const item = pkFindSelItem(list, id);
+        if (!item) return;
+        const minPart = 0.001;
+        if (t - item.start < minPart || item.end - t < minPart) {
+          log("Split point is too close to the selection's edge", "warn");
+          return;
+        }
+        pkSnapshot("split selection");
+        const right = { ...item, id: pkNextSelId++, start: t };
+        item.end = t;
+        if (list === "annot") {
+          item.maxAmp = pkMaxEnvIn(item.start, item.end);
+          right.maxAmp = pkMaxEnvIn(right.start, right.end);
+          pkAnnotations.push(right);
+        } else {
+          pkAmpDetections.push(right);
+        }
+        pkSelSelected = { list, id: right.id };
+        pkSelExtra = [{ list, id: item.id }];
+        log("Split selection at " + t.toFixed(4) + " s", "ok");
+        pkUpdateSelUi();
+        pkDrawEnvelope();
+      }
+
+      document.addEventListener("keydown", (e) => {
+        if ((e.key !== "s" && e.key !== "S") || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+        const a = document.activeElement;
+        if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable)) return;
+        const view = $("mainview-envpeaks");
+        if (!view || view.style.display === "none" || !pkEnv) return;
+        pkSplitHeld = true;
+        $("pkCanvas").style.cursor = "col-resize";
+      });
+      const pkEndSplitHold = () => {
+        if (!pkSplitHeld) return;
+        pkSplitHeld = false;
+        pkHoverTime = null;
+        const c = $("pkCanvas");
+        if (c) c.style.cursor = pkEnv ? (pkEditMode === "add" ? "copy" : "crosshair") : "";
+        if (pkEnv) pkDrawEnvelope();
+      };
+      document.addEventListener("keyup", (e) => {
+        if (e.key === "s" || e.key === "S") pkEndSplitHold();
+      });
+      window.addEventListener("blur", pkEndSplitHold);
+
+      function pkSelRowClick(list, id, e) {
+        if (e && (e.ctrlKey || e.metaKey || e.shiftKey)) {
+          pkSelToggle(list, id);
+          return;
+        }
+        const item = pkFindSelItem(list, id);
+        if (!item) return;
+        pkSelSelected = { list, id };
+        pkSelExtra = [];
+        const dur = item.end - item.start;
+        pkViewStart = Math.max(0, item.start - dur * 0.5);
+        if (pkViewEnd !== null) pkViewEnd = pkViewStart + (pkViewEnd - pkViewStart);
+        pkRefreshSelList();
+        pkDrawEnvelope();
+      }
+
+      function pkRefreshSelList() {
+        const ul = $("pkSelList");
+        const badge = $("pkSelBadge");
+        if (!ul) return;
+        const items = pkSortedSelections();
+        if (badge) badge.textContent = items.length ? "(" + items.length + ")" : "";
+        ul.innerHTML = "";
+        if (!items.length) {
+          const d = document.createElement("div");
+          d.style.cssText = "color:var(--txt2);font-size:11px;padding:3px 0";
+          d.textContent = "None. Run the Amplitude Detector or use ✏ Annotate.";
+          ul.appendChild(d);
+          return;
+        }
+        items.forEach((it) => {
+          const row = document.createElement("div");
+          const isSel = pkSelIsSel(it.list, it.id);
+          row.className = "arow" + (isSel ? " sel" : "");
+          const typeLbl =
+            it.list === "det" ? "det" : PK_SEL_UNIT_LABEL[it.unit] || it.unit;
+          row.innerHTML =
+            '<span style="color:var(--txt3)">#' +
+            it.n +
+            "</span>" +
+            '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' +
+            it.start.toFixed(4) +
+            "–" +
+            it.end.toFixed(4) +
+            's">' +
+            it.start.toFixed(3) +
+            "–" +
+            it.end.toFixed(3) +
+            "s</span>" +
+            '<span style="color:var(--txt2)">' +
+            ((it.end - it.start) * 1000).toFixed(1) +
+            "ms</span>" +
+            '<span style="color:var(--txt3);font-size:10px">' +
+            typeLbl +
+            (it.label ? " – " + _xmlEscPlain(it.label) : "") +
+            "</span>" +
+            (it.list === "annot" && it.unit === "pulse"
+              ? '<button class="xbtn" title="Echeme boundary: ' +
+                (it.boundary || "auto") +
+                ' (click to cycle)" onclick="event.stopPropagation();pkCycleBoundary(' +
+                it.id +
+                ')" style="font-size:10px">' +
+                (it.boundary === "split" ? "✂" : it.boundary === "merge" ? "⇄" : "·") +
+                "</button>"
+              : "") +
+            '<button class="xbtn" onclick="event.stopPropagation();pkDeleteSelection(\'' +
+            it.list +
+            "'," +
+            it.id +
+            ')" title="Delete">×</button>';
+          row.addEventListener("click", (e) => pkSelRowClick(it.list, it.id, e));
+          ul.appendChild(row);
+        });
+      }
+
+      // Minimal text escape for the list panel (innerHTML is used there for
+      // the row layout, so a hand-typed label must not be able to inject
+      // markup).
+      function _xmlEscPlain(s) {
+        return String(s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+
+      // ── Manual echeme grouping ───────────────────────────────────────────
+      // Groups Pulse (train) annotations into echemes by the same gap rule as
+      // pkGroupMotifs (reusing the "Max pulse gap" field), with each
+      // annotation's `boundary` override taking precedence: 'split' forces a
+      // break after it even under the threshold, 'merge' suppresses a break
+      // even over it.
+      function pkGroupManualEchemes() {
+        const pulses = pkAnnotations
+          .filter((a) => a.unit === "pulse")
+          .slice()
+          .sort((a, b) => a.start - b.start);
+        if (!pulses.length) return [];
+        const maxGap = (parseFloat($("pkMaxPulseGap")?.value) || 300) / 1000;
+        const groups = [];
+        let cur = [pulses[0]];
+        for (let i = 1; i < pulses.length; i++) {
+          const prev = pulses[i - 1];
+          const forcedSplit = prev.boundary === "split";
+          const forcedMerge = prev.boundary === "merge";
+          const gapBreak = pulses[i].start - prev.end > maxGap;
+          const doBreak = forcedSplit || (gapBreak && !forcedMerge);
+          if (doBreak) {
+            groups.push(cur);
+            cur = [pulses[i]];
+          } else {
+            cur.push(pulses[i]);
+          }
+        }
+        groups.push(cur);
+        return groups;
+      }
+
+      // TE/DE/PCI for one derived echeme group, mirroring the real
+      // pulse->motif formulas at tem_exc/dyn_exc (main.js, motif-building
+      // loop) and pkPatternComplexity, but sourced from annotation
+      // start/end/maxAmp instead of envelope-peak objects.
+      function pkManualEchemeStats(group) {
+        const start = group[0].start;
+        const end = group[group.length - 1].end;
+        const dur = Math.max(1e-9, end - start);
+        const n = group.length;
+        const periods = [];
+        for (let i = 1; i < n; i++)
+          periods.push((group[i].start - group[i - 1].start) * 1000);
+        const temExc = round4(
+          periods.length > 1
+            ? periods.slice(1).reduce((s, v, i) => s + Math.abs(v - periods[i]), 0)
+            : 0,
+        );
+        const amps = group.map((p) => p.maxAmp || 0);
+        const dynExc = round4(
+          amps.length > 1
+            ? amps.slice(1).reduce((s, v, i) => s + Math.abs(v - amps[i]), 0)
+            : 0,
+        );
+        const props = [];
+        group.forEach((p, i) => {
+          props.push((p.end - p.start) / dur);
+          if (i < n - 1) props.push(Math.max(0, group[i + 1].start - p.end) / dur);
+        });
+        const pci = pkPatternComplexity(props, n, dur);
+        return {
+          n_pulses: n,
+          start: round4(start),
+          end: round4(end),
+          dur_ms: round4(dur * 1000),
+          tem_exc: temExc,
+          dyn_exc: dynExc,
+          pci: pci.pci,
+          props_ent: pci.ent,
+          props_cv: pci.cv,
+        };
+      }
+
+      function pkRefreshManualEchemes() {
+        const wrap = $("pkEchemeTableWrap");
+        const empty = $("pkEchemeEmpty");
+        if (!wrap || !empty) return;
+        const groups = pkGroupManualEchemes();
+        if (!groups.length) {
+          wrap.style.display = "none";
+          empty.style.display = "";
+          return;
+        }
+        wrap.style.display = "";
+        empty.style.display = "none";
+        const cols = [
+          "echeme",
+          "n_pulses",
+          "start",
+          "end",
+          "dur_ms",
+          "tem_exc",
+          "dyn_exc",
+          "pci",
+        ];
+        const head = $("pkEchemeHead");
+        head.innerHTML = cols.map((c) => "<th>" + c + "</th>").join("");
+        const body = $("pkEchemeBody");
+        body.innerHTML = "";
+        groups.forEach((g, i) => {
+          const stats = pkManualEchemeStats(g);
+          const row = { echeme: i + 1, ...stats };
+          const tr = document.createElement("tr");
+          cols.forEach((c) => {
+            const td = document.createElement("td");
+            td.textContent =
+              row[c] !== null && row[c] !== undefined ? row[c] : "—";
+            tr.appendChild(td);
+          });
+          body.appendChild(tr);
+        });
+      }
+
+      // ── Unified chronological export ─────────────────────────────────────
+      async function pkExportSelections() {
+        if (!pkAmpDetections.length && !pkAnnotations.length) {
+          log("No detections or annotations to export.", "warn");
+          return;
+        }
+        const items = pkSortedSelections();
+        let prevEnd = null;
+        const selRows = items.map((it) => {
+          const row = {
+            selection: it.n,
+            type: it.list === "det" ? "detection" : "annotation",
+            unit: it.list === "det" ? "" : PK_SEL_UNIT_LABEL[it.unit] || it.unit,
+            label: it.label || "",
+            start: round4(it.start),
+            end: round4(it.end),
+            dur_ms: round4((it.end - it.start) * 1000),
+            gap_ms: prevEnd !== null ? round4((it.start - prevEnd) * 1000) : null,
+            max_amp: it.unit === "pulse" && it.maxAmp != null ? round4(it.maxAmp) : null,
+            source_file: pkSourceFile(),
+            temp_c: currentTempC,
+            specimen_id: currentSpecimenId,
+            species: currentSpecies,
+            country: currentCountry,
+            locality: currentLocality,
+          };
+          prevEnd = it.end;
+          return row;
+        });
+        const echemeGroups = pkGroupManualEchemes();
+        const echemeRows = echemeGroups.map((g, i) => ({
+          echeme_id: i + 1,
+          ...pkManualEchemeStats(g),
+          source_file: pkSourceFile(),
+          temp_c: currentTempC,
+          specimen_id: currentSpecimenId,
+          species: currentSpecies,
+          country: currentCountry,
+          locality: currentLocality,
+        }));
+        const sheets = [["Selections", selRows]];
+        if (echemeRows.length) sheets.push(["Manual echemes", echemeRows]);
+
+        let bytes;
+        try {
+          bytes = await withBusy("Building Excel workbook…", async (progress) => {
+            progress("Building " + sheets.length + " sheet(s)…", 0.3);
+            await busyTick();
+            return _buildXlsx(sheets);
+          });
+        } catch (e) {
+          log("Export failed: " + e.message, "warn");
+          return;
+        }
+        try {
+          const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+          await dlFile(
+            "Rthoptera_temporal_selections_" + stamp + ".xlsx",
+            bytes,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          );
+          log("Exported " + selRows.length + " selection(s) to Excel workbook", "ok");
+        } catch (e) {
+          log("Export failed: " + e.message, "warn");
+        }
       }
 
       // ── Temporal Analysis parameter presets (localStorage) ──────────────────
@@ -9338,6 +10000,63 @@
           ctx.fillRect(x0, padT + 4, x1 - x0, 3);
         });
 
+        // Selections layer: amplitude detections (bottom band, amber) and
+        // manual annotations (top band, violet) — independent of the
+        // envelope-peak/pulse/motif spans above. Edge-grip bars are drawn
+        // only in Select mode, when they are actually draggable.
+        const pkDrawSelBand = (item, list, y0, yH, fill, stroke) => {
+          const t0 = item.start,
+            t1 = item.end;
+          if (t1 < vStart || t0 > vEnd) return;
+          const x0 = Math.max(padL, tX(t0)),
+            x1 = Math.min(padL + pw, tX(t1));
+          const selected = pkSelIsSel(list, item.id);
+          ctx.fillStyle = fill;
+          ctx.fillRect(x0, y0, Math.max(1, x1 - x0), yH);
+          ctx.fillStyle = stroke;
+          ctx.fillRect(x0, y0, Math.max(1, x1 - x0), 2);
+          if (selected) {
+            ctx.save();
+            ctx.setLineDash([4, 3]);
+            ctx.strokeStyle = "#f1c40f";
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(x0, padT, Math.max(1, x1 - x0), ph);
+            ctx.restore();
+          }
+          if (pkEditMode === "select") {
+            const hx0 = tX(t0),
+              hx1 = tX(t1);
+            ctx.fillStyle = stroke;
+            [hx0, hx1].forEach((hx) => {
+              if (hx < padL - 4 || hx > padL + pw + 4) return;
+              ctx.fillRect(hx - 1.5, padT, 3, ph);
+            });
+          }
+        };
+        pkAmpDetections.forEach((d) =>
+          pkDrawSelBand(d, "det", padT + ph - 7, 6, "rgba(255,159,10,0.18)", "#ffb454"),
+        );
+        pkAnnotations.forEach((a) =>
+          pkDrawSelBand(a, "annot", padT + 1, 6, "rgba(214,140,255,0.18)", "#d68cff"),
+        );
+        // Live preview of a new manual annotation being dragged out
+        if (pkAnnotDrawing) {
+          const dt0 = Math.min(pkAnnotDrawing.anchor, pkAnnotDrawing.t);
+          const dt1 = Math.max(pkAnnotDrawing.anchor, pkAnnotDrawing.t);
+          if (!(dt1 < vStart || dt0 > vEnd)) {
+            const dx0 = Math.max(padL, tX(dt0)),
+              dx1 = Math.min(padL + pw, tX(dt1));
+            ctx.save();
+            ctx.fillStyle = "rgba(214,140,255,0.12)";
+            ctx.fillRect(dx0, padT, dx1 - dx0, ph);
+            ctx.setLineDash([4, 3]);
+            ctx.strokeStyle = "#d68cff";
+            ctx.lineWidth = 1;
+            ctx.strokeRect(dx0, padT, dx1 - dx0, ph);
+            ctx.restore();
+          }
+        }
+
         // Envelope line — only samples in view
         const iStart = Math.max(0, Math.floor(vStart * sampleRate));
         const iEnd = Math.min(n - 1, Math.ceil(vEnd * sampleRate));
@@ -9437,6 +10156,26 @@
           ctx.lineWidth = 1.5;
           ctx.stroke();
           ctx.restore();
+        }
+
+        // Split-hold guide: red vertical line where the split would land,
+        // drawn only while the pointer is over a detection/annotation.
+        if (pkSplitHeld && pkHoverTime !== null && inView(pkHoverTime)) {
+          const over = [...pkAmpDetections, ...pkAnnotations].some(
+            (it) => pkHoverTime >= it.start && pkHoverTime <= it.end,
+          );
+          if (over) {
+            const x = tX(pkHoverTime);
+            ctx.save();
+            ctx.setLineDash([4, 3]);
+            ctx.strokeStyle = "#ff5c5c";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(x, padT);
+            ctx.lineTo(x, padT + ph);
+            ctx.stroke();
+            ctx.restore();
+          }
         }
 
         // Y axis — ticks span the currently-visible amplitude range [0 .. 1/scale]
@@ -9816,6 +10555,58 @@
         return closest;
       }
 
+      // Edge-handle hit test for the selections layer (amplitude detections +
+      // manual annotations) — the equivalent of the trim tool's
+      // trimHandleHit, but over two lists of independent items instead of
+      // one fixed pair of handles.
+      function pkSelHandleHit(clientX, clientY, HIT = 7) {
+        const canvas = $("pkCanvas");
+        const geo = canvas._pkGeo;
+        if (!geo) return null;
+        const rect = canvas.getBoundingClientRect();
+        const mx = clientX - rect.left,
+          my = clientY - rect.top;
+        if (my < geo.padT - HIT || my > geo.padT + geo.ph + HIT) return null;
+        const lists = [
+          ["det", pkAmpDetections],
+          ["annot", pkAnnotations],
+        ];
+        for (const [list, arr] of lists) {
+          for (const item of arr) {
+            if (item.end < geo.vStart || item.start > geo.vEnd) continue;
+            const xs = geo.padL + ((item.start - geo.vStart) / geo.vDur) * geo.pw;
+            const xe = geo.padL + ((item.end - geo.vStart) / geo.vDur) * geo.pw;
+            if (Math.abs(mx - xs) <= HIT) return { list, id: item.id, edge: "start" };
+            if (Math.abs(mx - xe) <= HIT) return { list, id: item.id, edge: "end" };
+          }
+        }
+        return null;
+      }
+
+      // Body hit test (inside start..end, anywhere vertically in the plot) —
+      // used to select a detection/annotation by clicking it, once the
+      // envelope-peak hit-test above has already come up empty.
+      function pkSelBodyHit(clientX, clientY) {
+        const canvas = $("pkCanvas");
+        const geo = canvas._pkGeo;
+        if (!geo) return null;
+        const rect = canvas.getBoundingClientRect();
+        const mx = clientX - rect.left,
+          my = clientY - rect.top;
+        if (my < geo.padT || my > geo.padT + geo.ph) return null;
+        const t = geo.vStart + ((mx - geo.padL) / geo.pw) * geo.vDur;
+        const lists = [
+          ["det", pkAmpDetections],
+          ["annot", pkAnnotations],
+        ];
+        for (const [list, arr] of lists) {
+          for (const item of arr) {
+            if (t >= item.start && t <= item.end) return { list, id: item.id };
+          }
+        }
+        return null;
+      }
+
       // ── Add a envelope peak, snapped to the nearest envelope local-max around `time` ──
       function pkAddEnvPeakAt(time) {
         if (!pkEnv) return;
@@ -9935,6 +10726,11 @@
           amp: new Float32Array(n),
           flags: new Uint8Array(n),
           sel: [],
+          // Selections layer — plain-object copies, restored alongside the
+          // envelope peaks so one Ctrl+Z history covers the whole tab.
+          ampDet: pkAmpDetections.map((d) => ({ ...d })),
+          annots: pkAnnotations.map((a) => ({ ...a })),
+          nextSelId: pkNextSelId,
         };
         for (let i = 0; i < n; i++) {
           const p = pkEnvPeaks[i];
@@ -9991,6 +10787,11 @@
         snap.sel.forEach((i) => {
           if (pkEnvPeaks[i]) pkSelection.add(pkEnvPeaks[i]);
         });
+        pkAmpDetections = (snap.ampDet || []).map((d) => ({ ...d }));
+        pkAnnotations = (snap.annots || []).map((a) => ({ ...a }));
+        pkNextSelId = snap.nextSelId || 1;
+        pkSelSelected = null;
+        if (typeof pkUpdateSelUi === "function") pkUpdateSelUi();
         pkUpdateUndoButton();
         pkLiveUpdate("undo: " + snap.label);
       }
@@ -10258,13 +11059,18 @@
         pkEditMode = mode;
         $("btnPkModeSelect").className = mode === "select" ? "pri" : "";
         $("btnPkModeAdd").className = mode === "add" ? "pri" : "";
-        $("pkEditHint").textContent =
+        const annotBtn = $("btnPkModeAnnotate");
+        if (annotBtn) annotBtn.className = mode === "annotate" ? "pri" : "";
+        $("pkEditHint").title =
           mode === "add"
             ? "Add mode · click on the plot to add a envelope peak (snaps to the envelope) · drag still pans"
-            : "Select mode · click selects a envelope peak · shift-drag to box-select (or shift-click) · use the panel for actions · Del to delete selection";
+            : mode === "annotate"
+              ? "Annotate mode · drag on the plot to draw a manual selection · edge handles resize it in Select mode · Del to delete"
+              : "Select mode · click selects a envelope peak or a detection/annotation · shift-drag to box-select (or shift-click) · drag an edge to resize · hold S and click a detection to split it · Ctrl-click to multi-select, Ctrl+M to merge · use the panel for actions · Del to delete selection";
         const canvas = $("pkCanvas");
         if (pkEnv) canvas.style.cursor = mode === "add" ? "copy" : "crosshair";
         pkHoverTime = null;
+        pkAnnotDrawing = null;
         pkDrawEnvelope();
       }
 
@@ -10273,6 +11079,38 @@
         if (!pkEnv || e.button !== 0) return;
         const canvas = $("pkCanvas");
         const rect = canvas.getBoundingClientRect();
+        // Hold S + click on a detection/annotation: split it at the click.
+        if (pkSplitHeld) {
+          const hit = pkSelBodyHit(e.clientX, e.clientY);
+          const t = pkClientXToTime(e.clientX);
+          if (hit && t !== null) pkSplitSelectionAt(hit.list, hit.id, t);
+          return;
+        }
+        // Selections layer takes priority over pan/select in its own modes:
+        // an edge handle grabs a resize in Select mode, and a plain drag on
+        // empty canvas starts a new manual annotation in Annotate mode.
+        if (pkEditMode === "select" && !e.shiftKey) {
+          const hit = pkSelHandleHit(e.clientX, e.clientY);
+          if (hit) {
+            pkSnapshot("resize selection");
+            pkSelDrag = hit;
+            pkSelSelected = { list: hit.list, id: hit.id };
+            pkSelExtra = [];
+            canvas.style.cursor = "ew-resize";
+            pkRefreshSelList();
+            pkDrawEnvelope();
+            return;
+          }
+        }
+        if (pkEditMode === "annotate" && !e.shiftKey) {
+          const t = pkClientXToTime(e.clientX);
+          if (t !== null) {
+            pkAnnotDrawing = { anchor: t, t, moved: false };
+            canvas.style.cursor = "crosshair";
+            pkDrawEnvelope();
+            return;
+          }
+        }
         if (e.shiftKey && pkEditMode === "select") {
           // Begin a rubber-band selection in canvas pixel coords.
           pkBand = {
@@ -10301,9 +11139,11 @@
         // pan or rubber-band would otherwise keep tracking the cursor
         // forever. e.buttons reflects what's ACTUALLY held right now, so
         // use it to self-heal instead of relying solely on mouseup.
-        if ((pkIsDragging || pkBand) && !(e.buttons & 1)) {
+        if ((pkIsDragging || pkBand || pkSelDrag || pkAnnotDrawing) && !(e.buttons & 1)) {
           pkIsDragging = false;
           pkBand = null;
+          pkSelDrag = null;
+          pkAnnotDrawing = null;
           canvas.style.cursor = pkEditMode === "add" ? "copy" : "crosshair";
         }
         const rect = canvas.getBoundingClientRect();
@@ -10315,6 +11155,34 @@
           e.clientY <= rect.bottom
             ? pkClientXToTime(e.clientX)
             : null;
+        // Resizing a detection/annotation edge — keep start < end with a
+        // small minimum gap, clamped to the signal range.
+        if (pkSelDrag && geo) {
+          const item = pkFindSelItem(pkSelDrag.list, pkSelDrag.id);
+          const t = pkClientXToTime(e.clientX);
+          if (item && t !== null) {
+            const MIN_GAP = 0.0005;
+            const nt = Math.max(0, Math.min(duration, t));
+            if (pkSelDrag.edge === "start")
+              item.start = Math.min(nt, item.end - MIN_GAP);
+            else item.end = Math.max(nt, item.start + MIN_GAP);
+            pkDrawEnvelope();
+          }
+          canvas.style.cursor = "ew-resize";
+          return;
+        }
+        // Dragging out a brand-new manual annotation (Annotate mode).
+        if (pkAnnotDrawing && geo) {
+          const t = pkClientXToTime(e.clientX);
+          if (t !== null) {
+            if (Math.abs(t - pkAnnotDrawing.anchor) > 0.0005)
+              pkAnnotDrawing.moved = true;
+            pkAnnotDrawing.t = Math.max(0, Math.min(duration, t));
+          }
+          canvas.style.cursor = "crosshair";
+          pkDrawEnvelope();
+          return;
+        }
         // Rubber-band selection in progress
         if (pkBand && geo) {
           const rect = canvas.getBoundingClientRect();
@@ -10327,6 +11195,19 @@
             pkDidBand = true;
           pkDrawEnvelope();
           return;
+        }
+        // Hover feedback: ew-resize near a detection/annotation edge in
+        // Select mode, so the handle is discoverable before clicking it.
+        if (
+          pkEditMode === "select" &&
+          geo &&
+          !pkIsDragging &&
+          !pkBand &&
+          (pkAmpDetections.length || pkAnnotations.length)
+        ) {
+          canvas.style.cursor = pkSelHandleHit(e.clientX, e.clientY)
+            ? "ew-resize"
+            : "crosshair";
         }
         if (pkIsDragging && pkEnv && geo) {
           const dx = e.clientX - pkDragStartX;
@@ -10342,8 +11223,8 @@
           pkDrawEnvelope();
           return;
         }
-        // Add-mode hover preview (throttled to one redraw per frame)
-        if (pkEditMode === "add" && pkEnv && geo && !pkIsDragging) {
+        // Add-mode / split-hold hover preview (throttled to one redraw per frame)
+        if ((pkEditMode === "add" || pkSplitHeld) && pkEnv && geo && !pkIsDragging) {
           const t = pkClientXToTime(e.clientX);
           if (t !== pkHoverTime) {
             pkHoverTime = t;
@@ -10358,7 +11239,7 @@
 
       $("pkCanvas").addEventListener("mouseleave", () => {
         pkLastMouseTime = null;
-        if (pkEditMode === "add" && pkHoverTime !== null) {
+        if ((pkEditMode === "add" || pkSplitHeld) && pkHoverTime !== null) {
           pkHoverTime = null;
           pkDrawEnvelope();
         }
@@ -10366,6 +11247,44 @@
 
       document.addEventListener("mouseup", () => {
         const canvas = $("pkCanvas");
+        // Finish resizing a detection/annotation edge.
+        if (pkSelDrag) {
+          const item = pkFindSelItem(pkSelDrag.list, pkSelDrag.id);
+          if (item && item.unit === "pulse")
+            item.maxAmp = pkMaxEnvIn(item.start, item.end);
+          pkSelDrag = null;
+          canvas.style.cursor = "crosshair";
+          pkUpdateSelUi();
+          pkDrawEnvelope();
+          return;
+        }
+        // Finish (or discard) a new manual annotation drag.
+        if (pkAnnotDrawing) {
+          const d = pkAnnotDrawing;
+          pkAnnotDrawing = null;
+          canvas.style.cursor = "crosshair";
+          if (d.moved) {
+            const start = Math.min(d.anchor, d.t);
+            const end = Math.max(d.anchor, d.t);
+            pkSnapshot("add annotation");
+            const unit = $("pkAnnotUnit")?.value || "pulse";
+            const label = ($("pkAnnotLabel")?.value || "").trim();
+            const item = {
+              id: pkNextSelId++,
+              start,
+              end,
+              label,
+              unit,
+              maxAmp: unit === "pulse" ? pkMaxEnvIn(start, end) : null,
+              boundary: null,
+            };
+            pkAnnotations.push(item);
+            pkSelSelected = { list: "annot", id: item.id };
+            pkUpdateSelUi();
+          }
+          pkDrawEnvelope();
+          return;
+        }
         // Finish a rubber-band selection
         if (pkBand) {
           const geo = canvas._pkGeo;
@@ -10416,8 +11335,10 @@
           if (t !== null) pkAddEnvPeakAt(t);
           return;
         }
-        if (!pkEnvPeaks.length) return;
-        const idx = pkNearestEnvPeak(e.clientX, e.clientY, 8);
+        // Annotate mode: drawing a new selection is handled entirely by the
+        // mousedown/mouseup drag above; a plain click here does nothing.
+        if (pkEditMode === "annotate") return;
+        const idx = pkEnvPeaks.length ? pkNearestEnvPeak(e.clientX, e.clientY, 8) : -1;
         // Shift-click toggles a single envelope peak in/out of the selection.
         if (e.shiftKey) {
           if (idx >= 0) {
@@ -10436,12 +11357,38 @@
           const p = pkEnvPeaks[idx];
           pkSelection.clear();
           pkSelection.add(p);
+          if (pkSelSelected) {
+            pkSelSelected = null;
+            pkRefreshSelList();
+          }
           pkLiveUpdate("envelope peak selected");
           return;
+        }
+        // No envelope peak under the pointer — try a detection/annotation
+        // body (checked last so envelope-peak clicks keep priority).
+        if (pkEditMode === "select" && (pkAmpDetections.length || pkAnnotations.length)) {
+          const hit = pkSelBodyHit(e.clientX, e.clientY);
+          if (hit) {
+            if (e.ctrlKey || e.metaKey) {
+              pkSelToggle(hit.list, hit.id);
+              return;
+            }
+            pkSelSelected = hit;
+            pkSelExtra = [];
+            if (pkSelection.size) pkClearSelection();
+            pkRefreshSelList();
+            pkDrawEnvelope();
+            return;
+          }
         }
         if (pkSelection.size) {
           pkClearSelection();
           pkLiveUpdate("selection cleared");
+        }
+        if (pkSelSelected) {
+          pkSelSelected = null;
+          pkRefreshSelList();
+          pkDrawEnvelope();
         }
       });
 
@@ -10480,6 +11427,20 @@
           return;
         }
         if (
+          !isTyping &&
+          e.ctrlKey &&
+          !e.shiftKey &&
+          !e.altKey &&
+          e.key.toLowerCase() === "m" &&
+          !pkSelection.size &&
+          pkSelSelected &&
+          pkSelExtra.length
+        ) {
+          pkMergeSelections();
+          e.preventDefault();
+          return;
+        }
+        if (
           (e.key === "Delete" ||
             e.key === "Del" ||
             e.code === "NumpadSubtract" ||
@@ -10488,6 +11449,19 @@
           pkSelection.size
         ) {
           pkBulkRemove();
+          e.preventDefault();
+          return;
+        }
+        if (
+          (e.key === "Delete" ||
+            e.key === "Del" ||
+            e.code === "NumpadSubtract" ||
+            e.key === "Subtract") &&
+          !isTyping &&
+          !pkSelection.size &&
+          pkSelSelected
+        ) {
+          pkDeleteSelection(pkSelSelected.list, pkSelSelected.id);
           e.preventDefault();
           return;
         }

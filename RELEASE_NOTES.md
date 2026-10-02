@@ -1,85 +1,93 @@
-# Rthoptera Desk 0.6.0
+# Rthoptera Desk 0.7.0
 
-A Language menu, a Downsample option in Preprocessing, a linear/dB scale
-choice for the Multiplot's spectrogram and power spectrum, and processing
-spinners on every plotting and heavy-compute button that lacked one.
+A selections layer for Temporal Analysis (amplitude detections and manual
+annotations you can merge, split and export), collapsible panels so the
+envelope and spectrogram get more room, and batch editing plus Raven export in
+the Annotation tab.
 
-## Language menu
+## Temporal Analysis
 
-English, Español, Italiano and Português, chosen from the toolbar and
-remembered between sessions. Every top-level tab, every panel heading and
-every primary action button translates; tooltips and status/log messages are
-still English-only and will follow in a later pass. Exported files are
-unaffected — column headers and metric names (`peak_freq_khz`, `bw_20db_khz`,
-and the rest) stay in English regardless of the interface language, so a
-workbook opened by a collaborator, or re-imported later, reads the same
-column names no matter who produced it.
+### Selections layer
 
-## Downsample
+- **Amplitude Detector** — a simple threshold detector (floor %, minimum
+  duration, minimum gap) run on the envelope. It produces its own editable
+  detections, independent of envelope-peak detection.
+- **✏ Annotate** — drag on the plot to draw your own temporal selection. Each
+  one carries a label, a unit (envelope peak, pulse, echeme, motif sequence or
+  other) and, for pulses, its maximum amplitude.
+- **Edit in place** — drag a selection's edges to resize it, click to select it,
+  Del to delete it.
+- **Merge** — Ctrl/Shift-click several detections (in the list, or Ctrl-click on
+  the plot) and press **Merge** or Ctrl+M. They become one selection from the
+  first start to the last end.
+- **Split** — hold **S** and click inside a selection. A red guide shows where
+  the cut will fall, and both halves are left selected so you can undo or
+  re-merge.
+- **Manual Echemes** — pulse annotations cluster into echemes using the same
+  maximum pulse gap as the automatic pipeline, and everything exports together.
 
-Preprocessing gains a Downsample control, both on the single active recording
-and as a batch operation across every checked recording in the Loaded Audio
-library. The target rate is chosen from a list, each option showing its
-Nyquist frequency in parentheses, and only rates below the recording's own
-are offered.
+### Collapsible panels
 
-An anti-aliasing low-pass runs before the rate is actually reduced — the same
-requirement Merge's resampler already enforced when concatenating recordings
-of different rates. Content the new rate cannot represent is removed rather
-than folded back down into the audible band as aliasing. Batch downsampling
-leaves an already-checked recording alone if it is already at or below the
-chosen rate, rather than treating a mixed-rate batch as an error.
+The parameter, editing and selection boxes are grouped into three rows, each with
+a ▾/▸ button. Rows start collapsed, so the envelope and spectrogram panes take
+the whole window; open a row when you need it. **Parameter Presets** moved into a
+menu beside the Detection parameters title, and **Learn from Edits** now sits
+inside **Detect & Apply**. Descriptions that used to take up space are now ⓘ
+icons — click one to read it.
 
-## Multiplot: dB / Linear scale
+## Annotation tab
 
-A Scale control next to the spectrogram's Colormap/Contrast/Brightness
-settings, shared by the Power Spectrum curve and the spectrogram's colour
-mapping so the two panels never disagree. dB is the previous, default
-behaviour. Linear uses amplitude rather than power — a genuine linear
-*power* scale puts anything more than about 20 dB below the loudest moment
-under 1% brightness, which reads as a blank spectrogram for any real
-recording; linear amplitude keeps meaningfully more of the signal visible
-while remaining a true, non-logarithmic scale.
+- **Motifs only.** The Envelope peak gap setting is gone; the Annotator groups
+  pulses with a fixed internal gap, and **Pulse gap** is the one setting that
+  splits one motif from the next (explained in its ⓘ).
+- **Batch edit.** Tick any number of selections (shift-click for a range, or
+  "all") and delete them, relabel them, or apply the current band to them in one
+  step. Every batch action can be undone.
+- **Numbering restarts** whenever the table is emptied or new audio is loaded.
+- **Export** to a Raven selection table (`.txt`), a Raven table with
+  Begin File / File Offset columns, or a generic CSV (seconds and Hz); optionally
+  only the ticked selections.
+- The panels below the power spectrum are no longer cut off: the tab scrolls, the
+  lower boxes wrap, and the readout/actions and detection/selection rows can be
+  collapsed.
 
-## Processing spinners
+## Loaded Audio
 
-The busy-overlay spinner already used for peak detection and audio import
-now also covers the Multiplot render, Oscillogram Stack/Zoom and Habitus
-draw, batch bandpass filtering, spectral metrics computation, and the
-Annotator's detect-in-view/detect-in-span. These were previously silent for
-however long the computation took, which on a long or high-sample-rate
-recording could freeze the window for several seconds with no sign of life.
-Export buttons and other bounded, fast operations are unchanged.
+The Loaded Audio pane at the bottom of the window now has a ▾/▸ button to fold it
+away, and remembers whether you left it open.
 
 ## 📥 Which file do I download?
 
 Pick the file that matches your operating system and processor.
 
 ### Windows
-| File | Use |
-|------|-----|
-| `Rthoptera.Desk_0.6.0_x64-setup.exe` | **Recommended** — standard installer, just double-click |
-| `Rthoptera.Desk_0.6.0_x64_en-US.msi` | Alternative for managed/enterprise deployment |
+
+| File                                 | Use                                                     |
+| ------------------------------------ | ------------------------------------------------------- |
+| `Rthoptera.Desk_0.7.0_x64-setup.exe` | **Recommended** — standard installer, just double-click |
+| `Rthoptera.Desk_0.7.0_x64_en-US.msi` | Alternative for managed/enterprise deployment           |
 
 ### macOS
-| File | Use |
-|------|-----|
-| `Rthoptera.Desk_0.6.0_aarch64.dmg` | Apple Silicon (M1/M2/M3/M4) |
-| `Rthoptera.Desk_0.6.0_x64.dmg` | Intel Macs |
 
-Not sure which Mac you have? Click the  menu → **About This Mac**. "Apple M…"
+| File                               | Use                         |
+| ---------------------------------- | --------------------------- |
+| `Rthoptera.Desk_0.7.0_aarch64.dmg` | Apple Silicon (M1/M2/M3/M4) |
+| `Rthoptera.Desk_0.7.0_x64.dmg`     | Intel Macs                  |
+
+Not sure which Mac you have? Click the Apple menu → **About This Mac**. "Apple M…"
 means Apple Silicon; "Intel" means the x64 build.
 
 ### Linux (x86_64)
-| File | Use |
-|------|-----|
-| `Rthoptera.Desk_0.6.0_amd64.AppImage` | **Recommended** — works on most distros. Run `chmod +x` then launch |
-| `Rthoptera.Desk_0.6.0_amd64.deb` | Debian, Ubuntu, Mint, etc. |
-| `Rthoptera.Desk-0.6.0-1.x86_64.rpm` | Fedora, RHEL, openSUSE, etc. |
+
+| File                                  | Use                                                                 |
+| ------------------------------------- | ------------------------------------------------------------------- |
+| `Rthoptera.Desk_0.7.0_amd64.AppImage` | **Recommended** — works on most distros. Run `chmod +x` then launch |
+| `Rthoptera.Desk_0.7.0_amd64.deb`      | Debian, Ubuntu, Mint, etc.                                          |
+| `Rthoptera.Desk-0.7.0-1.x86_64.rpm`   | Fedora, RHEL, openSUSE, etc.                                        |
 
 > **Note:** Builds are currently 64-bit Intel/AMD (x86_64) for Windows and
 > Linux, plus both Intel and Apple Silicon for macOS. ARM Linux and
 > Windows-on-ARM are not yet supported.
 
-*(The `*.app.tar.gz` files are used by the auto-updater and are not meant for
-manual installation.)*
+_(The `*.app.tar.gz` files are used by the auto-updater and are not meant for
+manual installation.)_

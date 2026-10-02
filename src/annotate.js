@@ -70,6 +70,10 @@
   // enough to fuse the pulses inside a pulse into one smear. 4 ms sits
   // below a typical inter-pulse interval while still resolving a carrier.
   const AN_WINDOW_S = 0.004;
+  // Envelope peaks closer than this belong to one pulse. The Annotator is for
+  // motifs only, so this is not a user setting: it only has to be tight enough
+  // that pulses are formed before the motif-level Pulse gap is applied.
+  const AN_ENVPEAK_GAP_MS = 30;
   const AN_MAX_TIME_BINS = 1400;
   const AN_MAX_WAVE_POINTS = 2400;
 
@@ -135,6 +139,8 @@
   let anPeakHz = null;
   let anSpecCache = null; // { key, cols, bins, db, fLo, fHi, min, max }
   let anWaveCache = null; // { key, times, lows, highs }
+  const anChecked = new Set(); // ids ticked in the Selections list, for batch edits
+  let anLastChecked = null; // id last ticked, anchor for shift-click ranges
   let anSelIndex = null; // index into `annotations` of the clicked box
   let anNote = { text: "", ok: true, at: 0 };
   let anDrag = null;
@@ -1533,6 +1539,12 @@
   // app-wide list, the spectrogram, and this tab's own list can never
   // show three different tables.
   function anAfterChange(redrawApp = true) {
+    // Starting from scratch (table emptied) restarts the numbering.
+    if (!annotations.length) nextAid = 1;
+    // Forget checks for rows that no longer exist.
+    anChecked.forEach((id) => {
+      if (!annotations.some((a) => a.id === id)) anChecked.delete(id);
+    });
     if (typeof refreshAnnotList === "function") refreshAnnotList();
     anRefreshList();
     anRedraw();
@@ -1584,7 +1596,7 @@
     }
     const pulses = pkGroupPulses(
       envPeaks,
-      anNum("anEnvPeakGap", 30),
+      AN_ENVPEAK_GAP_MS,
       null,
       false,
       0,
@@ -1730,8 +1742,11 @@
     order.forEach(({ a, i }) => {
       const row = document.createElement("div");
       row.className = "arow" + (i === anSelIndex ? " sel" : "");
-      row.style.gridTemplateColumns = "9px 26px 1fr 88px 60px 16px";
+      row.style.gridTemplateColumns = "14px 9px 26px 1fr 88px 60px 16px";
       row.innerHTML =
+        '<input type="checkbox" class="an-chk"' +
+        (anChecked.has(a.id) ? " checked" : "") +
+        ' style="margin:0">' +
         '<span style="width:9px;height:9px;border-radius:2px;background:' +
         anColorFor(a.label || "motif") +
         '"></span>' +
@@ -1753,6 +1768,22 @@
         "k</span>" +
         '<button class="xbtn" title="Delete">×</button>';
       row.addEventListener("click", (e) => {
+        if (e.target.classList.contains("an-chk")) {
+          e.stopPropagation();
+          if (e.shiftKey && anLastChecked != null) {
+            const ids = order.map((o) => o.a.id);
+            const i0 = ids.indexOf(anLastChecked),
+              i1 = ids.indexOf(a.id);
+            if (i0 >= 0 && i1 >= 0)
+              ids
+                .slice(Math.min(i0, i1), Math.max(i0, i1) + 1)
+                .forEach((id) => anChecked.add(id));
+          } else if (e.target.checked) anChecked.add(a.id);
+          else anChecked.delete(a.id);
+          anLastChecked = a.id;
+          anRefreshList();
+          return;
+        }
         if (e.target.classList.contains("xbtn")) {
           e.stopPropagation();
           deleteAnnot(a.id);
@@ -1782,6 +1813,147 @@
         "None yet. Drag a time span on the waveform, check the band, then Add.";
       host.appendChild(d);
     }
+
+    const nChk = anChecked.size;
+    const cc = $("anCheckedCount");
+    if (cc) cc.textContent = nChk ? nChk + " checked" : "";
+    const all = $("anCheckAll");
+    if (all) {
+      all.checked = !!annotations.length && nChk === annotations.length;
+      all.indeterminate = nChk > 0 && nChk < annotations.length;
+    }
+    ["btnAnDelChecked", "btnAnRelabelChecked", "btnAnBandChecked"].forEach(
+      (id) => {
+        const b = $(id);
+        if (b) b.disabled = !nChk;
+      },
+    );
+  }
+
+  // ── batch edits on the checked rows ────────────────────────────────
+
+  function anCheckAll(on) {
+    anChecked.clear();
+    if (on) annotations.forEach((a) => anChecked.add(a.id));
+    anRefreshList();
+  }
+
+  function anDeleteChecked() {
+    const n = anChecked.size;
+    if (!n) return;
+    if (n > 1 && !confirm("Delete " + n + " checked selections?")) return;
+    annotSnapshot("delete " + n + " selections");
+    annotations = annotations.filter((a) => !anChecked.has(a.id));
+    anChecked.clear();
+    anSelIndex = null;
+    anAfterChange();
+    anSay("deleted " + n + " selection" + (n === 1 ? "" : "s"));
+  }
+
+  function anRelabelChecked() {
+    const to = ($("anLabel")?.value || "").trim();
+    if (!anChecked.size) return;
+    if (!to) {
+      anSay("type the species name in the Species box first", false);
+      return;
+    }
+    annotSnapshot("relabel checked → " + to);
+    const n = anChecked.size;
+    annotations.forEach((a) => {
+      if (anChecked.has(a.id)) a.label = to;
+    });
+    anAfterChange();
+    anSay("relabelled " + n + " as ‘" + to + "’");
+  }
+
+  function anBandChecked() {
+    if (!anChecked.size) return;
+    if (!st.band) {
+      anSay("no band yet — select a motif, or load a band", false);
+      return;
+    }
+    annotSnapshot("apply band to checked");
+    const n = anChecked.size;
+    annotations.forEach((a) => {
+      if (anChecked.has(a.id)) {
+        a.fLo = st.band[0];
+        a.fHi = st.band[1];
+      }
+    });
+    anAfterChange();
+    anSay("band applied to " + n + " selections");
+  }
+
+  // ── export ────────────────────────────────────────────────────────
+
+  // Raven's selection table is a tab-delimited text file: Selection, View,
+  // Channel, Begin Time (s), End Time (s), Low Freq (Hz), High Freq (Hz),
+  // then free columns — "Annotation" is the one read as the label. The
+  // optional Begin File / File Offset (s) tie each row to its recording,
+  // which Raven needs when one table spans several files.
+  async function anExport() {
+    const checkedOnly = $("anExportCheckedOnly")?.checked;
+    let rows = annotations.filter((a) => !checkedOnly || anChecked.has(a.id));
+    if (!rows.length) {
+      anSay(checkedOnly ? "nothing checked" : "no selections to export", false);
+      return;
+    }
+    rows = rows.slice().sort((a, b) => a.start - b.start);
+    const fmt = $("anExportFmt")?.value || "raven";
+    const file = currentAudioFileName || "";
+    const base = file.replace(/\.[^/.]+$/, "") || "annotations";
+    const f6 = (x) => x.toFixed(6);
+    const f2 = (x) => x.toFixed(2);
+    let txt, name, mime;
+    if (fmt === "csv") {
+      txt =
+        "selection,begin_s,end_s,low_hz,high_hz,label,file\n" +
+        rows
+          .map((a, i) =>
+            [
+              i + 1,
+              f6(a.start),
+              f6(a.end),
+              f2(a.fLo),
+              f2(a.fHi),
+              '"' + String(a.label || "motif").replace(/"/g, '""') + '"',
+              '"' + file.replace(/"/g, '""') + '"',
+            ].join(","),
+          )
+          .join("\n") +
+        "\n";
+      name = base + "_annotations.csv";
+      mime = "text/csv";
+    } else {
+      const withFile = fmt === "ravenfile";
+      txt =
+        "Selection\tView\tChannel\tBegin Time (s)\tEnd Time (s)\tLow Freq (Hz)\tHigh Freq (Hz)\tDelta Time (s)\tDelta Freq (Hz)" +
+        (withFile ? "\tBegin File\tFile Offset (s)" : "") +
+        "\tAnnotation\n" +
+        rows
+          .map((a, i) =>
+            [
+              i + 1,
+              "Spectrogram 1",
+              1,
+              f6(a.start),
+              f6(a.end),
+              f2(a.fLo),
+              f2(a.fHi),
+              f6(a.end - a.start),
+              f2(a.fHi - a.fLo),
+            ]
+              .concat(withFile ? [file, f6(a.start)] : [])
+              .concat([a.label || "motif"])
+              .join("\t"),
+          )
+          .join("\n") +
+        "\n";
+      name = base + "_annotations_raven.selections.txt";
+      mime = "text/plain";
+    }
+    await dlFile(name, txt, mime, { exactName: true });
+    anSay("exported " + rows.length + " selection" + (rows.length === 1 ? "" : "s"));
   }
 
   // Rename every selection carrying one label. The way to fix a species
@@ -2091,4 +2263,9 @@
   window.anZoomToSpan = anZoomToSpan;
   window.anRedraw = anRedraw;
   window.anRefreshList = anRefreshList;
+  window.anCheckAll = anCheckAll;
+  window.anDeleteChecked = anDeleteChecked;
+  window.anRelabelChecked = anRelabelChecked;
+  window.anBandChecked = anBandChecked;
+  window.anExport = anExport;
 })();
