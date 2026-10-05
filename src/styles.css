@@ -136,6 +136,11 @@
         border-radius: 8px;
         padding: 8px;
       }
+      #analyzerPanels > .panel {
+        flex: 1 1 200px;
+        min-width: 190px;
+        max-width: 330px;
+      }
       .row-collapse-bar {
         display: flex;
         align-items: center;
@@ -148,6 +153,15 @@
         color: var(--txt2);
         cursor: pointer;
         user-select: none;
+      }
+      .panel-head {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 5px;
+      }
+      .panel-head h2 {
+        margin: 0;
       }
       .info-icon {
         color: var(--txt2);

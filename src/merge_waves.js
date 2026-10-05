@@ -707,8 +707,8 @@
   }
 
   window.addEventListener("resize", () => {
-    const t = $("maintab-merge");
-    if (t && t.classList.contains("active")) mwDrawPreview();
+    const v = $("mainview-merge");
+    if (v && v.offsetParent !== null) mwDrawPreview();
   });
 
   // ── exports ───────────────────────────────────────────────────────

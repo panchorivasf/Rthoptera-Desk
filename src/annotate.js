@@ -46,9 +46,8 @@
 // ── What is reused rather than reimplemented ──
 //
 // The `annotations` array, `annotSnapshot`/`undoAnnot`, `refreshAnnotList`,
-// `exportAnnotations`, `applyBandpass`, `fft`, `cmap`, and
-// pkFindEnvPeaks/pkGroupPulses/pkGroupMotifs all come from main.js. A change
-// to how Rthoptera groups envelope peaks changes this module too, and the two can
+// `exportAnnotations`, `applyBandpass`, `fft` and `cmap` all come from
+// main.js, so a change to any of them changes this module too and the two can
 // never drift. The only local numerics are the ones that did not already
 // exist: the Welch spectrum, the threshold band, a view-local
 // spectrogram, and a band-limited envelope (pkComputeEnv reads the global
@@ -70,10 +69,6 @@
   // enough to fuse the pulses inside a pulse into one smear. 4 ms sits
   // below a typical inter-pulse interval while still resolving a carrier.
   const AN_WINDOW_S = 0.004;
-  // Envelope peaks closer than this belong to one pulse. The Annotator is for
-  // motifs only, so this is not a user setting: it only has to be tight enough
-  // that pulses are formed before the motif-level Pulse gap is applied.
-  const AN_ENVPEAK_GAP_MS = 30;
   const AN_MAX_TIME_BINS = 1400;
   const AN_MAX_WAVE_POINTS = 2400;
 
@@ -1370,9 +1365,99 @@
     cv._anWired = true;
     cv.style.cursor = "default";
 
-    // Click selects a committed box and adopts its label and band. There
-    // is deliberately no drag-to-draw here: see the header.
+    // ── Edge editing ──────────────────────────────────────────────────
+    // Drag the left or right edge of a box to change its start or end. There
+    // is still no drag-to-DRAW here (see the header): this only adjusts a box
+    // that already exists, along the time axis, and leaves its band alone.
+    const EDGE_PX = 6;
+    let edgeDrag = null; // { i, edge: "start" | "end", moved }
+    let swallowClick = false;
+    const edgeAt = (e) => {
+      const w = cv.clientWidth,
+        h = cv.clientHeight;
+      let best = null;
+      annotations.forEach((a, i) => {
+        const y0 = anFy(a.fHi, h),
+          y1 = anFy(a.fLo, h);
+        if (e.offsetY < y0 - 4 || e.offsetY > y1 + 4) return;
+        [
+          ["start", anTx(a.start, w)],
+          ["end", anTx(a.end, w)],
+        ].forEach(([edge, x]) => {
+          const d = Math.abs(e.offsetX - x);
+          if (d > EDGE_PX) return;
+          // The selected box wins ties, so a neighbour's touching edge
+          // cannot steal the grab.
+          const score = d - (i === anSelIndex ? 0.5 : 0);
+          if (!best || score < best.score) best = { i, edge, score };
+        });
+      });
+      return best;
+    };
+
+    cv.addEventListener("mousemove", (e) => {
+      if (edgeDrag || !anReady()) return;
+      cv.style.cursor = edgeAt(e) ? "ew-resize" : "default";
+    });
+
+    cv.addEventListener("mousedown", (e) => {
+      if (e.button !== 0 || !anReady()) return;
+      const hit = edgeAt(e);
+      if (!hit) return;
+      edgeDrag = { ...hit, moved: false };
+      const w = cv.clientWidth;
+      const MIN = 0.001; // keep at least 1 ms between the edges
+      const onMove = (ev) => {
+        const r = cv.getBoundingClientRect();
+        const a = annotations[edgeDrag.i];
+        if (!a) return;
+        let t = anXt(ev.clientX - r.left, w);
+        t = Math.max(0, Math.min(duration || t, t));
+        if (!edgeDrag.moved) {
+          annotSnapshot("resize annotation #" + annotRank(a));
+          edgeDrag.moved = true;
+        }
+        if (edgeDrag.edge === "start") a.start = Math.min(t, a.end - MIN);
+        else a.end = Math.max(t, a.start + MIN);
+        anDrawSpec();
+        anUpdateReadout();
+      };
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        const d = edgeDrag;
+        edgeDrag = null;
+        cv.style.cursor = "default";
+        if (d && d.moved) {
+          swallowClick = true; // the click that follows is the end of a drag
+          anSelIndex = d.i;
+          anAfterChange();
+          const a = annotations[d.i];
+          if (a)
+            anSay(
+              "#" +
+                annotRank(a) +
+                " now " +
+                a.start.toFixed(3) +
+                "–" +
+                a.end.toFixed(3) +
+                " s (" +
+                ((a.end - a.start) * 1000).toFixed(1) +
+                " ms)",
+            );
+        }
+      };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+      e.preventDefault();
+    });
+
+    // Click selects a committed box and adopts its label and band.
     cv.addEventListener("click", (e) => {
+      if (swallowClick) {
+        swallowClick = false;
+        return;
+      }
       if (!anReady()) return;
       const w = cv.clientWidth,
         h = cv.clientHeight;
@@ -1383,7 +1468,7 @@
         const a = annotations[i];
         anSay(
           "selected #" +
-            a.id +
+            annotRank(a) +
             " (" +
             (a.label || "motif") +
             ") — its band is now current",
@@ -1493,7 +1578,7 @@
     anAfterChange();
     anSay(
       "added #" +
-        a.id +
+        annotRank(a) +
         " as ‘" +
         a.label +
         "’ — " +
@@ -1529,10 +1614,11 @@
       return;
     }
     const a = annotations[anSelIndex];
+    const rank = annotRank(a); // before it is gone
     deleteAnnot(a.id);
     anSelIndex = null;
     anAfterChange(false);
-    anSay("deleted #" + a.id);
+    anSay("deleted #" + rank);
   }
 
   // Everything that mutates `annotations` funnels through here, so the
@@ -1581,43 +1667,47 @@
       ? rawSamples.subarray(lo, hi)
       : rawSamples.slice(lo, hi);
     const filtered = applyBandpass(slice, sampleRate, st.band[0], st.band[1]);
+    // Motif detector: the band-limited envelope (0–1, normalised to its own
+    // maximum within the searched stretch), cut where it falls below the
+    // threshold; stretches separated by less than the gap are one motif;
+    // anything shorter than the minimum duration is discarded. The same idea
+    // as the Temporal Analysis Amplitude Detector, but run on the band.
     const env = anEnvelope(filtered, anNum("anSmooth", 1));
-    const envPeaks = pkFindEnvPeaks(
-      env,
-      anNum("anEnvPeakWin", 1),
-      anNum("anEnvPeakThr", 10),
-      anNum("anDetThr", 5),
-      null,
-      0,
-    );
-    if (!envPeaks.length) {
-      anSay("no envelope peaks inside this band — lower the detection threshold", false);
+    const thr = anNum("anDetThr", 10) / 100;
+    const gapSamp = Math.round((anNum("anMotifGap", 200) / 1000) * sampleRate);
+    const minSamp = Math.round((anNum("anMinDur", 10) / 1000) * sampleRate);
+    const segs = [];
+    let inSeg = false,
+      s0 = 0;
+    for (let i = 0; i < env.length; i++) {
+      const above = env[i] >= thr;
+      if (!inSeg && above) {
+        inSeg = true;
+        s0 = i;
+      } else if (inSeg && !above) {
+        segs.push([s0, i]);
+        inSeg = false;
+      }
+    }
+    if (inSeg) segs.push([s0, env.length - 1]);
+    if (!segs.length) {
+      anSay("nothing above the threshold — lower it or widen the band", false);
       return;
     }
-    const pulses = pkGroupPulses(
-      envPeaks,
-      AN_ENVPEAK_GAP_MS,
-      null,
-      false,
-      0,
-      0,
-    );
-    const motifs = pkGroupMotifs(pulses, anNum("anPulseGap", 200));
-    // Envelope peak times are relative to the slice handed to pkFindEnvPeaks.
+    const merged = [];
+    segs.forEach(([a0, a1]) => {
+      const last = merged[merged.length - 1];
+      if (last && a0 - last[1] < gapSamp) last[1] = a1;
+      else merged.push([a0, a1]);
+    });
+    // Positions are relative to the slice handed to the filter.
     const t0 = lo / sampleRate;
-    const pad = typeof pkPulsePadSec === "function" ? pkPulsePadSec() : 0.0005;
-
-    const spans = motifs
-      .map((m) => {
-        const lastPulse = m[m.length - 1];
-        return [
-          Math.max(0, t0 + m[0][0].time - pad),
-          Math.min(
-            duration || Infinity,
-            t0 + lastPulse[lastPulse.length - 1].time + pad,
-          ),
-        ];
-      })
+    const spans = merged
+      .filter(([a0, a1]) => a1 - a0 >= minSamp)
+      .map(([a0, a1]) => [
+        Math.max(0, t0 + a0 / sampleRate),
+        Math.min(duration || Infinity, t0 + a1 / sampleRate),
+      ])
       .filter(([a, b]) => b > a);
 
     // Triaged before the snapshot: a run that adds nothing should not
@@ -1751,7 +1841,7 @@
         anColorFor(a.label || "motif") +
         '"></span>' +
         '<span style="color:var(--txt3)">#' +
-        a.id +
+        (order.findIndex((o) => o.a === a) + 1) +
         "</span>" +
         '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
         (a.label || "motif") +
@@ -1886,6 +1976,33 @@
 
   // ── export ────────────────────────────────────────────────────────
 
+  // "XC1180460" (any case, optional space) anywhere in the loaded file name.
+  function anXcFromFileName() {
+    const m = /XC\s*(\d+)/i.exec(currentAudioFileName || "");
+    return m ? m[1] : "";
+  }
+
+  // Shows the Xeno-canto fields when that format is chosen, filling the
+  // recording number from the file name (…XC1180460…) and the annotator from
+  // the last export.
+  function anOnExportFmt() {
+    const xc = $("anExportFmt")?.value === "xc";
+    const box = $("anXcFields");
+    if (box) box.style.display = xc ? "inline-flex" : "none";
+    if (!xc) return;
+    const nr = $("anXcNr"),
+      au = $("anXcAuthor");
+    // A number in the file name wins over whatever is typed (it may be left
+    // over from the previous recording); otherwise the field is left alone.
+    const fromName = anXcFromFileName();
+    if (nr && fromName) nr.value = fromName;
+    if (au && !au.value) {
+      try {
+        au.value = localStorage.getItem("rt_xc_author") || "";
+      } catch (e) {}
+    }
+  }
+
   // Raven's selection table is a tab-delimited text file: Selection, View,
   // Channel, Begin Time (s), End Time (s), Low Freq (Hz), High Freq (Hz),
   // then free columns — "Annotation" is the one read as the label. The
@@ -1905,7 +2022,64 @@
     const f6 = (x) => x.toFixed(6);
     const f2 = (x) => x.toFixed(2);
     let txt, name, mime;
-    if (fmt === "csv") {
+    if (fmt === "xc") {
+      // The file name is checked first: "XC1180460.wav" gives 1180460. Only when
+      // it carries no XC number is the typed field used.
+      const xcNr =
+        anXcFromFileName() ||
+        ($("anXcNr")?.value || "").replace(/\D+/g, "");
+      const who = ($("anXcAuthor")?.value || "").trim();
+      if (!xcNr) {
+        anSay("enter the Xeno-canto recording number first", false);
+        return;
+      }
+      try {
+        localStorage.setItem("rt_xc_author", who);
+      } catch (e) {}
+      const pad2 = (n) => String(n).padStart(2, "0");
+      const d = new Date();
+      const stamp =
+        d.getFullYear() +
+        "-" +
+        pad2(d.getMonth() + 1) +
+        "-" +
+        pad2(d.getDate()) +
+        " " +
+        pad2(d.getHours()) +
+        ":" +
+        pad2(d.getMinutes()) +
+        ":" +
+        pad2(d.getSeconds());
+      // Optional descriptors, applied to every annotation in this export;
+      // blank means null.
+      const opt = (id) => ($(id)?.value || "").trim() || null;
+      const soundType = opt("anXcSoundType"),
+        sex = opt("anXcSex"),
+        lifeStage = opt("anXcLife"),
+        remarks = opt("anXcRemarks");
+      const set = {
+        set_name: "Annotation set for XC" + xcNr,
+        set_creator: who || null,
+        set_creation_date: stamp,
+        set_remarks: null,
+        annotations: rows.map((a) => ({
+          xc_nr: xcNr,
+          scientific_name: a.label || null,
+          annotator: who || null,
+          start_time: Math.round(a.start * 10000) / 10000,
+          end_time: Math.round(a.end * 10000) / 10000,
+          frequency_high: Math.round(a.fHi),
+          frequency_low: Math.round(a.fLo),
+          sound_type: soundType,
+          sex: sex,
+          life_stage: lifeStage,
+          annotation_remarks: remarks,
+        })),
+      };
+      txt = JSON.stringify(set, null, 4) + "\n";
+      name = "XC" + xcNr + " annotation set.json";
+      mime = "application/json";
+    } else if (fmt === "csv") {
       txt =
         "selection,begin_s,end_s,low_hz,high_hz,label,file\n" +
         rows
@@ -1962,13 +2136,18 @@
   // that path wrote) get a real species attached.
   function anRelabelAll() {
     const from = $("anRelabelFrom")?.value;
-    const to = ($("anLabel")?.value || "").trim();
+    // The new name is typed right here; the Species box is only a fallback.
+    const to = (
+      $("anRelabelTo")?.value ||
+      $("anLabel")?.value ||
+      ""
+    ).trim();
     if (!from) {
       anSay("pick which label to rename", false);
       return;
     }
     if (!to) {
-      anSay("type the new species name in the Species box first", false);
+      anSay("type the new species name next to the arrow", false);
       return;
     }
     if (from === to) {
@@ -1991,6 +2170,8 @@
       delete anLabelColors[from];
     }
     st.label = to;
+    const rt = $("anRelabelTo");
+    if (rt) rt.value = "";
     anSyncControls();
     anAfterChange();
     anSay(
@@ -2143,6 +2324,7 @@
   function anReset() {
     anStale = false;
     anLastFile = currentAudioFileName || "";
+    if ($("anExportFmt")?.value === "xc") anOnExportFmt();
     view.t0 = 0;
     view.dur = duration || 0;
     view.f0 = 0;
@@ -2268,4 +2450,5 @@
   window.anRelabelChecked = anRelabelChecked;
   window.anBandChecked = anBandChecked;
   window.anExport = anExport;
+  window.anOnExportFmt = anOnExportFmt;
 })();

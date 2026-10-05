@@ -191,7 +191,7 @@
       function setupCollapsiblePanels() {
         document
           .querySelectorAll(
-            "#mainview-envpeaks [data-collapse-row], #mainview-annotate [data-collapse-row]",
+            "#mainview-envpeaks [data-collapse-row], #mainview-annotate [data-collapse-row], #mainview-analyzer [data-collapse-row]",
           )
           .forEach((row) => {
             if (row.dataset.collapseReady === "true") return;
@@ -214,6 +214,10 @@
               btn.title = collapsed ? "Expand " + label : "Collapse " + label;
               if (typeof pkDrawEnvelope === "function")
                 requestAnimationFrame(() => pkDrawEnvelope());
+              // The Annotation tab's power spectrum fills the height the menus
+              // beside it leave, so it needs redrawing when they fold.
+              if (row.closest("#mainview-annotate") && typeof anRedraw === "function")
+                requestAnimationFrame(() => anRedraw());
             };
             bar.addEventListener("click", () => set(row.style.display !== "none"));
 
@@ -227,10 +231,72 @@
 
             row.parentNode.insertBefore(bar, row);
             row.dataset.collapseReady = "true";
-            // Temporal Analysis rows start folded; Annotation rows open.
-            set(!!row.closest("#mainview-envpeaks"));
+            // Temporal Analysis rows start folded, and so does anything marked
+            // data-collapse-default="closed" (the log); the rest start open.
+            set(
+              row.dataset.collapseDefault
+                ? row.dataset.collapseDefault === "closed"
+                : !!row.closest("#mainview-envpeaks"),
+            );
           });
         setupLibraryCollapse();
+        setupPreprocessCollapse();
+      }
+
+      // Preprocessing: every sidebar panel (Audio Info, Edit Audio, Batch Edit)
+      // and every Edit Audio sub-menu (Time selection, Trim, Bandpass, …) gets
+      // a ▾/▸ button in its header.
+      function setupPreprocessCollapse() {
+        const root = $("mainview-preprocess");
+        if (!root) return;
+        const makeBtn = (head, bodyNodes, extra) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "panel-toggle";
+          head.insertBefore(btn, head.firstChild);
+          const set = (collapsed) => {
+            btn.textContent = collapsed ? "▸" : "▾";
+            btn.title = collapsed ? "Expand" : "Collapse";
+            bodyNodes().forEach((n) => {
+              if (n.dataset.ppDisplay === undefined)
+                n.dataset.ppDisplay = n.style.display || "";
+              n.style.display = collapsed ? "none" : n.dataset.ppDisplay;
+            });
+            if (extra) extra(collapsed);
+          };
+          btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            set(btn.textContent === "▾");
+          });
+          set(false);
+        };
+        root.querySelectorAll(".panel").forEach((panel) => {
+          if (panel.dataset.collapseReady === "true") return;
+          const h2 = panel.querySelector(":scope > h2");
+          if (!h2) return;
+          panel.dataset.collapseReady = "true";
+          const head = document.createElement("div");
+          head.className = "panel-head";
+          panel.insertBefore(head, h2);
+          head.appendChild(h2);
+          makeBtn(head, () =>
+            Array.from(panel.children).filter((n) => n !== head),
+          );
+          // Sub-menus inside Edit Audio: a bordered block whose first child is
+          // its bold title.
+          panel.querySelectorAll(":scope > div > div").forEach((sub) => {
+            const title = sub.firstElementChild;
+            if (!title || title.style.fontWeight !== "600") return;
+            if (sub.dataset.collapseReady === "true") return;
+            sub.dataset.collapseReady = "true";
+            title.style.display = "flex";
+            title.style.alignItems = "center";
+            title.style.gap = "6px";
+            makeBtn(title, () =>
+              Array.from(sub.children).filter((n) => n !== title),
+            );
+          });
+        });
       }
 
       // Loaded Audio panel (bottom of the window): ▾/▸ folds the grid away.
@@ -359,10 +425,46 @@
       // first column, and used by Summarize to count individuals correctly
       // instead of guessing from file names.
       let currentSpecimenId = "";
+      // The result tables copy the metadata in when they are computed, so an
+      // edit to a metadata field afterwards would otherwise leave Specimen ID,
+      // Species, Country, Locality and Temp showing (and exporting) the old
+      // values until the metrics were recomputed. Every setter below calls this
+      // to write the new values into whatever tables already exist.
+      function refreshResultsMetadata() {
+        try {
+          const meta = {
+            temp_c: currentTempC,
+            specimen_id: currentSpecimenId,
+            species: currentSpecies,
+            country: currentCountry,
+            locality: currentLocality,
+          };
+          const apply = (row) => {
+            if (!row) return;
+            Object.keys(meta).forEach((k) => {
+              if (k in row) row[k] = meta[k];
+            });
+          };
+          [
+            pkEnvPeakData,
+            pkPulseData,
+            pkMotifData,
+            pkMotifSeqData,
+            spectralMetricsRows,
+            detMeasurements,
+          ].forEach((tbl) => Array.isArray(tbl) && tbl.forEach(apply));
+          apply(pkSummaryData);
+          if (pkSummaryData && typeof pkShowTable === "function")
+            pkShowTable(pkCurrentTable);
+        } catch (e) {
+          // Tables not initialised yet (called during startup): nothing to update.
+        }
+      }
       function setCurrentSpecimenId(v) {
         currentSpecimenId = v;
         const entry = audioLibrary.find((e) => e.id === audioLibActiveId);
         if (entry) entry.specimenId = v;
+        refreshResultsMetadata();
       }
       // Same idea as Specimen ID: manually tagged per recording, carried
       // into every exported table right after Specimen ID.
@@ -371,6 +473,7 @@
         currentSpecies = v;
         const entry = audioLibrary.find((e) => e.id === audioLibActiveId);
         if (entry) entry.species = v;
+        refreshResultsMetadata();
       }
       // Country sits above locality in the geographic hierarchy, so it is
       // ordered before it everywhere: the toolbar, the metadata file and the
@@ -403,12 +506,14 @@
         currentCountry = v;
         const entry = audioLibrary.find((e) => e.id === audioLibActiveId);
         if (entry) entry.country = v;
+        refreshResultsMetadata();
       }
       let currentLocality = "";
       function setCurrentLocality(v) {
         currentLocality = v;
         const entry = audioLibrary.find((e) => e.id === audioLibActiveId);
         if (entry) entry.locality = v;
+        refreshResultsMetadata();
       }
       // Air temperature at the time of recording. Free text rather than a
       // number input: stridulation rate is strongly temperature-dependent, so
@@ -419,6 +524,7 @@
         currentTempC = v;
         const entry = audioLibrary.find((e) => e.id === audioLibActiveId);
         if (entry) entry.tempC = v;
+        refreshResultsMetadata();
       }
 
       // Save/load Specimen ID + Species + Locality as a standalone .json —
@@ -759,6 +865,7 @@
         const fd = audioEdits.find((e) => e.type === "freqdrop");
         if (fd && fd.pct > 0) sig = applyFreqDrop(sig, fd.pct);
 
+        const prevNyq = sampleRate ? sampleRate / 2 : 0; // for the frequency view below
         rawSamples = sig instanceof Float32Array ? sig : Float32Array.from(sig);
         sampleRate = sr;
         duration = rawSamples.length / sr;
@@ -810,6 +917,18 @@
           viewStart = 0;
           $("zoomSlider").value = 50;
         } else {
+          // A downsample moves the Nyquist: a frequency view that spanned the
+          // old range must follow it (otherwise the spectrogram keeps an
+          // empty band above the new Nyquist), and a zoomed view is clamped.
+          if (Math.abs(nyq - prevNyq) > 1) {
+            const full = fvMax >= prevNyq - 1;
+            fvMax = full ? nyq : Math.min(fvMax, nyq);
+            fvMin = Math.min(fvMin, fvMax * 0.9);
+            $("fMinSlider").value = Math.round((fvMin / nyq) * 1000);
+            $("fMaxSlider").value = Math.round((fvMax / nyq) * 1000);
+            $("fMinLbl").textContent = fmtHz(fvMin);
+            $("fMaxLbl").textContent = fmtHz(fvMax);
+          }
           // Keep the view in-bounds after a trim shortened the signal.
           viewDur = Math.min(viewDur, duration) || duration;
           viewStart = Math.max(0, Math.min(viewStart, duration - viewDur));
@@ -2320,9 +2439,9 @@
             // Replace any previous downsample tag rather than stacking them —
             // the samples already carry the earlier rate change.
             entry.editTags = entry.editTags.filter(
-              (t) => !/^ds[\d.]+k$/.test(t),
+              (t) => !/^ds[\d.]+k$/.test(t) && !/dsp$/.test(t),
             );
-            entry.editTags.push("ds" + freqSuffixLabel(targetSr) + "k");
+            entry.editTags.push(freqSuffixLabel(targetSr) + "dsp");
             count++;
             if (entry.id === audioLibActiveId) touchedActive = true;
           }
@@ -2360,11 +2479,21 @@
       // mutually exclusive: each applicable one appends its own tag.
       function defaultEditSuffix() {
         const parts = [];
-        const bp = audioEdits.find((e) => e.type === "bandpass");
-        if (bp) {
-          const nyq = origSampleRate / 2;
-          if (bp.hp > 0) parts.push(freqSuffixLabel(bp.hp) + "hpf");
-          if (bp.lp < nyq) parts.push(freqSuffixLabel(bp.lp) + "lpf");
+        // Walk the chain in order: a bandpass is set against the Nyquist of
+        // the rate it ran at, which is the downsampled one if a downsample
+        // came before it. Comparing against the original rate tagged a
+        // full-band filter on a downsampled file as a "96lpf".
+        let sr = origSampleRate;
+        for (const ed of audioEdits) {
+          if (ed.type === "resample") {
+            sr = ed.targetSr;
+            // Tag = the new sampling rate in kHz.
+            parts.push(freqSuffixLabel(sr) + "dsp");
+          } else if (ed.type === "bandpass") {
+            const nyq = sr / 2;
+            if (ed.hp > 0) parts.push(freqSuffixLabel(ed.hp) + "hpf");
+            if (ed.lp < nyq - 1) parts.push(freqSuffixLabel(ed.lp) + "lpf");
+          }
         }
         if (audioEdits.some((e) => e.type === "trim")) parts.push("trimmed");
         return parts.length ? "_" + parts.join("_") : "_copy";
@@ -3181,7 +3310,7 @@
               if (cx2 - cx1 > 28) {
                 ctx.font = "10px Consolas,monospace";
                 ctx.fillStyle = sel ? "#aaffaa" : "#3fb950";
-                ctx.fillText("#" + a.id, cx1 + 3, cy1 + 11);
+                ctx.fillText("#" + annotRank(a), cx1 + 3, cy1 + 11);
               }
             } else {
               ctx.globalAlpha = 0.2;
@@ -3769,7 +3898,7 @@
             refreshAnnotList();
             log(
               "Annotation #" +
-                a.id +
+                annotRank(a) +
                 ": " +
                 tLo.toFixed(4) +
                 "–" +
@@ -3973,6 +4102,17 @@
         setTimeout(render, 50);
       }
 
+      // The number shown for an annotation is its place in time order (1 = the
+      // earliest), recomputed on demand. The internal id is permanent — undo,
+      // batch ticks and "applied" bookkeeping hold on to it — so it is never
+      // renumbered, and never shown.
+      function annotRank(a) {
+        let n = 1;
+        for (const b of annotations)
+          if (b !== a && (b.start < a.start || (b.start === a.start && b.id < a.id)))
+            n++;
+        return n;
+      }
       function deleteAnnot(id) {
         if (!annotations.some((a) => a.id === id)) return;
         annotSnapshot("delete annotation #" + id);
@@ -4039,12 +4179,12 @@
         }
         [...annotations]
           .sort((a, b) => a.start - b.start)
-          .forEach((a) => {
+          .forEach((a, rankIdx) => {
             const row = document.createElement("div");
             row.className = "arow" + (a.id === selAid ? " sel" : "");
             row.innerHTML =
               '<span style="color:var(--txt3)">#' +
-              a.id +
+              (rankIdx + 1) +
               "</span>" +
               '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' +
               a.start.toFixed(4) +
@@ -6774,13 +6914,40 @@
       // the last sub-tab so re-entering "Plotting" doesn't reset it.
       let plotActiveSubtab = "plot";
 
+      // Preprocessing's two workspaces: "edit" (one recording) and "merge"
+      // (several recordings joined end to end).
+      let ppActiveSub = "edit";
+      function switchPreprocessSub(name) {
+        ppActiveSub = name;
+        ["edit", "merge"].forEach((n) => {
+          const t = $("ppsubtab-" + n);
+          if (t) t.classList.toggle("active", n === name);
+        });
+        const edit = $("ppEditPane");
+        const mw = $("mainview-merge");
+        if (edit) edit.style.display = name === "edit" ? "flex" : "none";
+        if (mw) mw.style.display = name === "merge" ? "flex" : "none";
+        if (name === "merge" && typeof mwEnter === "function") mwEnter();
+        if (name === "edit") setTimeout(() => render(), 50);
+      }
+
+      // Landing page: the per-tab descriptions stay folded until asked for.
+      function toggleQuickGuide() {
+        const g = $("quickGuide");
+        if (!g) return;
+        const show = g.style.display === "none";
+        g.style.display = show ? "grid" : "none";
+        const b = $("btnQuickGuide");
+        if (b) b.title = show ? "Hide the guide" : "Show a short description of each tab";
+      }
+
       function switchMainTab(name, el) {
         // Landing has no tab button of its own — activating any real tab
         // (via a click, or programmatically on first audio load) retires it
         // for good.
         const landing = $("mainview-landing");
         if (landing) landing.style.display = "none";
-        ["preprocess", "merge", "envpeaks", "analyzer", "annotate", "plotting", "summarize"].forEach(
+        ["preprocess", "envpeaks", "analyzer", "annotate", "plotting", "summarize"].forEach(
           (n) => {
             const t = $("maintab-" + n);
             if (t) t.classList.toggle("active", n === name);
@@ -6790,7 +6957,6 @@
         const a = $("mainview-analyzer");
         const k = $("mainview-envpeaks");
         const an = $("mainview-annotate");
-        const mw = $("mainview-merge");
         const plotBar = $("plotSubtabBar");
         const sb = $("sidebar");
         const sm = $("mainview-summarize");
@@ -6798,7 +6964,6 @@
         if (a) a.style.display = name === "analyzer" ? "flex" : "none";
         if (k) k.style.display = name === "envpeaks" ? "flex" : "none";
         if (an) an.style.display = name === "annotate" ? "flex" : "none";
-        if (mw) mw.style.display = name === "merge" ? "flex" : "none";
         if (plotBar) plotBar.style.display = name === "plotting" ? "flex" : "none";
         if (sm) sm.style.display = name === "summarize" ? "flex" : "none";
         ["plot", "oscstack", "osczoom", "cetpe", "habitus"].forEach((n) => {
@@ -6817,7 +6982,7 @@
         // only needs telling that it is now on screen (a canvas inside a
         // display:none panel has zero width, so it defers its first draw).
         if (name === "annotate" && typeof anEnter === "function") anEnter();
-        if (name === "merge" && typeof mwEnter === "function") mwEnter();
+        if (name === "preprocess") switchPreprocessSub(ppActiveSub);
         if (name === "analyzer" || name === "preprocess")
           setTimeout(() => {
             render();
@@ -7366,7 +7531,13 @@
       };
 
       // Wire motif-seq checkbox + live regrouping of pulses/motifs/sequences.
-      document.addEventListener("DOMContentLoaded", () => {
+      // Run now if the page is already parsed (the listener below would then
+      // never fire, leaving every live-regrouping input unwired).
+      const pkOnReady = (fn) =>
+        document.readyState === "loading"
+          ? document.addEventListener("DOMContentLoaded", fn)
+          : fn();
+      pkOnReady(() => {
         // Recompute pulses -> motifs -> sequences from the FROZEN envelope peak
         // segmentation and redraw immediately, with no need to re-run Detect
         // Envelope peaks. Only fires once envelope peaks already exist.
@@ -7404,10 +7575,23 @@
         [
           ["pkMaxGap", "max envelope peak gap"],
           ["pkMaxDiff", "max amp diff"],
+          ["pkArchDepth", "valley depth"],
+          ["pkArchMinDur", "min pulse"],
         ].forEach(([id, note]) => {
           const el = $(id);
           if (el) el.addEventListener("input", () => regroupBoundaries(note));
         });
+        // Arch splitting is part of the same segmentation, so toggling it
+        // regroups at once as well.
+        const arch = $("pkArchEnable");
+        if (arch)
+          arch.addEventListener("change", () =>
+            regroupBoundaries("arch splitting"),
+          );
+        // Edge pad only changes how far each pulse's span extends past its
+        // outer peaks; redraw (and refresh counts) straight away.
+        const pad = $("pkPulsePad");
+        if (pad) pad.addEventListener("input", () => regroup("edge pad"));
         // "Max pulse gap" also drives the manual Pulse (train) → Echeme
         // clustering below — same threshold, independent data.
         const mpg = $("pkMaxPulseGap");
@@ -8651,8 +8835,13 @@
         // No JS prompt for the name: dlFile opens the OS save dialog, where
         // the folder can be browsed and the filename edited directly. Asking
         // twice for the same thing is just an extra step to dismiss.
-        const stem =
-          data._name.replace(/[^\w.-]+/g, "_").toLowerCase() || "temporal_preset";
+        // <species>_temp_preset, taking the species from the metadata field;
+        // without one it is just "temp_preset".
+        const speciesStem = (currentSpecies || "")
+          .trim()
+          .replace(/[^\w.-]+/g, "_")
+          .replace(/^_+|_+$/g, "");
+        const stem = speciesStem ? speciesStem + "_temp" : "temp";
         try {
           // exactName: a preset describes a parameter set, not a recording, so
           // it has to escape dlFile's rename-after-the-loaded-audio intercept
@@ -11713,6 +11902,30 @@
         const motifSeqs = useMotifSeq
           ? pkGroupMotifSeqs(motifs, maxMotifGapMs)
           : [];
+
+        // Nothing survived the grouping: say why rather than showing a table of
+        // zeros. Pulses are split wherever two peaks are further apart than
+        // "Max envelope peak gap", and pulses with fewer than "Min envelope
+        // peaks/pulse" peaks are dropped, so a gap smaller than the real peak
+        // spacing leaves every peak alone in its own pulse, and all are dropped.
+        if (!motifs.length) {
+          const gaps = [];
+          for (let i = 1; i < pkEnvPeaks.length; i++)
+            gaps.push((pkEnvPeaks[i].time - pkEnvPeaks[i - 1].time) * 1000);
+          gaps.sort((a, b) => a - b);
+          const med = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 0;
+          const msg =
+            "No pulses with at least " +
+            minEnvPeaks +
+            " envelope peaks (" +
+            pkEnvPeaks.length +
+            " peaks found). Typical spacing between peaks is " +
+            med.toFixed(1) +
+            " ms: raise 'Max envelope peak gap' above that, or lower 'Min envelope peaks/pulse'.";
+          $("pkStatus").textContent = "⚠ " + msg;
+          log(msg, "warn");
+          return;
+        }
 
         progress("Envelope peak spectra\u2026", 0.1);
         await busyTick();
