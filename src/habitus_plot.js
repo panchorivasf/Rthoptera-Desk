@@ -520,6 +520,25 @@
     };
     const FY = (f) => plotY + plotH - ((f - d.fmin) / (d.fmax - d.fmin)) * plotH;
 
+    // Optional grid, behind the band and line (applied each time Draw is pressed).
+    const GRh = gridRead("habGrid");
+    if (GRh && GRh.on) {
+      const dash = GRh.dash.map((v) => v * Math.max(1, GRh.width)).join(" ");
+      const gl = (x1, y1, x2, y2) =>
+        svg.appendChild(
+          svgEl("line", {
+            x1, y1, x2, y2,
+            stroke: GRh.color || "#cccccc",
+            "stroke-width": GRh.width,
+            "stroke-dasharray": dash,
+          }),
+        );
+      stepTicks(d.fmin, d.fmax, d.fstep).forEach((f) => gl(plotX, FY(f), plotX + plotW, FY(f)));
+      (d.scale === "linear" ? [0, 0.5, 1] : niceTicks(ampLo, ampHi, 4)).forEach((a) =>
+        gl(AX(a), plotY, AX(a), plotY + plotH),
+      );
+    }
+
     let bandPath = "";
     for (let i = 0; i < d.freqs.length; i++) {
       const x = AX(d.upper[i]), y = FY(d.freqs[i]);

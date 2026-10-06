@@ -640,6 +640,39 @@
                         Clear
                       </button>
                     </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <span style="font-size: 10px; color: var(--txt2)">Duration</span>
+                      <input
+                        type="number"
+                        id="ppSelDur"
+                        min="0"
+                        step="0.01"
+                        style="width: 70px; font-size: 11px"
+                        data-i18n-title
+                        title="Type a duration to resize the selection from its start (or, with no selection, to make one at the playhead). Handy for cutting several clips of the same length."
+                        onchange="setPpSelDuration()"
+                      />
+                      <select
+                        id="ppSelDurUnit"
+                        style="font-size: 11px"
+                        onchange="updatePpSelReadout()"
+                      >
+                        <option value="ms">ms</option>
+                        <option value="s" selected>s</option>
+                      </select>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <button
+                        id="btnSavePpSel"
+                        onclick="savePpSelection()"
+                        disabled
+                        style="font-size: 11px; flex: 1"
+                        data-i18n-title
+                        title="Save the selection as its own .wav (original name + _1, _2, …). Drag the selection to move it, then save again to cut another clip of the same length."
+                      >
+                        💾 Save selection
+                      </button>
+                    </div>
                   </div>
 
                   <!-- Trim -->
@@ -701,8 +734,8 @@
                         <input
                           type="number"
                           id="trimDurationInput"
-                          min="0.001"
-                          step="0.1"
+                          min="0"
+                          step="0.01"
                           style="width: 70px; font-size: 11px"
                           data-i18n-title
                           title="Type a duration (s) — resizes the selection from its current start."
@@ -2148,6 +2181,11 @@
         </div>
 
         <div class="panel">
+            <h2 data-i18n>Spectrogram grid</h2>
+            <div data-grid-host="spGrid" data-grid-on="1" data-grid-width="1" data-grid-color="" data-grid-type="dotted" data-grid-redraw="render"></div>
+          </div>
+
+          <div class="panel">
           <h2 data-i18n>Envelope &amp; Floor</h2>
           <div style="display: flex; flex-direction: column; gap: 5px">
             <div class="row">
@@ -3754,6 +3792,17 @@
           >
             Habitus
           </div>
+          <div
+            class="tab"
+            id="plotsubtab-meanspec"
+            data-i18n
+            onclick="switchPlotSubtab('meanspec', this)"
+            data-i18n-title
+            title="Multi-Mean Spectra: the mean power spectrum of a recording with the spectra of brushed stretches laid over it"
+            style="font-size: 11px; padding: 3px 12px"
+          >
+            Multi-Mean Spectra
+          </div>
         </div>
 
         <div
@@ -4585,6 +4634,11 @@
               </div>
 
               <div class="panel">
+                <h2 data-i18n>Grid</h2>
+                <div data-grid-host="plotGrid" data-grid-on="1" data-grid-width="0.5" data-grid-color="" data-grid-type="dashed" data-grid-redraw="renderPlot"></div>
+              </div>
+
+              <div class="panel">
                 <h2 data-i18n>Typography</h2>
                 <div style="display: flex; flex-direction: column; gap: 4px">
                   <div class="row" style="justify-content: space-between">
@@ -4940,6 +4994,8 @@
               >
                 📂 Load band…
               </button>
+              <span class="sep"></span>
+              <div data-grid-host="anGrid" data-grid-on="0" data-grid-width="0.5" data-grid-color="#8b949e" data-grid-type="dashed" data-grid-redraw="anRedraw"></div>
               <input
                 type="file"
                 id="anBandFile"
@@ -7061,6 +7117,7 @@
                       title="Spacing between frequency axis ticks/labels. 0 = automatic (6 ticks)."
                     />
                   </div>
+                  <div data-grid-host="habGrid" data-grid-on="0" data-grid-width="0.5" data-grid-color="#cccccc" data-grid-type="dashed" data-grid-redraw=""></div>
                   <div class="row" id="habYMinRow" style="display: none">
                     <span
                       style="color: var(--txt2); font-size: 11px; width: 90px"
@@ -7299,6 +7356,111 @@
           </div>
         </div>
         <!-- /mainview-habitus -->
+
+        <!-- ═══ MULTI-MEAN SPECTRA VIEW ═══════════════════════════════════════════
+             Port of the Rthoptera Shiny app multi_meanspectra_plotly. See
+             multi_meanspectra.js. ═══ -->
+        <div
+          id="mainview-meanspec"
+          style="flex: 1; display: none; overflow: hidden; min-height: 0"
+        >
+          <div style="flex: 1; display: flex; overflow: hidden; min-height: 0; width: 100%">
+            <div
+              style="
+                width: 260px;
+                flex-shrink: 0;
+                overflow-y: auto;
+                border-right: 1px solid var(--border);
+                padding: 8px;
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                background: var(--bg2);
+              "
+            >
+              <div class="panel">
+                <h2 data-i18n>Wave</h2>
+                <div style="display: flex; flex-direction: column; gap: 6px">
+                  <div
+                    id="msLibPicker"
+                    style="display: flex; flex-direction: column; gap: 2px; font-size: 11px; max-height: 160px; overflow-y: auto"
+                  >
+                    <div style="color: var(--txt2); font-size: 11px">No audio loaded yet.</div>
+                  </div>
+                  <div id="msWaveInfo" style="font-size: 11px; color: var(--txt2)">No wave loaded.</div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <h2 data-i18n>Spectrum</h2>
+                <div style="display: flex; flex-direction: column; gap: 5px">
+                  <div class="row">
+                    <span style="color: var(--txt2); font-size: 11px; width: 110px">Window length</span>
+                    <select id="msWl" onchange="msOnWlChange()" style="width: 70px">
+                      <option>512</option>
+                      <option>1024</option>
+                      <option>2048</option>
+                      <option selected>4096</option>
+                      <option>8192</option>
+                    </select>
+                  </div>
+                  <div class="row">
+                    <span style="color: var(--txt2); font-size: 11px; width: 110px">Opacity</span>
+                    <input type="number" id="msAlpha" value="0.9" min="0.1" max="1" step="0.1" style="width: 60px" oninput="msDraw()" />
+                  </div>
+                  <div class="row">
+                    <span style="color: var(--txt2); font-size: 11px; width: 110px">Frequency (kHz)</span>
+                    <input type="number" id="msFMin" placeholder="min" min="0" step="1" style="width: 50px" oninput="msDraw()" />
+                    <input type="number" id="msFMax" placeholder="max" min="0" step="1" style="width: 50px" oninput="msDraw()" />
+                  </div>
+                  <div data-grid-host="msGrid" data-grid-on="0" data-grid-width="0.5" data-grid-color="#bbbbbb" data-grid-type="dashed" data-grid-redraw="msDraw"></div>
+                  <div class="row">
+                    <span style="color: var(--txt2); font-size: 11px; width: 110px">Plot title</span>
+                    <input type="text" id="msTitle" style="width: 100px" oninput="msDraw()" />
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <h2 data-i18n>Selections</h2>
+                <div style="display: flex; flex-direction: column; gap: 5px">
+                  <div id="msPendingInfo" style="font-size: 11px; color: var(--txt2)">Drag on the oscillogram to brush a stretch</div>
+                  <select id="msSelName" onchange="msOnNameChoice()">
+                    <option>closing</option>
+                    <option>opening</option>
+                    <option>male</option>
+                    <option>female</option>
+                    <option>Custom...</option>
+                  </select>
+                  <input type="text" id="msSelNameCustom" placeholder="custom name" style="display: none" />
+                  <div class="row" style="gap: 4px">
+                    <button id="btnMsAdd" class="pri" onclick="msAddSelection()" disabled style="flex: 1">Add selection</button>
+                    <button id="btnMsClear" onclick="msClearSelections()" disabled>Clear</button>
+                  </div>
+                  <div id="msSelList" style="display: flex; flex-direction: column; max-height: 180px; overflow-y: auto"></div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <h2 data-i18n>Export</h2>
+                <div style="display: flex; flex-direction: column; gap: 5px">
+                  <div class="row">
+                    <span style="color: var(--txt2); font-size: 11px; width: 80px">File prefix</span>
+                    <input type="text" id="msFilePrefix" style="width: 120px" />
+                  </div>
+                  <button id="btnMsPng" onclick="msExportPng()" disabled>Download PNG</button>
+                  <button id="btnMsSvg" onclick="msExportSvg()" disabled>Download SVG</button>
+                  <button id="btnMsCsv" onclick="msExportCsv()" disabled>Download spectra (CSV)</button>
+                </div>
+              </div>
+            </div>
+
+            <div style="flex: 1; overflow: auto; padding: 8px; background: #fff; min-width: 0">
+              <div id="msFigure"></div>
+            </div>
+          </div>
+        </div>
+        <!-- /mainview-meanspec -->
 
         <!-- ═══ SUMMARIZE VIEW ═════════════════════════════════════════════════════
              Cross-recording module: load several Temporal/Spectral Analysis
@@ -7892,6 +8054,7 @@
     <script src="oscillogram_zoom.js"></script>
     <script src="auto_coded_oscillogram.js"></script>
     <script src="habitus_plot.js"></script>
+    <script src="multi_meanspectra.js"></script>
     <script src="annotate.js"></script>
     <script src="merge_waves.js"></script>
     <script src="i18n.js"></script>

@@ -188,6 +188,85 @@
       // Temporal Analysis: each ROW of boxes (marked data-collapse-row in
       // index.html) gets one slim header bar with a ▾/▸ button, and starts
       // collapsed so the envelope and spectrogram panes get the height.
+      // ── Grid options (shared by every plot that can show a grid) ─────────
+      // A host element <div data-grid-host="PREFIX" ...> in index.html becomes a
+      // checkbox plus, when it is ticked, line thickness, colour and line type.
+      // Plots read the result with gridRead("PREFIX"); a null colour means "keep
+      // this plot's own default", so a plot that already had a grid looks the
+      // same until the colour is changed.
+      const GRID_DASHES = {
+        solid: [],
+        dashed: [3, 4],
+        dotted: [2, 5],
+        dashdot: [7, 3, 2, 3],
+        longdash: [10, 5],
+      };
+      function setupGridHosts() {
+        document.querySelectorAll("[data-grid-host]").forEach((h) => {
+          if (h.dataset.gridReady === "true") return;
+          h.dataset.gridReady = "true";
+          const p = h.dataset.gridHost;
+          const col = h.dataset.gridColor;
+          h.className = "row";
+          h.style.cssText = "gap:5px;flex-wrap:wrap;align-items:center";
+          h.innerHTML =
+            '<label class="chk" style="font-size:11px;color:var(--txt2)">' +
+            '<input type="checkbox" id="' + p + 'On"' +
+            (h.dataset.gridOn === "1" ? " checked" : "") +
+            "> Grid</label>" +
+            '<input type="number" id="' + p + 'Width" title="Line thickness (px)" min="0.25" max="6" step="0.25" value="' +
+            (h.dataset.gridWidth || "1") +
+            '" style="width:50px;font-size:11px">' +
+            '<input type="color" id="' + p + 'Color" title="Line colour" value="' +
+            (col || "#888888") +
+            '" style="width:30px;height:22px;padding:0"' +
+            (col ? "" : ' data-auto="1"') +
+            ">" +
+            '<select id="' + p + 'Type" title="Line type" style="font-size:11px">' +
+            [
+              ["solid", "Continuous"],
+              ["dashed", "Dashed"],
+              ["dotted", "Dotted"],
+              ["dashdot", "Dash-dot"],
+              ["longdash", "Long dash"],
+            ]
+              .map(
+                ([v, t]) =>
+                  '<option value="' + v + '"' + (v === h.dataset.gridType ? " selected" : "") + ">" + t + "</option>",
+              )
+              .join("") +
+            "</select>";
+          const on = $(p + "On"),
+            opts = [$(p + "Width"), $(p + "Color"), $(p + "Type")];
+          const refresh = () => opts.forEach((o) => (o.disabled = !on.checked));
+          const redraw = () => {
+            const fn = h.dataset.gridRedraw;
+            if (fn && typeof window[fn] === "function") window[fn]();
+          };
+          opts[1].addEventListener("input", () => delete opts[1].dataset.auto);
+          [on, ...opts].forEach((el) =>
+            el.addEventListener(el.type === "checkbox" ? "change" : "input", () => {
+              refresh();
+              redraw();
+            }),
+          );
+          refresh();
+        });
+      }
+      // { on, width, color|null, dash[] } for the host with this prefix, or
+      // null if the page has none (callers then keep their old behaviour).
+      function gridRead(p) {
+        const on = $(p + "On");
+        if (!on) return null;
+        const w = parseFloat($(p + "Width").value);
+        return {
+          on: on.checked,
+          width: isFinite(w) && w > 0 ? w : 1,
+          color: $(p + "Color").dataset.auto === "1" ? null : $(p + "Color").value,
+          dash: (GRID_DASHES[$(p + "Type").value] || []).slice(),
+        };
+      }
+
       function setupCollapsiblePanels() {
         document
           .querySelectorAll(
@@ -1307,13 +1386,12 @@
       // clips from one recording without repeatedly re-trimming the
       // working audio. Auto-numbered (_1, _2, …) so repeated saves from the
       // same file never collide; the save dialog still lets you rename.
-      async function saveActiveTrimSelection() {
-        if (!trimMode || !rawSamples) {
-          log("Enter trim mode and drag out a selection first.", "warn");
-          return;
-        }
-        const t0 = Math.max(0, Math.min(trimSel.t0, duration));
-        const t1 = Math.max(0, Math.min(trimSel.t1, duration));
+      // Cuts [t0, t1] out of the current audio and saves it as <name>_N.wav.
+      // The counter is shared by trim-mode and time-selection saves, so clips
+      // from the same recording are numbered in the order they were saved.
+      async function _saveClip(t0, t1) {
+        t0 = Math.max(0, Math.min(t0, duration));
+        t1 = Math.max(0, Math.min(t1, duration));
         if (t1 - t0 < 1e-4) {
           log(
             "Selection is empty — drag out a region on the waveform/spectrogram first.",
@@ -1342,6 +1420,25 @@
         } catch (e) {
           log("Selection export failed: " + e.message, "err");
         }
+      }
+
+      async function saveActiveTrimSelection() {
+        if (!trimMode || !rawSamples) {
+          log("Enter trim mode and drag out a selection first.", "warn");
+          return;
+        }
+        await _saveClip(trimSel.t0, trimSel.t1);
+      }
+
+      // Save the Preprocessing time selection (the blue one pulled out on the
+      // waveform) as a clip. The selection stays, so it can be dragged along
+      // and saved again.
+      async function savePpSelection() {
+        if (!rawSamples || !ppSel || !(ppSel.t1 > ppSel.t0)) {
+          log("Drag out a time selection on the waveform first.", "warn");
+          return;
+        }
+        await _saveClip(ppSel.t0, ppSel.t1);
       }
 
       // Enter visual trim mode. We first strip any existing trim so the handles
@@ -2199,6 +2296,7 @@
         if (typeof ozRenderLibPicker === "function") ozRenderLibPicker();
         if (typeof ceRenderLibPicker === "function") ceRenderLibPicker();
         if (typeof habRenderLibPicker === "function") habRenderLibPicker();
+        if (typeof msRenderLibPicker === "function") msRenderLibPicker();
         if (typeof mwRenderLibPicker === "function") mwRenderLibPicker();
       }
 
@@ -3263,14 +3361,17 @@
           // Gridline on spectrogram canvas
           const sc = $("specC"),
             sctx = sc.getContext("2d");
-          sctx.strokeStyle = "rgba(60,66,74,.5)";
-          sctx.setLineDash([2, 5]);
-          sctx.lineWidth = 1;
-          sctx.beginPath();
-          sctx.moveTo(0, y);
-          sctx.lineTo(sc.width, y);
-          sctx.stroke();
-          sctx.setLineDash([]);
+          const GV = gridRead("spGrid") || { on: true, width: 1, color: null, dash: [2, 5] };
+          if (GV.on) {
+            sctx.strokeStyle = GV.color || "rgba(60,66,74,.5)";
+            sctx.setLineDash(GV.dash);
+            sctx.lineWidth = GV.width;
+            sctx.beginPath();
+            sctx.moveTo(0, y);
+            sctx.lineTo(sc.width, y);
+            sctx.stroke();
+            sctx.setLineDash([]);
+          }
         }
       }
 
@@ -3713,6 +3814,10 @@
             }
             return; // trim mode suppresses other tools
           }
+          // Hovering over the selection offers to move it.
+          if (viewerMode === "preprocess" && !ppDrag && ppSel && ppSel.t1 > ppSel.t0) {
+            c.style.cursor = t > ppSel.t0 && t < ppSel.t1 ? "grab" : "text";
+          }
           if (ppDrag) {
             // Button released off-canvas: mouseup never reached us, so the
             // drag would otherwise keep tracking the pointer unpressed.
@@ -3722,6 +3827,19 @@
             }
             // 3px of slop so a click with a shaky hand stays a click.
             if (Math.abs(e.offsetX - ppDrag.startX) > 3) ppDrag.moved = true;
+            if (ppDrag.move) {
+              if (ppDrag.moved) {
+                const nt0 = Math.max(
+                  0,
+                  Math.min(duration - ppDrag.dur, t - ppDrag.grab),
+                );
+                ppSel = { t0: nt0, t1: nt0 + ppDrag.dur };
+                c.style.cursor = "grabbing";
+                updatePpSelReadout();
+                render();
+              }
+              return;
+            }
             if (ppDrag.moved) {
               const nt = Math.max(0, Math.min(duration, t));
               ppSel = {
@@ -3792,6 +3910,19 @@
           // is off, since that branch returns above.
           if (viewerMode === "preprocess") {
             const { t } = pixToTF(e.offsetX, e.offsetY, src);
+            // Pressing inside the selection grabs it to move it; pressing
+            // anywhere else pulls out a new one, as before.
+            if (ppSel && ppSel.t1 > ppSel.t0 && t > ppSel.t0 && t < ppSel.t1) {
+              ppDrag = {
+                move: true,
+                grab: t - ppSel.t0,
+                dur: ppSel.t1 - ppSel.t0,
+                startX: e.offsetX,
+                moved: false,
+                t,
+              };
+              return;
+            }
             ppDrag = { anchor: t, startX: e.offsetX, moved: false };
             seekTo(t);
             return;
@@ -3855,10 +3986,16 @@
           // when the tool left over from Spectral Analysis is Pan.
           if (viewerMode === "preprocess") {
             if (ppDrag && !ppDrag.moved) {
-              ppSel = null;
-              updatePpSelReadout();
-              render();
+              if (ppDrag.move) {
+                // A click inside the selection keeps it and sets the playhead.
+                seekTo(ppDrag.t);
+              } else {
+                ppSel = null;
+                updatePpSelReadout();
+                render();
+              }
             }
+            if (ppDrag && ppDrag.move) c.style.cursor = "grab";
             ppDrag = null;
             return;
           }
@@ -5955,6 +6092,47 @@
             ? `${ppSel.t0.toFixed(3)}–${ppSel.t1.toFixed(3)} s  (${(ppSel.t1 - ppSel.t0).toFixed(3)} s)`
             : "No selection";
         if (btn) btn.disabled = !has;
+        const sv = $("btnSavePpSel");
+        if (sv) sv.disabled = !has;
+        // Mirror the length into the Duration box, unless it is being typed in.
+        const di = $("ppSelDur");
+        if (di) {
+          // The arrows step by a hundredth of a second (10 ms), snapping to
+          // multiples of it, rather than by 1.
+          const u = $("ppSelDurUnit") ? $("ppSelDurUnit").value : "s";
+          di.step = u === "ms" ? "10" : "0.01";
+        }
+        if (di && document.activeElement !== di) {
+          const unit = $("ppSelDurUnit") ? $("ppSelDurUnit").value : "s";
+          if (!has) di.value = "";
+          else {
+            const d = ppSel.t1 - ppSel.t0;
+            di.value = unit === "ms" ? (d * 1000).toFixed(1) : d.toFixed(3);
+          }
+        }
+      }
+
+      // Typed duration: resizes the selection from its start (the start moves
+      // back only if the new length would run past the end), or makes one at
+      // the playhead when there is no selection yet.
+      function setPpSelDuration() {
+        if (!rawSamples) {
+          log("Load audio first", "warn");
+          return;
+        }
+        const v = parseFloat($("ppSelDur").value);
+        const unit = $("ppSelDurUnit").value;
+        if (!isFinite(v) || v <= 0) {
+          updatePpSelReadout();
+          return;
+        }
+        let d = unit === "ms" ? v / 1000 : v;
+        d = Math.max(0.001, Math.min(d, duration));
+        let t0 = ppSel && ppSel.t1 > ppSel.t0 ? ppSel.t0 : playPos;
+        if (t0 + d > duration) t0 = Math.max(0, duration - d);
+        ppSel = { t0, t1: t0 + d };
+        updatePpSelReadout();
+        render();
       }
 
       function clearPpSel() {
@@ -6203,6 +6381,9 @@
         const bgIsLight = _colorIsLight(figBg);
         const GRID = bgIsLight ? "rgba(0,0,0,0.10)" : "rgba(80,95,110,0.35)";
         const FG2 = bgIsLight ? "#555555" : "#8b949e";
+        // Grid options (checkbox, thickness, colour, line type); the previous
+        // look is the default.
+        const GR = gridRead("plotGrid") || { on: true, width: 0.5, color: null, dash: [3, 4] };
         const font = $("plotFont").value || "Arial,sans-serif";
         const cm = $("plotCmap").value;
         const contrast = parseFloat($("plotContrast").value) || 60;
@@ -6629,14 +6810,16 @@
           const x = TX(t);
           if (x < ML || x > ML + specW) continue;
           // Gridline through both spec and (if shown) waveform
-          ctx.strokeStyle = GRID;
-          ctx.lineWidth = D2 * 0.5;
-          ctx.setLineDash([3 * D2, 4 * D2]);
-          ctx.beginPath();
-          ctx.moveTo(x, showWave ? waveTop : specTop);
-          ctx.lineTo(x, specTop + specH);
-          ctx.stroke();
-          ctx.setLineDash([]);
+          if (GR.on) {
+            ctx.strokeStyle = GR.color || GRID;
+            ctx.lineWidth = D2 * GR.width;
+            ctx.setLineDash(GR.dash.map((v) => v * D2));
+            ctx.beginPath();
+            ctx.moveTo(x, showWave ? waveTop : specTop);
+            ctx.lineTo(x, specTop + specH);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
           ctx.strokeStyle = FG;
           ctx.lineWidth = D2;
           ctx.beginPath();
@@ -6688,19 +6871,21 @@
           const y = FY_spec(f);
           if (y < specTop || y > specTop + specH) continue;
           // Gridline
-          ctx.strokeStyle = GRID;
-          ctx.lineWidth = D2 * 0.5;
-          ctx.setLineDash([3 * D2, 4 * D2]);
-          ctx.beginPath();
-          ctx.moveTo(ML, y);
-          ctx.lineTo(ML + specW, y);
-          ctx.stroke();
-          // Same gridline on PS panel
-          ctx.beginPath();
-          ctx.moveTo(psLeft, y);
-          ctx.lineTo(psLeft + psW, y);
-          ctx.stroke();
-          ctx.setLineDash([]);
+          if (GR.on) {
+            ctx.strokeStyle = GR.color || GRID;
+            ctx.lineWidth = D2 * GR.width;
+            ctx.setLineDash(GR.dash.map((v) => v * D2));
+            ctx.beginPath();
+            ctx.moveTo(ML, y);
+            ctx.lineTo(ML + specW, y);
+            ctx.stroke();
+            // Same gridline on PS panel
+            ctx.beginPath();
+            ctx.moveTo(psLeft, y);
+            ctx.lineTo(psLeft + psW, y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
           ctx.strokeStyle = FG;
           ctx.lineWidth = D2;
           ctx.beginPath();
@@ -6966,7 +7151,7 @@
         if (an) an.style.display = name === "annotate" ? "flex" : "none";
         if (plotBar) plotBar.style.display = name === "plotting" ? "flex" : "none";
         if (sm) sm.style.display = name === "summarize" ? "flex" : "none";
-        ["plot", "oscstack", "osczoom", "cetpe", "habitus"].forEach((n) => {
+        ["plot", "oscstack", "osczoom", "cetpe", "habitus", "meanspec"].forEach((n) => {
           const v = $("mainview-" + n);
           if (v) v.style.display = name === "plotting" && n === plotActiveSubtab ? "flex" : "none";
         });
@@ -7060,7 +7245,7 @@
         if (plotBar) plotBar.style.display = "none";
         if (sb) sb.style.display = "none";
         if (sm) sm.style.display = "none";
-        ["plot", "oscstack", "osczoom", "cetpe", "habitus"].forEach((n) => {
+        ["plot", "oscstack", "osczoom", "cetpe", "habitus", "meanspec"].forEach((n) => {
           const v = $("mainview-" + n);
           if (v) v.style.display = "none";
         });
@@ -7069,7 +7254,7 @@
 
       function switchPlotSubtab(name, el) {
         plotActiveSubtab = name;
-        ["plot", "oscstack", "osczoom", "cetpe", "habitus"].forEach((n) => {
+        ["plot", "oscstack", "osczoom", "cetpe", "habitus", "meanspec"].forEach((n) => {
           const t = $("plotsubtab-" + n);
           if (t) t.classList.toggle("active", n === name);
           const v = $("mainview-" + n);
@@ -7081,6 +7266,8 @@
         if (name === "osczoom" && typeof ozRenderLibPicker === "function") ozRenderLibPicker();
         if (name === "cetpe" && typeof ceRenderLibPicker === "function") ceRenderLibPicker();
         if (name === "habitus" && typeof habRenderLibPicker === "function") habRenderLibPicker();
+        if (name === "meanspec" && typeof msRenderLibPicker === "function") msRenderLibPicker();
+        if (name === "meanspec" && typeof msDraw === "function") setTimeout(msDraw, 50);
       }
 
       // ═══════════════════════════════════════════════════════════════════
@@ -7421,6 +7608,7 @@
         // Applies the default tool's button highlight and canvas cursor —
         // the markup carries the highlight, but only setTool sets the cursor.
         setTool(activeTool);
+        setupGridHosts();
         setupCollapsiblePanels();
         initDragHandles();
         initMinimap();

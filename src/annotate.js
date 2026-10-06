@@ -1048,6 +1048,29 @@
       g.setLineDash([]);
     }
 
+    // Optional grid: the same five frequency lines the labels sit on, and
+    // vertical lines at eight divisions of the visible time span.
+    const GRa = gridRead("anGrid");
+    if (GRa && GRa.on) {
+      g.save();
+      g.strokeStyle = GRa.color || "#8b949e";
+      g.lineWidth = GRa.width;
+      g.setLineDash(GRa.dash);
+      g.beginPath();
+      for (let i = 0; i <= 4; i++) {
+        const gy = Math.round(anFy(view.f0 + ((view.f1 - view.f0) * i) / 4, h)) + 0.5;
+        g.moveTo(0, gy);
+        g.lineTo(w, gy);
+      }
+      for (let i = 1; i < 8; i++) {
+        const gx = Math.round((w * i) / 8) + 0.5;
+        g.moveTo(gx, 0);
+        g.lineTo(gx, h);
+      }
+      g.stroke();
+      g.restore();
+    }
+
     // Frequency ticks.
     g.fillStyle = "rgba(230,237,243,0.75)";
     g.font = "10px Consolas, monospace";
@@ -1153,6 +1176,27 @@
       g.lineTo(w, y(cutoff));
       g.stroke();
       g.setLineDash([]);
+    }
+
+    const GRp = gridRead("anGrid");
+    if (GRp && GRp.on) {
+      g.save();
+      g.strokeStyle = GRp.color || "#8b949e";
+      g.lineWidth = GRp.width;
+      g.setLineDash(GRp.dash);
+      g.beginPath();
+      for (let t = 0; t <= 4; t++) {
+        const gx = Math.round(x(fMin + ((fMax - fMin) * t) / 4)) + 0.5;
+        g.moveTo(gx, 0);
+        g.lineTo(gx, h);
+      }
+      for (let t = 1; t < 4; t++) {
+        const gy = Math.round((h * t) / 4) + 0.5;
+        g.moveTo(0, gy);
+        g.lineTo(w, gy);
+      }
+      g.stroke();
+      g.restore();
     }
 
     g.strokeStyle = "#58a6ff";
