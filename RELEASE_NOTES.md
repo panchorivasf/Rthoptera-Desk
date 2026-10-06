@@ -1,4 +1,4 @@
-# Rthoptera Desk 0.8.0
+# Rthoptera Desk 0.7.1
 
 A reworked Annotation tab (a simpler motif detector, edge editing, batch edits and
 Xeno-canto export), Merge folded into Preprocessing, a more compact Spectral
@@ -73,15 +73,15 @@ Pick the file that matches your operating system and processor.
 
 | File                                 | Use                                                     |
 | ------------------------------------ | ------------------------------------------------------- |
-| `Rthoptera.Desk_0.8.0_x64-setup.exe` | **Recommended** — standard installer, just double-click |
-| `Rthoptera.Desk_0.8.0_x64_en-US.msi` | Alternative for managed/enterprise deployment           |
+| `Rthoptera.Desk_0.7.1_x64-setup.exe` | **Recommended** — standard installer, just double-click |
+| `Rthoptera.Desk_0.7.1_x64_en-US.msi` | Alternative for managed/enterprise deployment           |
 
 ### macOS
 
 | File                               | Use                         |
 | ---------------------------------- | --------------------------- |
-| `Rthoptera.Desk_0.8.0_aarch64.dmg` | Apple Silicon (M1/M2/M3/M4) |
-| `Rthoptera.Desk_0.8.0_x64.dmg`     | Intel Macs                  |
+| `Rthoptera.Desk_0.7.1_aarch64.dmg` | Apple Silicon (M1/M2/M3/M4) |
+| `Rthoptera.Desk_0.7.1_x64.dmg`     | Intel Macs                  |
 
 Not sure which Mac you have? Click the Apple menu → **About This Mac**. "Apple M…"
 means Apple Silicon; "Intel" means the x64 build.
@@ -90,9 +90,9 @@ means Apple Silicon; "Intel" means the x64 build.
 
 | File                                  | Use                                                                 |
 | ------------------------------------- | ------------------------------------------------------------------- |
-| `Rthoptera.Desk_0.8.0_amd64.AppImage` | **Recommended** — works on most distros. Run `chmod +x` then launch |
-| `Rthoptera.Desk_0.8.0_amd64.deb`      | Debian, Ubuntu, Mint, etc.                                          |
-| `Rthoptera.Desk-0.8.0-1.x86_64.rpm`   | Fedora, RHEL, openSUSE, etc.                                        |
+| `Rthoptera.Desk_0.7.1_amd64.AppImage` | **Recommended** — works on most distros. Run `chmod +x` then launch |
+| `Rthoptera.Desk_0.7.1_amd64.deb`      | Debian, Ubuntu, Mint, etc.                                          |
+| `Rthoptera.Desk-0.7.1-1.x86_64.rpm`   | Fedora, RHEL, openSUSE, etc.                                        |
 
 > **Note:** Builds are currently 64-bit Intel/AMD (x86_64) for Windows and
 > Linux, plus both Intel and Apple Silicon for macOS. ARM Linux and
