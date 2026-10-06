@@ -1,8 +1,10 @@
 # Rthoptera Desk 0.7.1
 
 A reworked Annotation tab (a simpler motif detector, edge editing, batch edits and
-Xeno-canto export), Merge folded into Preprocessing, a more compact Spectral
-Analysis layout, and a round of fixes to downsampling, presets and metadata.
+Xeno-canto export), a new Multi-Mean Spectra plot, grid options for the
+spectrogram and power-spectrum plots, a movable and savable time selection in
+Preprocessing, Merge folded into Preprocessing, a more compact Spectral Analysis
+layout, and a round of fixes to downsampling, presets and metadata.
 
 ## Annotation tab
 
@@ -26,6 +28,38 @@ Analysis layout, and a round of fixes to downsampling, presets and metadata.
 - **New layout.** The power spectrum is a tall panel on the left third, with the
   readout/actions and detection/selection menus beside it. Both menus fold away.
 
+## Plotting: Multi-Mean Spectra
+
+A new sub-tab, ported from the Rthoptera Shiny app. Pick a recording and its
+oscillogram appears on top, with the mean power spectrum of the whole recording
+below (black line). Drag across the oscillogram to brush a stretch, choose a name
+(closing, opening, male, female or your own) and **Add selection**: that stretch's
+mean spectrum is laid over the plot as a coloured area, and the stretch is
+recoloured on the oscillogram.
+
+- Same method as the Shiny app: Hann window of the chosen length (512–8192), no
+  overlap, window spectra averaged and scaled to a maximum of 1, and each
+  selection scaled by the loudest point inside it so louder strokes draw taller
+  areas. The colour-blind-safe palette is the same too.
+- Opacity, plot title and a frequency range are adjustable; hovering over the
+  spectrum shows the value of every trace at that frequency.
+- Export as **PNG**, **SVG** or **CSV** (all the spectra on one frequency axis).
+- The frequency axis is in kHz.
+
+## Grid options
+
+Every spectrogram and power-spectrum plot now has a **Grid** checkbox and, when it
+is on, a choice of line **thickness**, **colour** and **type** (continuous,
+dashed, dotted, dash-dot, long dash):
+
+- Multiplot (spectrogram and power spectrum)
+- Spectral Analysis spectrogram
+- Annotate (spectrogram and power spectrum)
+- Multi-Mean Spectra
+- Habitus power spectrum (applied the next time you press Draw)
+
+Plots that already had a grid keep their old look until you change the options.
+
 ## Preprocessing
 
 - **Merge is now inside Preprocessing**, as a second sub-tab next to Edit audio.
@@ -37,6 +71,20 @@ Analysis layout, and a round of fixes to downsampling, presets and metadata.
 - A downsample adds a tag with the new sampling rate to the saved file name
   (for example `_96dsp`), and a full-band filter on a downsampled recording no
   longer gets a false `lpf` tag.
+- **Time selection.** The blue selection pulled out on the waveform can now be
+  moved, resized by typing a length, and saved as a clip:
+
+  - **Move it.** Drag inside the blue time selection to slide it along the
+    recording; it keeps its length and stops at the ends. A plain click inside it
+    keeps it and sets the playhead.
+  - **Set its length.** A **Duration** box (ms or s) resizes the selection from its
+    start, or creates one at the playhead if there is none. The arrows step by a
+    hundredth of a second (10 ms).
+  - **Save it.** **💾 Save selection** writes the selection as `<name>_N.wav`,
+    numbered together with Trim mode's saved clips. The selection stays, so you can
+    drag it to the next spot and save again, which makes it easy to cut several
+    clips of the same duration.
+  - The Duration box inside Trim mode now also steps by 0.01 s instead of 0.1 s.
 
 ## Home page
 
