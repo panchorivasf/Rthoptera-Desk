@@ -58,6 +58,10 @@
     features: [], // { id, cat, col, label }
     species: [], // names, in first-seen order
     selFeat: new Set(),
+    // Which tables the variable list draws from. Motif level by default: the
+    // same measurement averaged over pulses or envelope peaks is nearly the
+    // same number again, and several copies of it would over-weight it.
+    levels: new Set(["motifs"]),
     selSp: new Set(),
     pca: null,
     rel: null,
@@ -239,12 +243,18 @@
     );
     sa.species = [...new Set(sa.samples.map((s) => s.species))];
 
-    // Selections: keep what the user had, else the suggested set (else all).
-    const ids = new Set(sa.features.map((f) => f.id));
+    // The ticked levels must exist in the data; if the motif table is missing,
+    // offer whatever tables there are.
+    const cats = new Set(sa.features.map((f) => f.cat));
+    sa.levels = new Set([...sa.levels].filter((c) => cats.has(c)));
+    if (!sa.levels.size) cats.forEach((c) => sa.levels.add(c));
+    // Selections: keep what the user had, else the suggested set (else the first ten).
+    const vis = visibleFeatures();
+    const ids = new Set(vis.map((f) => f.id));
     sa.selFeat = new Set([...prevFeat].filter((i) => ids.has(i)));
     if (!sa.selFeat.size) {
       SUGGESTED.forEach((i) => ids.has(i) && sa.selFeat.add(i));
-      if (sa.selFeat.size < 3) sa.features.slice(0, 10).forEach((f) => sa.selFeat.add(f.id));
+      if (sa.selFeat.size < 3) vis.slice(0, 10).forEach((f) => sa.selFeat.add(f.id));
     }
     const spOk = new Set(sa.species);
     sa.selSp = new Set([...sa.selSp].filter((s) => spOk.has(s)));
@@ -266,13 +276,23 @@
     );
   }
 
+  const visibleFeatures = () => sa.features.filter((f) => sa.levels.has(f.cat));
+
   function renderLists() {
     const fl = $("saFeatList"),
       sl = $("saSpList");
+    CATS.forEach(([cat]) => {
+      const cb = $("saLvl_" + cat);
+      if (!cb) return;
+      const has = sa.features.some((f) => f.cat === cat);
+      cb.checked = sa.levels.has(cat);
+      cb.disabled = !has;
+      if (cb.parentElement) cb.parentElement.style.opacity = has ? "1" : "0.4";
+    });
     if (fl) {
       fl.innerHTML = "";
       let lastCat = "";
-      sa.features.forEach((f) => {
+      visibleFeatures().forEach((f) => {
         if (f.cat !== lastCat) {
           lastCat = f.cat;
           const h = document.createElement("div");
@@ -322,17 +342,104 @@
   }
   function updateFeatCount() {
     const c = $("saFeatCount");
-    if (c) c.textContent = sa.selFeat.size + " of " + sa.features.length;
+    if (c) c.textContent = sa.selFeat.size + " of " + visibleFeatures().length;
   }
   function saSelectFeatures(mode) {
     sa.selFeat = new Set();
-    if (mode === "all") sa.features.forEach((f) => sa.selFeat.add(f.id));
+    if (mode === "all") visibleFeatures().forEach((f) => sa.selFeat.add(f.id));
     if (mode === "suggested") {
-      const ids = new Set(sa.features.map((f) => f.id));
+      const ids = new Set(visibleFeatures().map((f) => f.id));
       SUGGESTED.forEach((i) => ids.has(i) && sa.selFeat.add(i));
     }
     renderLists();
   }
+
+  // Tables to draw variables from. Unticking one removes its variables from
+  // the selection; ticking one only makes them available.
+  function saLevelChanged() {
+    const next = new Set(CATS.map(([c]) => c).filter((c) => $("saLvl_" + c) && $("saLvl_" + c).checked && !$("saLvl_" + c).disabled));
+    if (!next.size) next.add(sa.levels.size ? [...sa.levels][0] : "motifs");
+    sa.levels = next;
+    const ids = new Set(visibleFeatures().map((f) => f.id));
+    sa.selFeat = new Set([...sa.selFeat].filter((i) => ids.has(i)));
+    if (sa.selFeat.size < 2) SUGGESTED.forEach((i) => ids.has(i) && sa.selFeat.add(i));
+    renderLists();
+    say("Variables now come from: " + CATS.filter(([c]) => sa.levels.has(c)).map((c) => c[1]).join(", ") + ". Run the analysis again to update the plots.");
+  }
+
+  // Of every group of ticked variables that move together, keep the one that
+  // separates the species best (highest eta-squared) and untick the others.
+  // "Move together" is measured WITHIN species (each value minus its species'
+  // mean): two traits that both differ between species are correlated across
+  // all observations without being the same measurement, whereas two copies of
+  // one measurement stay locked together inside every species.
+  function saDropDuplicates() {
+    const { feats, X } = buildMatrix();
+    if (sa.samples.length < 4 || feats.length < 2) {
+      say("Need at least 4 observations and 2 ticked variables.", true);
+      return;
+    }
+    const thr = Math.min(0.999, Math.max(0.5, parseFloat($("saDupR")?.value) || 0.95));
+    const cols = feats.map((f, j) => ({ f, raw: X.map((r) => r[j]) }));
+    // best separator first; a motif-level variable wins a near-tie (within 0.02
+    // of eta-squared) against the same measurement at a lower level
+    const order = relevance(cols)
+      .map((r) => ({ id: r.id, k: r.eta2 + (r.id.startsWith("motifs::") ? 0.02 : 0) }))
+      .sort((a, b) => b.k - a.k)
+      .map((r) => r.id);
+    const groupOf = sa.samples.map((s) => s.species);
+    const nGroups = new Set(groupOf).size;
+    const within = sa.samples.length - nGroups >= 4; // enough replicates to centre on species
+    const centred = (raw) => {
+      if (!within) return raw;
+      const sum = new Map(),
+        cnt = new Map();
+      raw.forEach((v, i) => {
+        sum.set(groupOf[i], (sum.get(groupOf[i]) || 0) + v);
+        cnt.set(groupOf[i], (cnt.get(groupOf[i]) || 0) + 1);
+      });
+      return raw.map((v, i) => v - sum.get(groupOf[i]) / cnt.get(groupOf[i]));
+    };
+    const by = new Map(cols.map((c) => [c.f.id, centred(c.raw)]));
+    const corr = (a, b) => {
+      const ma = mean(a),
+        mb = mean(b);
+      let sab = 0,
+        saa = 0,
+        sbb = 0;
+      for (let i = 0; i < a.length; i++) {
+        sab += (a[i] - ma) * (b[i] - mb);
+        saa += (a[i] - ma) ** 2;
+        sbb += (b[i] - mb) ** 2;
+      }
+      return saa > 0 && sbb > 0 ? sab / Math.sqrt(saa * sbb) : 0;
+    };
+    const label = (id) => (sa.features.find((f) => f.id === id) || { label: id }).label;
+    const kept = [],
+      dropped = [];
+    order.forEach((id) => {
+      let hit = null;
+      for (const k of kept) {
+        const r = corr(by.get(id), by.get(k));
+        if (Math.abs(r) >= thr) {
+          hit = { k, r };
+          break;
+        }
+      }
+      if (hit) dropped.push({ id, ...hit });
+      else kept.push(id);
+    });
+    dropped.forEach((d) => sa.selFeat.delete(d.id));
+    renderLists();
+    const info = $("saDupInfo");
+    if (info)
+      info.innerHTML = dropped.length
+        ? (within ? "Within species, " : "Across all observations (too few replicates per species to centre), ") + "unticked " + dropped.length + " of " + feats.length + ": " +
+          dropped.map((d) => label(d.id) + " (r = " + d.r.toFixed(2) + " with " + label(d.k) + ")").join("; ")
+        : "No two ticked variables correlate above " + thr + ".";
+    say(dropped.length ? dropped.length + " near-duplicate variable(s) unticked." : "No near-duplicates found.");
+  }
+
   function saSelectSpecies(mode) {
     sa.selSp = new Set();
     if (mode === "all") sa.species.forEach((s) => sa.selSp.add(s));
@@ -1347,6 +1454,8 @@
     lab.sp.clear();
     sa.selFeat = new Set();
     sa.selSp = new Set();
+    sa.levels = new Set(["motifs"]);
+    if ($("saDupInfo")) $("saDupInfo").textContent = "";
     sa.pca = null;
     sa.rel = null;
     sa.view3d = { yaw: -0.7, pitch: 0.4, zoom: 1 };
@@ -1399,6 +1508,7 @@
       version: 1,
       saved: new Date().toISOString(),
       unit: $("saUnit") ? $("saUnit").value : "recording",
+      levels: [...sa.levels],
       variables: [...sa.selFeat],
       speciesShown: [...sa.selSp],
       names: {
@@ -1430,6 +1540,7 @@
     lab.obs = toMap(d.names && d.names.recordings);
     lab.obsSp = toMap(d.names && d.names.recordingSpecies);
     if ($("saUnit") && d.unit) $("saUnit").value = d.unit;
+    if (Array.isArray(d.levels) && d.levels.length) sa.levels = new Set(d.levels);
     sa.selFeat = new Set(d.variables || []);
     sa.selSp = new Set(d.speciesShown || []);
     cmpSel.clear();
@@ -1760,6 +1871,8 @@
   window.saSaveCsv = saveCsv;
   // Called by Summarize after every (re)merge so the lists follow the data.
   window.saTempChanged = saTempChanged;
+  window.saLevelChanged = saLevelChanged;
+  window.saDropDuplicates = saDropDuplicates;
   window.saResetAll = saResetAll;
   window.saSettingsSave = saSettingsSave;
   window.saSettingsLoad = saSettingsLoad;

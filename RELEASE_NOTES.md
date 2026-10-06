@@ -13,6 +13,15 @@ every chosen variable; the species comes from the species tag. Pick the variable
 (a **Suggested set** gives about ten indicators) and the species to show, then
 **Run analysis**.
 
+- **Choosing variables.** Variables come from the **Motifs** table by default;
+  tick **Pulses**, **EnvPeaks**, **Spectral** or **MotifSeqs** to draw from them
+  too. The same measurement averaged over motifs, pulses and envelope peaks (peak
+  frequency, spectral centroid …) is almost the same number three times, and
+  copies would over-weight it in the PCA and the tests. **Drop near-duplicates**
+  unticks, from each group of variables that move together *within species*
+  (default |r| ≥ 0.95), all but the one that separates the species best, a
+  motif-level variable winning a near-tie, and says what it removed.
+
 - **PCA biplot.** Z-scored variables, species centroids, 1σ / 1.5σ / 2σ covariance
   ellipses, variable loadings, any two of the first three PCs. Click a point to
   write its recording name beside it.

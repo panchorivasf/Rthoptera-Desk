@@ -7878,6 +7878,26 @@
                     <summary style="font-size: 11px; color: var(--txt2); cursor: pointer">
                       Variables (<span id="saFeatCount">0</span>)
                     </summary>
+                    <div class="row" style="gap: 10px; margin: 4px 0; flex-wrap: wrap">
+                      <span style="font-size: 11px; color: var(--txt2)">Tables</span>
+                      <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="saLvl_motifs" checked onchange="saLevelChanged()" /> Motifs</label>
+                      <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="saLvl_pulses" onchange="saLevelChanged()" /> Pulses</label>
+                      <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="saLvl_envPeaks" onchange="saLevelChanged()" /> EnvPeaks</label>
+                      <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="saLvl_spectral" onchange="saLevelChanged()" /> Spectral</label>
+                      <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="saLvl_motseq" onchange="saLevelChanged()" /> MotifSeqs</label>
+                      <span
+                        class="info-icon"
+                        data-i18n-title
+                        title="Which tables the variables come from. Each observation is one recording's average, so the same measurement averaged over motifs, pulses and envelope peaks (peak frequency, spectral centroid ...) is almost the same number three times. Several copies over-weight that measurement in the PCA and the tests, so the motif level is the default. Add Pulses or EnvPeaks for things the motif row does not carry, such as pulse gaps."
+                        >&#9432;</span
+                      >
+                    </div>
+                    <div class="row" style="gap: 6px; margin: 2px 0 4px; flex-wrap: wrap">
+                      <button onclick="saDropDuplicates()" style="font-size: 10px; padding: 1px 8px" title="Of each group of ticked variables that move together, keep the one that separates the species best and untick the rest">Drop near-duplicates</button>
+                      <span style="font-size: 11px; color: var(--txt2)">correlated above</span>
+                      <input type="number" id="saDupR" value="0.95" min="0.5" max="0.999" step="0.01" style="width: 56px; font-size: 11px" />
+                      <span id="saDupInfo" style="font-size: 10px; color: var(--txt3)"></span>
+                    </div>
                     <div class="row" style="gap: 5px; margin: 4px 0">
                       <button onclick="saSelectFeatures('suggested')" style="font-size: 10px; padding: 1px 8px">Suggested set</button>
                       <button onclick="saSelectFeatures('all')" style="font-size: 10px; padding: 1px 8px">All</button>
