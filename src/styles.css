@@ -141,6 +141,32 @@
         min-width: 190px;
         max-width: 330px;
       }
+      #ppPanels > .panel {
+        flex: 1 1 260px;
+        min-width: 220px;
+      }
+      #ppPanels > .panel:first-child {
+        flex: 0 1 200px;
+        min-width: 180px;
+      }
+      #ppPanels > .panel:nth-child(2) {
+        flex: 6 1 640px;
+      }
+      #ppEditAudioBody > div {
+        flex: 1 1 210px;
+        min-width: 190px;
+      }
+      #ppEditAudioBody > #editStatus {
+        flex: 1 1 100%;
+      }
+      #ppEditAudioBody > button {
+        flex: 0 0 auto;
+      }
+      .scard .ssd {
+        font-size: 0.7em;
+        font-weight: 400;
+        opacity: 0.75;
+      }
       .row-collapse-bar {
         display: flex;
         align-items: center;

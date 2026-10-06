@@ -153,23 +153,75 @@
 
       // Yield inside a loop so an in-progress bar can repaint. A single frame
       // is enough here — the overlay is already up.
+      //
+      // Cancelling: a task started with { cancellable: true } shows a Cancel
+      // button. Everything runs on the one UI thread, so a click can only be
+      // heard when the task yields — busyTick() and busyYield() are those
+      // points, and they stop the task by throwing BusyCancelled, which
+      // withBusy catches (it then resolves to undefined and sets
+      // busyWasCancelled so the caller can tidy up).
+      class BusyCancelled extends Error {}
+      let _busyCancel = false;
+      let busyWasCancelled = false;
+      function busyRequestCancel() {
+        _busyCancel = true;
+        const l = $("busyLabel");
+        if (l) l.textContent = "Cancelling…";
+        const b = $("busyCancel");
+        if (b) b.disabled = true;
+      }
       function busyTick() {
-        return new Promise((r) => requestAnimationFrame(r));
+        return new Promise((r, rej) =>
+          requestAnimationFrame(() =>
+            _busyCancel ? rej(new BusyCancelled()) : r(),
+          ),
+        );
+      }
+      // For loops that run many cheap-to-medium iterations between visible
+      // progress updates: yields to the browser at most every ~40 ms, so the
+      // window stays responsive and Cancel can be heard without paying a
+      // frame wait per iteration.
+      let _busyLastYield = 0;
+      async function busyYield() {
+        if (_busyCancel) throw new BusyCancelled();
+        if (performance.now() - _busyLastYield > 40) {
+          await busyTick();
+          _busyLastYield = performance.now();
+        }
       }
 
       let _busyDepth = 0;
-      async function withBusy(label, fn) {
+      async function withBusy(label, fn, opts) {
         _busyDepth++;
         const ov = $("busyOverlay");
+        const cancelBtn = $("busyCancel");
+        const cancellable = !!(opts && opts.cancellable);
+        if (cancellable) {
+          _busyCancel = false;
+          busyWasCancelled = false;
+        }
+        if (cancelBtn) {
+          cancelBtn.style.display = cancellable ? "" : "none";
+          cancelBtn.disabled = false;
+        }
         if (ov) ov.classList.add("show");
         busySet(label, null);
         await busyPaint();
         try {
           return await fn(busySet);
+        } catch (e) {
+          if (e instanceof BusyCancelled) {
+            busyWasCancelled = true;
+            log("Cancelled", "warn");
+            return undefined;
+          }
+          throw e;
         } finally {
           // Nested calls must not tear the overlay down early.
           if (--_busyDepth <= 0) {
             _busyDepth = 0;
+            _busyCancel = false;
+            if (cancelBtn) cancelBtn.style.display = "none";
             if (ov) ov.classList.remove("show");
           }
         }
@@ -1054,6 +1106,7 @@
         }
         const smoothMs = Math.max(0.5, parseFloat($("pkSmooth")?.value) || 1);
         pkEnv = pkComputeEnv(smoothMs);
+        if (typeof pkApplyAutoDetThr === "function") pkApplyAutoDetThr();
         if (typeof pkDrawEnvelope === "function") pkDrawEnvelope();
       }
 
@@ -2035,7 +2088,7 @@
         [
           "btnPkConfirm",
           "btnPkApplySpectral",
-          "btnPkFilterFalse",
+          "btnPkDropUnassigned",
           "btnPkUndo",
           "btnPkFitApply",
           "btnSaveSpectralExcel",
@@ -2073,7 +2126,7 @@
 
         clearRecordingAnalysis();
 
-        $("fileLabel").textContent = "no file";
+        if ($("fileLabel")) $("fileLabel").textContent = "no file";
         $("statusBadge").textContent = "No file";
         $("statusBadge").className = "badge warn";
         ["infoDur", "infoSr", "infoNyq", "infoCh"].forEach((id) => {
@@ -2136,8 +2189,10 @@
 
         currentAudioFileName = entry.name;
         currentAudioFileFolder = entry.folder || "";
-        $("fileLabel").textContent =
-          entry.name.length > 24 ? entry.name.slice(0, 22) + "…" : entry.name;
+        // (The file name is shown in the Loaded Audio list; the toolbar label was removed.)
+        if ($("fileLabel"))
+          $("fileLabel").textContent =
+            entry.name.length > 24 ? entry.name.slice(0, 22) + "…" : entry.name;
         currentSpecimenId = entry.specimenId || "";
         const specInput = $("specimenIdInput");
         if (specInput) specInput.value = currentSpecimenId;
@@ -7744,7 +7799,13 @@
           ["pkMaxMotifGap", "max motif gap"],
         ].forEach(([id, note]) => {
           const el = $(id);
-          if (el) el.addEventListener("input", () => regroup(note));
+          if (el)
+            el.addEventListener("input", () => {
+              // Changing a gap setting means "group by the settings again".
+              if (id === "pkMaxPulseGap" || id === "pkMaxMotifGap")
+                pkFrozenGroups = false;
+              regroup(note);
+            });
         });
         // "Max envelope peak gap" / "Max amp diff" (the Pulse Grouping panel) drive
         // envelope peak-to-pulse segmentation itself, one level below the trio above.
@@ -7780,6 +7841,13 @@
         // outer peaks; redraw (and refresh counts) straight away.
         const pad = $("pkPulsePad");
         if (pad) pad.addEventListener("input", () => regroup("edge pad"));
+        // Typing a threshold overrides Auto.
+        const dthr = $("pkDetThr");
+        if (dthr)
+          dthr.addEventListener("input", () => {
+            const cb = $("pkDetThrAuto");
+            if (cb) cb.checked = false;
+          });
         // "Max pulse gap" also drives the manual Pulse (train) → Echeme
         // clustering below — same threshold, independent data.
         const mpg = $("pkMaxPulseGap");
@@ -8215,7 +8283,7 @@
       // default 0.5 ms per side. Falls back to 0.5 ms if the input is absent.
       function pkPulsePadSec() {
         const ms = parseFloat($("pkPulsePad")?.value);
-        return (isFinite(ms) && ms >= 0 ? ms : 0.5) / 1000;
+        return (isFinite(ms) && ms >= 0 ? ms : 1) / 1000;
       }
       // Clamp a time (seconds) to the valid signal range [0, duration].
       function pkClampT(t) {
@@ -8240,6 +8308,52 @@
         }
         if (cur.length) motifs.push(cur);
         return motifs;
+      }
+
+      // ── Motifs and sequences read from an imported table ────────────────
+      // Importing an Envelope peaks table restores which motif (and which motif
+      // sequence) every peak belonged to, instead of re-deriving them from the
+      // gap settings. They are stored as flags on the LAST peak of each motif
+      // (motifEnd) and of each sequence (seqEnd), exactly like pulse boundaries
+      // (splitAfter), and honoured while pkFrozenGroups is true. Detecting,
+      // re-deriving pulse boundaries, or editing Max pulse gap / Max motif gap
+      // turns it off again and the settings take over.
+      let pkFrozenGroups = false;
+
+      function pkFrozenMotifs(allPulses, minPeaks) {
+        const motifs = [];
+        let cur = [];
+        let pending = false; // a motif ended in a pulse that was filtered out
+        allPulses.forEach((pulse) => {
+          const last = pulse[pulse.length - 1];
+          if (pulse.length >= minPeaks) {
+            if (pending && cur.length) {
+              motifs.push(cur);
+              cur = [];
+            }
+            cur.push(pulse);
+            pending = !!last.motifEnd;
+          } else {
+            pending = pending || !!last.motifEnd;
+          }
+        });
+        if (cur.length) motifs.push(cur);
+        return motifs;
+      }
+
+      function pkFrozenSeqs(motifs) {
+        const seqs = [];
+        let cur = [];
+        motifs.forEach((motif) => {
+          cur.push(motif);
+          const lastPulse = motif[motif.length - 1];
+          if (lastPulse[lastPulse.length - 1].seqEnd) {
+            seqs.push(cur);
+            cur = [];
+          }
+        });
+        if (cur.length) seqs.push(cur);
+        return seqs;
       }
 
       // ── Group motifs into motif sequences ──────────────────────────────
@@ -8609,7 +8723,7 @@
           .slice()
           .sort((a, b) => a.start - b.start);
         if (!pulses.length) return [];
-        const maxGap = (parseFloat($("pkMaxPulseGap")?.value) || 300) / 1000;
+        const maxGap = (parseFloat($("pkMaxPulseGap")?.value) || 100) / 1000;
         const groups = [];
         let cur = [pulses[0]];
         for (let i = 1; i < pulses.length; i++) {
@@ -8786,8 +8900,8 @@
         "pkWin",
         "pkThresh",
         "pkDetThr",
+        "pkDetThrAuto",
         "pkLinkThr",
-        "pkFalseDiff",
         "pkSpecResEnvPeak",
         "pkSpecResPulse",
         "pkSpecResMotif",
@@ -8830,10 +8944,9 @@
         return data;
       }
       function _pkApply(data) {
-        // Presets saved before the field was renamed carry the old key. Map it
-        // across on read so an existing slot doesn't silently lose its Δ.
-        if ("pkFakeDiff" in data && !("pkFalseDiff" in data))
-          data = { ...data, pkFalseDiff: data.pkFakeDiff };
+        // A preset saved before Auto existed holds a typed threshold: keep it.
+        if ("pkDetThr" in data && !("pkDetThrAuto" in data))
+          data = { ...data, pkDetThrAuto: false };
         // Spectral windows used to be stored as durations. Convert an old
         // preset's milliseconds into the resolution it was really asking for,
         // so a saved parameter set keeps meaning the same thing.
@@ -9055,13 +9168,12 @@
           // preset hand-edited or produced by an older build still loads; only
           // reject a file with nothing usable in it at all.
           const known = PK_PRESET_FIELDS.filter((id) => id in data);
-          const legacy = "pkFakeDiff" in data;
-          if (!known.length && !legacy)
+          if (!known.length)
             throw new Error("no Temporal Analysis parameters in this file");
           _pkApply(data);
           _pkPresetStatus(
             'Loaded ' +
-              (known.length + (legacy && !known.includes("pkFalseDiff") ? 1 : 0)) +
+              known.length +
               " parameter(s)" +
               (data._name ? ' from "' + data._name + '"' : "") +
               ". Not stored in a slot — use 💾 Save to keep it.",
@@ -9077,11 +9189,11 @@
         const linkRaw = $("pkLinkThr").value.trim();
         return {
           smoothMs: Math.max(0.5, parseFloat($("pkSmooth").value) || 1),
-          winMs: Math.max(0.05, parseFloat($("pkWin").value) || 5),
-          env_peakThr: parseFloat($("pkThresh").value) || 0.5,
-          detThr: parseFloat($("pkDetThr").value) || 15,
+          winMs: Math.max(0.05, parseFloat($("pkWin").value) || 1),
+          env_peakThr: parseFloat($("pkThresh").value) || 1,
+          detThr: parseFloat($("pkDetThr").value) || 5,
           linkThr: linkRaw === "" ? null : parseFloat(linkRaw),
-          maxGapMs: parseFloat($("pkMaxGap").value) || 10,
+          maxGapMs: parseFloat($("pkMaxGap").value) || 8,
           maxDiff: maxDiffRaw === "" ? null : parseFloat(maxDiffRaw),
           archEnable: $("pkArchEnable").checked,
           archDepth: parseFloat($("pkArchDepth").value) || 40,
@@ -9090,10 +9202,10 @@
             $("pkArchMinDur").value.trim() === ""
               ? null
               : parseFloat($("pkArchMinDur").value),
-          maxPulseGapMs: parseFloat($("pkMaxPulseGap").value) || 300,
+          maxPulseGapMs: parseFloat($("pkMaxPulseGap").value) || 100,
           minEnvPeaks: parseInt($("pkMinEnvPeaks").value) || 3,
           useMotifSeq: $("pkMotifSeq").checked,
-          maxMotifGapMs: parseFloat($("pkMaxMotifGap").value) || 800,
+          maxMotifGapMs: parseFloat($("pkMaxMotifGap").value) || 350,
         };
       }
 
@@ -9313,7 +9425,8 @@
 
         for (let gi = 0; gi < gaps.length; gi++) {
           const g = gaps[gi];
-          diffs.forEach((d, di) => {
+          for (let di = 0; di < diffs.length; di++) {
+            const d = diffs[di];
             const gapMs = g * 1000;
             const diffPct = d == null ? null : d * 100;
             const base = pkGroupPulses(envPeaks, gapMs, diffPct, false, 0, null);
@@ -9329,8 +9442,12 @@
               },
               pkPulseBoundaryTimes(base),
             );
-            PK_FIT_DEPTHS.forEach((dep, pi) => {
-              minDurs.forEach((md, mi) => {
+            await busyYield();
+            for (let pi = 0; pi < PK_FIT_DEPTHS.length; pi++) {
+              const dep = PK_FIT_DEPTHS[pi];
+              for (let mi = 0; mi < minDurs.length; mi++) {
+                const md = minDurs[mi];
+                await busyYield();
                 offer(
                   cen0 +
                     mid(pi, PK_FIT_DEPTHS.length) +
@@ -9344,9 +9461,9 @@
                   },
                   pkPulseBoundaryTimes(pkSplitByValleys(base, dep, md)),
                 );
-              });
-            });
-          });
+              }
+            }
+          }
           // Yield every few gap values so the bar moves. Too often and the
           // frame waits dominate the search; too rarely and it looks stuck.
           if (onProgress && (gi % 4 === 3 || gi === gaps.length - 1)) {
@@ -9420,7 +9537,6 @@
         const hi = Math.min(pkEnv.length, Math.ceil((t1 + pad) * sampleRate));
         const slice = pkEnv.subarray(lo, hi);
         const offsetSec = lo / sampleRate;
-        const silenceFloor = pkPercentile(pkEnv, 5);
 
         // Envelope peak window caps how close two envelope peaks may be, so scale the candidates
         // to the spacing actually present rather than to arbitrary numbers.
@@ -9437,7 +9553,6 @@
           refEnvPeaks.map((p) => p.amp),
           10,
         ).map((v) => v * 100);
-        const falseCands = [null, 5, 15, 30];
 
         let best = null;
         let done = 0;
@@ -9447,6 +9562,7 @@
             for (const detThr of detCands) {
               // Onset threshold only means anything below the detection bar.
               for (const linkThr of [null, detThr * 0.5, detThr * 0.25]) {
+                await busyYield();
                 const found = pkFindEnvPeaks(
                   slice,
                   winMs,
@@ -9458,12 +9574,8 @@
                 const shifted = found
                   .map((p) => ({ time: p.time + offsetSec, amp: p.amp }))
                   .filter((p) => p.time >= t0 && p.time <= t1);
-                for (const falseDiff of falseCands) {
-                  const kept = pkWithoutFalseEnvPeaks(
-                    shifted,
-                    silenceFloor,
-                    falseDiff,
-                  );
+                {
+                  const kept = shifted;
                   const f1 = pkEnvPeakMatchF1(
                     refTimes,
                     kept.map((p) => p.time),
@@ -9478,7 +9590,6 @@
                         env_peakThr,
                         detThr,
                         linkThr,
-                        falseDiff,
                       },
                     };
                   }
@@ -9571,6 +9682,7 @@
 
           let pick = null;
           for (const c of ties) {
+            await busyYield();
             const p = c.params;
             const st = pkSegStats(
               pkGroupPulses(
@@ -9679,7 +9791,7 @@
               envPeaks,
               envPeaks[0].time,
               envPeaks[envPeaks.length - 1].time,
-              parseFloat($("pkMaxGap").value) || 10,
+              parseFloat($("pkMaxGap").value) || 8,
               (f) =>
                 progress(
                   "Fitting envelope peak detection… " + Math.round(f * 100) + "%",
@@ -9708,7 +9820,12 @@
               ),
           );
           return { ...ev, det, detRejected };
-        });
+        }, { cancellable: true });
+
+        if (!fitted) {
+          _pkFitStatus("Cancelled. Nothing was changed.", "warn");
+          return;
+        }
 
         const { best, loo, shape, det, detRejected } = fitted;
         if (!best) {
@@ -9735,10 +9852,6 @@
               (det.params.linkThr == null
                 ? "off"
                 : det.params.linkThr.toFixed(1) + "%") +
-              ", Δ " +
-              (det.params.falseDiff == null
-                ? "off"
-                : det.params.falseDiff + "%") +
               ")",
           );
         bits.push(
@@ -9812,10 +9925,9 @@
           $("pkWin").value = String(d.winMs);
           $("pkThresh").value = String(d.env_peakThr);
           $("pkDetThr").value = String(Math.round(d.detThr * 100) / 100);
+          if ($("pkDetThrAuto")) $("pkDetThrAuto").checked = false;
           $("pkLinkThr").value =
             d.linkThr == null ? "" : String(Math.round(d.linkThr * 100) / 100);
-          $("pkFalseDiff").value =
-            d.falseDiff == null ? "" : String(d.falseDiff);
           // Detection changed, so the envelope peak list itself has to be rebuilt —
           // re-freezing boundaries over the old envelope peaks would be meaningless.
           // Smoothing is untouched, so the envelope comes out identical.
@@ -9852,6 +9964,7 @@
 
       // Run the detection algorithm ONCE and freeze its segmentation into flags.
       function pkInitBoundaries() {
+        pkFrozenGroups = false; // pulses are re-derived, so stored motifs no longer fit
         const P = pkReadParams();
         const rawPulses = pkGroupPulses(
           pkEnvPeaks,
@@ -9872,10 +9985,15 @@
       // Recompute pulses/motifs from the FROZEN segmentation (no algorithm).
       function pkComputeGroups() {
         const P = pkReadParams();
-        const pulses = pkBuildPulses().filter((t) => t.length >= P.minEnvPeaks);
-        const motifs = pkGroupMotifs(pulses, P.maxPulseGapMs);
+        const allPulses = pkBuildPulses();
+        const pulses = allPulses.filter((t) => t.length >= P.minEnvPeaks);
+        const motifs = pkFrozenGroups
+          ? pkFrozenMotifs(allPulses, P.minEnvPeaks)
+          : pkGroupMotifs(pulses, P.maxPulseGapMs);
         const motifSeqs = P.useMotifSeq
-          ? pkGroupMotifSeqs(motifs, P.maxMotifGapMs)
+          ? pkFrozenGroups
+            ? pkFrozenSeqs(motifs)
+            : pkGroupMotifSeqs(motifs, P.maxMotifGapMs)
           : [];
         return { P, pulses, motifs, motifSeqs };
       }
@@ -9905,8 +10023,8 @@
         }
         const applyBtn = $("btnPkApplySpectral");
         if (applyBtn) applyBtn.disabled = !pkEnvPeaks.length;
-        const falseBtn = $("btnPkFilterFalse");
-        if (falseBtn) falseBtn.disabled = !pkEnvPeaks.length;
+        const dropBtn = $("btnPkDropUnassigned");
+        if (dropBtn) dropBtn.disabled = !pkEnvPeaks.length;
         pkUpdateSelectionButtons();
         pkDrawEnvelope();
       }
@@ -9933,123 +10051,80 @@
         return 1;
       }
 
-      // ── False-envelope peak filter ────────────────────────────────────────────────
-      // Removes envelope peaks that are only technically local maxima — they clear the
-      // prominence check on their own tiny dip — but sit at the bottom of the
-      // envelope between clearly taller real envelope peaks. That covers a single low
-      // bump between two pulses and, just as often, a run of several bumps at
-      // much the same near-floor level.
-      //
-      // A envelope peak is dropped only when BOTH conditions hold, and requiring both
-      // is the whole point of the rule:
-      //   • Near the floor on its own is not enough. The quiet onset and
-      //     offset envelope peaks that open and close a real pulse live down there
-      //     too, and dropping them on that basis alone tore pulses apart at
-      //     their own edges — the hole left behind exceeded Max envelope peak gap, so
-      //     one pulse came out as two or three.
-      //   • Below both neighbours on its own is not enough either. A genuine
-      //     dip inside a loud pulse can be deeper than Δ while sitting
-      //     nowhere near the floor.
-      //
-      // Near-floor envelope peaks are grouped into RUNS and each run is judged as a
-      // unit against the taller envelope peaks flanking the whole run. Judging envelope peak by
-      // envelope peak against immediate neighbours is what let clusters survive: every
-      // member of a run has another run member for a neighbour, so no drop is
-      // ever measured across that pair and the run shields itself.
-      // The rule itself, as pure index arithmetic: [start,end] index pairs of
-      // near-floor runs that sit more than `thr` below the envelope peaks flanking the
-      // whole run. Shared by the live filter and by the parameter fitter, so
-      // the two can never drift apart.
-      function pkFalseEnvPeakRuns(envPeaks, silenceFloor, thr) {
-        const nearFloor = (p) => p.amp - silenceFloor <= thr;
-        const doomed = [];
-        for (let i = 0; i < envPeaks.length; ) {
-          if (!nearFloor(envPeaks[i])) {
-            i++;
-            continue;
+      // ── Automatic detection threshold ────────────────────────────────────
+      // The envelope is scaled so its loudest point is 100%, so a noise level read
+      // in percent means the same thing in every recording. The noise is
+      // measured on the QUIET part only (everything below a quarter of the peak):
+      // its median, and its spread as the median absolute deviation scaled to a
+      // standard deviation. The threshold goes just above it: median + 3 spread.
+      function pkEstimateNoise() {
+        if (!pkEnv || !pkEnv.length) return { error: "Load audio first" };
+        const CEIL = 0.25;
+        const NB = 4000; // resolution of CEIL / NB = 0.006% of the peak
+        const hist = new Uint32Array(NB);
+        let nQuiet = 0;
+        for (let i = 0; i < pkEnv.length; i++) {
+          const v = pkEnv[i];
+          if (v < CEIL) {
+            hist[Math.min(NB - 1, Math.floor((v / CEIL) * NB))]++;
+            nQuiet++;
           }
-          let end = i;
-          while (end + 1 < envPeaks.length && nearFloor(envPeaks[end + 1])) end++;
-          // Compare the flankers against the run's TALLEST member: the run has
-          // to sit below them as a whole, so one member standing clear of the
-          // threshold keeps the entire run.
-          let runMax = envPeaks[i].amp;
-          for (let k = i + 1; k <= end; k++)
-            if (envPeaks[k].amp > runMax) runMax = envPeaks[k].amp;
-          const left = envPeaks[i - 1];
-          const right = envPeaks[end + 1];
-          // A missing flanker means the run opens or closes the recording —
-          // nothing shows it sits BETWEEN real envelope peaks, so leave it alone.
-          if (
-            left &&
-            right &&
-            left.amp - runMax > thr &&
-            right.amp - runMax > thr
-          )
-            doomed.push([i, end]);
-          i = end + 1;
         }
-        return doomed;
+        if (nQuiet < pkEnv.length * 0.02)
+          return {
+            error:
+              "No quiet stretch found (under 2% of the recording is below 25% of the peak)",
+          };
+        const quantile = (h, n, q) => {
+          let cum = 0;
+          const target = Math.max(1, Math.round(n * q));
+          for (let b = 0; b < h.length; b++) {
+            cum += h[b];
+            if (cum >= target) return ((b + 0.5) / h.length) * CEIL;
+          }
+          return CEIL;
+        };
+        const med = quantile(hist, nQuiet, 0.5);
+        // Median absolute deviation: histogram of |v - median|.
+        const dev = new Uint32Array(NB);
+        for (let i = 0; i < pkEnv.length; i++) {
+          const v = pkEnv[i];
+          if (v < CEIL)
+            dev[Math.min(NB - 1, Math.floor((Math.abs(v - med) / CEIL) * NB))]++;
+        }
+        const sigma = 1.4826 * quantile(dev, nQuiet, 0.5);
+        return {
+          med,
+          sigma,
+          thrPct: Math.max(0.1, Math.round((med + 3 * sigma) * 1000) / 10),
+        };
       }
 
-      // Same rule, applied functionally: returns a NEW array with the false
-      // envelope peaks gone. Used by the fitter, which must try Δ values without
-      // touching pkEnvPeaks or the DOM.
-      function pkWithoutFalseEnvPeaks(envPeaks, silenceFloor, falseDiffPct) {
-        if (!(falseDiffPct > 0)) return envPeaks;
-        const doomed = pkFalseEnvPeakRuns(envPeaks, silenceFloor, falseDiffPct / 100);
-        if (!doomed.length) return envPeaks;
-        const drop = new Uint8Array(envPeaks.length);
-        doomed.forEach(([s, e]) => {
-          for (let k = s; k <= e; k++) drop[k] = 1;
-        });
-        return envPeaks.filter((_, i) => !drop[i]);
-      }
+      // Note from the last automatic threshold, appended to the Detect status.
+      let pkAutoNote = "";
 
-      function pkFilterFalseEnvPeaks(silent) {
-        if (!pkEnvPeaks.length || !pkEnv) {
-          if (!silent) pkLiveUpdate("no envelope peaks to filter");
-          return 0;
+      // When Auto is ticked, write the noise-based threshold into the box and
+      // return it (percent); otherwise null and the typed value stands.
+      function pkApplyAutoDetThr() {
+        pkAutoNote = "";
+        const cb = $("pkDetThrAuto");
+        if (!cb || !cb.checked) return null;
+        const est = pkEstimateNoise();
+        if (est.error) {
+          pkAutoNote = " · auto threshold unavailable (" + est.error + "), using the typed value";
+          return null;
         }
-        const raw = $("pkFalseDiff") ? $("pkFalseDiff").value.trim() : "";
-        const falseDiffPct = raw === "" ? null : parseFloat(raw);
-        if (falseDiffPct == null || !(falseDiffPct > 0)) {
-          if (!silent) pkLiveUpdate("false-envelope peak filter is off");
-          return 0;
-        }
-        const silenceFloor = pkPercentile(pkEnv, 5); // 5th percentile ≈ background level
-        const thr = falseDiffPct / 100;
-        const maxGapMs = parseFloat($("pkMaxGap")?.value) || 10;
-        const doomed = pkFalseEnvPeakRuns(pkEnvPeaks, silenceFloor, thr);
-        if (!silent && doomed.length) pkSnapshot("remove false envelope peaks");
-
-        let removed = 0;
-        for (let d = doomed.length - 1; d >= 0; d--) {
-          const [s, e] = doomed[d];
-          const left = pkEnvPeaks[s - 1];
-          const right = pkEnvPeaks[e + 1];
-          for (let k = s; k <= e; k++) {
-            const p = pkEnvPeaks[k];
-            pkSelection.delete(p);
-            // A boundary that sat on a dropped envelope peak has to outlive it.
-            if (left) left.splitAfter = left.splitAfter || p.splitAfter;
-          }
-          // Closing the hole can leave the survivors further apart than a
-          // pulse tolerates — that IS a pulse boundary, so mark it.
-          if (left && right && (right.time - left.time) * 1000 > maxGapMs)
-            left.splitAfter = true;
-          pkEnvPeaks.splice(s, e - s + 1);
-          removed += e - s + 1;
-        }
-        if (!silent) {
-          pkLiveUpdate(
-            removed +
-              " false envelope peak(s) removed (floor≈" +
-              (silenceFloor * 100).toFixed(2) +
-              "%)",
-          );
-        }
-        return removed;
+        $("pkDetThr").value = String(est.thrPct);
+        pkAutoNote =
+          " · noise ≈ " +
+          (est.med * 100).toFixed(1) +
+          "% → threshold " +
+          est.thrPct +
+          "%" +
+          (est.med >= 0.15
+            ? " (high: check for a loud spike setting the 100%)"
+            : "");
+        return est.thrPct;
       }
 
       // ── Import a saved Envelope peaks table ──────────────────────────────────────
@@ -10108,6 +10183,8 @@
           trK = key(rows[0], "pulse_id", "train_id"),
           moK = key(rows[0], "motif_id");
 
+        const hasMotifIds =
+          moK != null && rows.some((r) => String(r[moK] ?? "") !== "");
         const parsed = [];
         let skipped = 0,
           outside = 0;
@@ -10150,6 +10227,21 @@
         // user may never have pressed Detect on this file.
         if (!pkEnv) pkRefreshEnvelope();
 
+        // Motif sequences, if the workbook has them: a sheet with seq_start and
+        // seq_end. Each sequence ends at the last peak inside its time span.
+        let seqSpans = null;
+        for (const name of Object.keys(workbook)) {
+          const r = workbook[name];
+          if (r && r.length && key(r[0], "seq_start") && key(r[0], "seq_end")) {
+            const sK = key(r[0], "seq_start"),
+              eK = key(r[0], "seq_end");
+            seqSpans = r
+              .map((row) => [parseFloat(row[sK]), parseFloat(row[eK])])
+              .filter(([a, b]) => isFinite(a) && isFinite(b));
+            break;
+          }
+        }
+
         const n = pkEnv ? pkEnv.length : 0;
         pkEnvPeaks = parsed.map((p, i) => {
           const idx = Math.max(
@@ -10163,8 +10255,38 @@
             amp: p.amp != null ? p.amp : pkEnv ? pkEnv[idx] : 0,
             // Boundary wherever the pulse (or motif) label changes.
             splitAfter: !!next && (next.pulse !== p.pulse || next.motif !== p.motif),
+            // The last peak of each motif (an unlabelled file has no motifs to restore).
+            motifEnd: hasMotifIds && !!next && next.motif !== p.motif,
           };
         });
+        // Replace whatever motif / sequence grouping the app had with the file's.
+        pkFrozenGroups = hasMotifIds;
+        if (hasMotifIds && pkEnvPeaks.length) {
+          pkEnvPeaks[pkEnvPeaks.length - 1].motifEnd = true;
+          if (seqSpans) {
+            seqSpans.forEach(([a, b]) => {
+              let last = null;
+              for (const q of pkEnvPeaks) {
+                if (q.time > b + 0.002) break;
+                if (q.time >= a - 0.002) last = q;
+              }
+              if (last) {
+                last.seqEnd = true;
+                last.motifEnd = true;
+                last.splitAfter = true;
+              }
+            });
+            // The final peak closes the last sequence even if its span was off.
+            pkEnvPeaks[pkEnvPeaks.length - 1].seqEnd = true;
+          }
+        }
+        // Tick or untick "Motif sequences" to match what the file contains.
+        const seqCb = $("pkMotifSeq");
+        if (seqCb && hasMotifIds) {
+          seqCb.checked = !!(seqSpans && seqSpans.length);
+          const row = $("pkMotifSeqRow");
+          if (row) row.style.display = seqCb.checked ? "" : "none";
+        }
 
         pkConfirmed = false;
         $("pkResults").style.display = "none";
@@ -10178,14 +10300,23 @@
           pkEnvPeaks.length +
           " envelope peaks imported → " +
           pulses.length +
-          " pulses (boundaries from the file)" +
+          " pulses" +
+          (pkFrozenGroups
+            ? ", " +
+              pkComputeGroups().motifs.length +
+              " motifs" +
+              ($("pkMotifSeq") && $("pkMotifSeq").checked
+                ? ", " + pkComputeGroups().motifSeqs.length + " motif sequences"
+                : "") +
+              " (all taken from the file)"
+            : " (boundaries from the file)") +
           (skipped ? " · " + skipped + " unreadable row(s) skipped" : "") +
           (outside ? " · " + outside + " outside the recording" : "");
         $("btnPkConfirm").disabled = pkEnvPeaks.length === 0;
         const applyBtn = $("btnPkApplySpectral");
         if (applyBtn) applyBtn.disabled = pkEnvPeaks.length === 0;
-        const falseBtn = $("btnPkFilterFalse");
-        if (falseBtn) falseBtn.disabled = !pkEnvPeaks.length;
+        const dropBtn = $("btnPkDropUnassigned");
+        if (dropBtn) dropBtn.disabled = pkEnvPeaks.length === 0;
         pkDrawEnvelope();
         log(
           "Imported " + pkEnvPeaks.length + ' envelope peaks from "' + file.name + '".',
@@ -10202,8 +10333,10 @@
           log("Load audio first", "warn");
           return;
         }
-        return withBusy("Detecting envelope peaks…", (progress) =>
-          _pkDetectStages(progress),
+        return withBusy(
+          "Detecting envelope peaks…",
+          (progress) => _pkDetectStages(progress),
+          { cancellable: true },
         );
       }
 
@@ -10216,6 +10349,8 @@
         progress("Computing envelope…", 0.05);
         await busyTick();
         pkEnv = pkComputeEnv(P.smoothMs);
+        const autoThr = pkApplyAutoDetThr();
+        if (autoThr != null) P.detThr = autoThr;
 
         progress("Finding envelope peaks…", 0.4);
         await busyTick();
@@ -10232,9 +10367,6 @@
         progress("Grouping pulses…", 0.8);
         await busyTick();
         pkResetUndo();
-        // Strip near-floor "false" envelope peaks before boundaries are ever drawn from
-        // this set, so pulses/motifs are built on the cleaned list.
-        const falseRemoved = pkFilterFalseEnvPeaks(true);
         pkClearSelection();
         // Reset view to full on new detection
         pkViewStart = 0;
@@ -10251,15 +10383,17 @@
         $("pkStatus").textContent =
           rawEnvPeaks.length +
           " envelope peaks" +
-          (falseRemoved ? " (" + falseRemoved + " false removed)" : "") +
           " → " +
           filtered.length +
           " pulses → " +
           rawMotifs.length +
-          " motifs";
+          " motifs" +
+          pkAutoNote;
         $("btnPkConfirm").disabled = rawEnvPeaks.length === 0;
         const applyBtn = $("btnPkApplySpectral");
         if (applyBtn) applyBtn.disabled = rawEnvPeaks.length === 0;
+        const dropBtn = $("btnPkDropUnassigned");
+        if (dropBtn) dropBtn.disabled = rawEnvPeaks.length === 0;
 
         pkDrawEnvelope();
       }
@@ -10346,8 +10480,12 @@
           if (t1 < vStart || t0 > vEnd) return;
           const x0 = Math.max(padL, tX(t0)),
             x1 = Math.min(padL + pw, tX(t1));
-          ctx.fillStyle = "rgba(255,50,50,0.08)";
+          ctx.fillStyle = "rgba(213,94,0,0.10)";
           ctx.fillRect(x0, padT, x1 - x0, ph);
+          // A solid bar just above the motif bar, so the sequence reads even
+          // when the faint shade does not (dim screens).
+          ctx.fillStyle = "#D55E00";
+          ctx.fillRect(x0, padT - 6, x1 - x0, 4);
         });
 
         // Motif spans
@@ -11052,7 +11190,7 @@
         // threshold, the new envelope peak bridges the two pulses into one; if only
         // one side is, it joins just that pulse; if neither is, it stands
         // alone as its own single-envelope peak pulse.
-        const maxGapMs = parseFloat($("pkMaxGap")?.value) || 10;
+        const maxGapMs = parseFloat($("pkMaxGap")?.value) || 8;
         if (leftPeer) {
           const leftGapMs = (np.time - leftPeer.time) * 1000;
           leftPeer.splitAfter = leftGapMs > maxGapMs;
@@ -11257,7 +11395,7 @@
         const next = pkEnvPeaks[i + 1];
         if (prev) {
           prev.splitAfter = prev.splitAfter || p.splitAfter;
-          const maxGapMs = parseFloat($("pkMaxGap")?.value) || 10;
+          const maxGapMs = parseFloat($("pkMaxGap")?.value) || 8;
           if (next && (next.time - prev.time) * 1000 > maxGapMs) {
             prev.splitAfter = true;
           }
@@ -11305,6 +11443,30 @@
         if (dir === "left") pkSplitLeft(idxs[0]);
         else pkSplitRight(idxs[0]);
       }
+      // Unassigned peaks: those in a pulse with fewer peaks than "Min envelope
+      // peaks/pulse". The exported tables already leave them out; this deletes
+      // them from the plot too. Each pulse boundary is a flag on the last peak
+      // before it, and a dropped pulse sits between two such flags, so the
+      // surviving pulses stay separated without touching any flag.
+      function pkDropUnassigned() {
+        if (!pkEnvPeaks.length) return;
+        const minPeaks = parseInt($("pkMinEnvPeaks").value) || 3;
+        const unassigned = new Set();
+        pkBuildPulses().forEach((pulse) => {
+          if (pulse.length < minPeaks) pulse.forEach((p) => unassigned.add(p));
+        });
+        if (!unassigned.size) {
+          pkLiveUpdate("no unassigned peaks (every pulse has at least " + minPeaks + ")");
+          return;
+        }
+        pkSnapshot("drop unassigned peaks");
+        const kept = pkEnvPeaks.filter((p) => !unassigned.has(p));
+        unassigned.forEach((p) => pkSelection.delete(p));
+        pkEnvPeaks.length = 0;
+        for (const p of kept) pkEnvPeaks.push(p);
+        pkLiveUpdate(unassigned.size + " unassigned peak(s) dropped");
+      }
+
       function pkRemoveSelected() {
         const idxs = pkSelectionIndices();
         if (!idxs.length) return;
@@ -11410,7 +11572,7 @@
         const idxs = pkSelectionIndices();
         if (!idxs.length) return;
         pkSnapshot("remove " + idxs.length + " envelope peak(s)");
-        const maxGapMs = parseFloat($("pkMaxGap")?.value) || 10;
+        const maxGapMs = parseFloat($("pkMaxGap")?.value) || 8;
         // Remove from the end so earlier indices stay valid; preserve boundaries,
         // and split if the collapsed gap now exceeds the pulse threshold even
         // when neither original half-gap was flagged (same fix as pkRemoveEnvPeak).
@@ -12073,22 +12235,42 @@
       // the UI thread without saying anything.
       async function pkConfirm() {
         if (!pkEnvPeaks.length) return;
-        return withBusy("Computing metrics\u2026", (progress) =>
-          _pkConfirmStages(progress),
+        const done = await withBusy(
+          "Computing metrics\u2026",
+          (progress) => _pkConfirmStages(progress),
+          { cancellable: true },
         );
+        // A cancelled run may have filled some tables and not others; drop
+        // them all so nothing half-made can be exported.
+        if (busyWasCancelled) {
+          pkEnvPeakData = [];
+          pkPulseData = [];
+          pkMotifData = [];
+          pkMotifSeqData = [];
+          pkSummaryData = null;
+          pkConfirmed = false;
+          $("pkResults").style.display = "none";
+          $("pkStatus").textContent = "Metrics cancelled — nothing was computed.";
+        }
+        return done;
       }
 
       async function _pkConfirmStages(progress) {
-        const maxPulseGapMs = parseFloat($("pkMaxPulseGap").value) || 300;
+        const maxPulseGapMs = parseFloat($("pkMaxPulseGap").value) || 100;
         const minEnvPeaks = parseInt($("pkMinEnvPeaks").value) || 3;
         const useMotifSeq = $("pkMotifSeq").checked;
-        const maxMotifGapMs = parseFloat($("pkMaxMotifGap").value) || 800;
+        const maxMotifGapMs = parseFloat($("pkMaxMotifGap").value) || 350;
 
         // Pulses come straight from the frozen segmentation — same as what's drawn.
-        const pulses = pkBuildPulses().filter((t) => t.length >= minEnvPeaks);
-        const motifs = pkGroupMotifs(pulses, maxPulseGapMs);
+        const allPulses = pkBuildPulses();
+        const pulses = allPulses.filter((t) => t.length >= minEnvPeaks);
+        const motifs = pkFrozenGroups
+          ? pkFrozenMotifs(allPulses, minEnvPeaks)
+          : pkGroupMotifs(pulses, maxPulseGapMs);
         const motifSeqs = useMotifSeq
-          ? pkGroupMotifSeqs(motifs, maxMotifGapMs)
+          ? pkFrozenGroups
+            ? pkFrozenSeqs(motifs)
+            : pkGroupMotifSeqs(motifs, maxMotifGapMs)
           : [];
 
         // Nothing survived the grouping: say why rather than showing a table of
@@ -12140,12 +12322,15 @@
         // Envelope peak carrier frequencies, kept so the pulse pass can report how much
         // they vary within a pulse (freq_spread).
         const peakFreqOf = new Map();
-        pkEnvPeakData = flat.map((e, k) => {
+        pkEnvPeakData = [];
+        for (let k = 0; k < flat.length; k++) {
+          const e = flat[k];
+          await busyYield();
           const next = k + 1 < flat.length ? flat[k + 1].p : null;
           const period = next ? next.time - e.p.time : null;
           const sm = pkEnvPeakSpectrum(allEnvPeaks, k, env_peakRes) || {};
           if (sm.peak_freq_khz != null) peakFreqOf.set(e.p, sm.peak_freq_khz);
-          return {
+          pkEnvPeakData.push({
             source_file: pkSourceFile(),
             temp_c: currentTempC,
             specimen_id: currentSpecimenId,
@@ -12168,8 +12353,8 @@
             spec_signal_ms: sm.spec_signal_ms ?? null,
             spec_res_hz: sm.spec_res_hz ?? null,
             spec_bin_hz: sm.spec_bin_hz ?? null,
-          };
-        });
+          });
+        }
 
         progress("Pulse metrics\u2026", 0.6);
         await busyTick();
@@ -12470,6 +12655,30 @@
             mean(pkMotifData.map((m) => m.duty_cycle_pct)),
           ),
           duty_cycle_sd: round4(sd(pkMotifData.map((m) => m.duty_cycle_pct))),
+          // Pulses per second within a motif, averaged over motifs.
+          pulse_rate_pps_mean: round4(
+            mean(pkMotifData.map((m) => m.pulse_rate_pps).filter((v) => v != null)),
+          ),
+          pulse_rate_pps_sd: round4(
+            sd(pkMotifData.map((m) => m.pulse_rate_pps).filter((v) => v != null)),
+          ),
+          // Echemes (motifs) per second: each onset-to-onset period gives one
+          // rate (1 / period), and these are averaged. Needs at least two
+          // motifs for the mean, and at least three for the SD; null otherwise.
+          echeme_rate_per_s: (() => {
+            const r = pkMotifData
+              .map((m) => m.motif_period_s)
+              .filter((v) => v != null && v > 0)
+              .map((v) => 1 / v);
+            return r.length ? round4(mean(r)) : null;
+          })(),
+          echeme_rate_per_s_sd: (() => {
+            const r = pkMotifData
+              .map((m) => m.motif_period_s)
+              .filter((v) => v != null && v > 0)
+              .map((v) => 1 / v);
+            return r.length > 1 ? round4(sd(r)) : null;
+          })(),
           motif_dur_mean: round4(mean(pkMotifData.map((m) => m.motif_dur_s))),
           motif_dur_sd: round4(sd(pkMotifData.map((m) => m.motif_dur_s))),
           n_pulses_per_motif_mean: round4(
@@ -12644,12 +12853,24 @@
           { lbl: "Envelope peaks", v: pkSummaryData.n_env_peaks },
           { lbl: "Pulses", v: pkSummaryData.n_pulses },
           { lbl: "Motifs", v: pkSummaryData.n_motifs },
-          { lbl: "PCI-syl (mean)", v: pkSummaryData.pci_syl_mean },
-          { lbl: "PCI-agn (mean)", v: pkSummaryData.pci_agn_mean },
-          { lbl: "Duty cycle %", v: pkSummaryData.duty_cycle_mean },
-          { lbl: "Envelope peak rate (envelope peaks/s)", v: pkSummaryData.env_peak_rate_mean },
-          { lbl: "Tem. Exc.", v: pkSummaryData.tem_exc_mean },
-          { lbl: "Dyn. Exc.", v: pkSummaryData.dyn_exc_mean },
+          { lbl: "PCI-syl (mean ± SD)", v: pkSummaryData.pci_syl_mean, sd: pkSummaryData.pci_syl_sd },
+          { lbl: "PCI-agn (mean ± SD)", v: pkSummaryData.pci_agn_mean, sd: pkSummaryData.pci_agn_sd },
+          { lbl: "Duty cycle % (mean ± SD)", v: pkSummaryData.duty_cycle_mean, sd: pkSummaryData.duty_cycle_sd },
+          {
+            lbl: "Pulse rate (pulses/s, mean ± SD)",
+            v: pkSummaryData.pulse_rate_pps_mean,
+            sd: pkSummaryData.pulse_rate_pps_sd,
+            tip: "Pulses per second inside a motif, averaged over motifs.",
+          },
+          {
+            lbl: "Echeme rate (/s, mean ± SD)",
+            v: pkSummaryData.echeme_rate_per_s,
+            sd: pkSummaryData.echeme_rate_per_s_sd,
+            tip: "Echemes (motifs) per second: each time from one echeme's onset to the next gives a rate (1 / time), averaged. Needs at least two echemes (three for the SD).",
+          },
+          { lbl: "Envelope peak rate (envelope peaks/s, mean ± SD)", v: pkSummaryData.env_peak_rate_mean, sd: pkSummaryData.env_peak_rate_sd },
+          { lbl: "Tem. Exc. (mean ± SD)", v: pkSummaryData.tem_exc_mean, sd: pkSummaryData.tem_exc_sd },
+          { lbl: "Dyn. Exc. (mean ± SD)", v: pkSummaryData.dyn_exc_mean, sd: pkSummaryData.dyn_exc_sd },
         ];
         const sg = $("pkSummCards");
         sg.innerHTML = "";
@@ -12658,9 +12879,11 @@
         cards.forEach((c) => {
           const d = document.createElement("div");
           d.className = "scard";
+          if (c.tip) d.title = c.tip;
           d.innerHTML =
             '<div class="sv">' +
-            c.v +
+            (c.v == null ? "—" : c.v) +
+            (c.sd != null && c.v != null ? ' <span class="ssd">± ' + c.sd + "</span>" : "") +
             '</div><div class="sl">' +
             c.lbl +
             "</div>";
@@ -13468,7 +13691,9 @@
 
         const selections =
           kind === "motif"
-            ? pkGroupMotifs(pulses, parseFloat($("pkMaxPulseGap").value) || 300)
+            ? pkFrozenGroups
+              ? pkFrozenMotifs(pkBuildPulses(), pkReadParams().minEnvPeaks)
+              : pkGroupMotifs(pulses, parseFloat($("pkMaxPulseGap").value) || 100)
             : pulses;
         if (!selections.length) {
           log(

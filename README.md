@@ -36,7 +36,7 @@ reports are the ones defined in that paper.
 If you also want to cite the software itself, for example to state which version
 you used:
 
-> Rivas, F. (2026). *Rthoptera Desk* (Version 0.7.1) [Computer software]. https://github.com/panchorivasf/Rthoptera-Desk
+> Rivas, F. (2026). *Rthoptera Desk* (Version 0.7.2) [Computer software]. https://github.com/panchorivasf/Rthoptera-Desk
 
 GitHub's **Cite this repository** button (top right of this page) generates APA
 and BibTeX for the software from [`CITATION.cff`](CITATION.cff).
