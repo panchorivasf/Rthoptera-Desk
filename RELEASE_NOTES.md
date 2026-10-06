@@ -1,60 +1,69 @@
-# Rthoptera Desk 0.7.0
+# Rthoptera Desk 0.8.0
 
-A selections layer for Temporal Analysis (amplitude detections and manual
-annotations you can merge, split and export), collapsible panels so the
-envelope and spectrogram get more room, and batch editing plus Raven export in
-the Annotation tab.
-
-## Temporal Analysis
-
-### Selections layer
-
-- **Amplitude Detector** — a simple threshold detector (floor %, minimum
-  duration, minimum gap) run on the envelope. It produces its own editable
-  detections, independent of envelope-peak detection.
-- **✏ Annotate** — drag on the plot to draw your own temporal selection. Each
-  one carries a label, a unit (envelope peak, pulse, echeme, motif sequence or
-  other) and, for pulses, its maximum amplitude.
-- **Edit in place** — drag a selection's edges to resize it, click to select it,
-  Del to delete it.
-- **Merge** — Ctrl/Shift-click several detections (in the list, or Ctrl-click on
-  the plot) and press **Merge** or Ctrl+M. They become one selection from the
-  first start to the last end.
-- **Split** — hold **S** and click inside a selection. A red guide shows where
-  the cut will fall, and both halves are left selected so you can undo or
-  re-merge.
-- **Manual Echemes** — pulse annotations cluster into echemes using the same
-  maximum pulse gap as the automatic pipeline, and everything exports together.
-
-### Collapsible panels
-
-The parameter, editing and selection boxes are grouped into three rows, each with
-a ▾/▸ button. Rows start collapsed, so the envelope and spectrogram panes take
-the whole window; open a row when you need it. **Parameter Presets** moved into a
-menu beside the Detection parameters title, and **Learn from Edits** now sits
-inside **Detect & Apply**. Descriptions that used to take up space are now ⓘ
-icons — click one to read it.
+A reworked Annotation tab (a simpler motif detector, edge editing, batch edits and
+Xeno-canto export), Merge folded into Preprocessing, a more compact Spectral
+Analysis layout, and a round of fixes to downsampling, presets and metadata.
 
 ## Annotation tab
 
-- **Motifs only.** The Envelope peak gap setting is gone; the Annotator groups
-  pulses with a fixed internal gap, and **Pulse gap** is the one setting that
-  splits one motif from the next (explained in its ⓘ).
+- **Simpler motif detector.** Detection now thresholds the band-limited envelope,
+  merges stretches separated by less than the gap, and drops anything shorter
+  than a minimum duration. The settings are **Smooth ms**, **Threshold %**,
+  **Gap ms** and **Min dur ms**; the envelope-peak settings are gone.
+- **Edit boxes by their edges.** Drag the left or right edge of any box on the
+  spectrogram to change its start or end. Ctrl+Z undoes the drag.
 - **Batch edit.** Tick any number of selections (shift-click for a range, or
-  "all") and delete them, relabel them, or apply the current band to them in one
-  step. Every batch action can be undone.
-- **Numbering restarts** whenever the table is emptied or new audio is loaded.
-- **Export** to a Raven selection table (`.txt`), a Raven table with
-  Begin File / File Offset columns, or a generic CSV (seconds and Hz); optionally
-  only the ticked selections.
-- The panels below the power spectrum are no longer cut off: the tab scrolls, the
-  lower boxes wrap, and the readout/actions and detection/selection rows can be
-  collapsed.
+  "all") and delete them, relabel them, or apply the current band to them.
+- **Rename a species** now has its own text box for the new name.
+- **Chronological numbering.** The number shown for a selection is its place in
+  time order and updates on its own when you add, delete or resize. Internal ids
+  never change, so undo and batch ticks stay correct.
+- **Export** to a Raven selection table (with or without Begin File / File
+  Offset), a generic CSV, or a **Xeno-canto annotation set (.json)**. The XC
+  number is read from the file name (for example `XC1180460`) and falls back to
+  what you type. Annotator, sound type, sex, life stage and remarks are optional
+  and apply to the whole export.
+- **New layout.** The power spectrum is a tall panel on the left third, with the
+  readout/actions and detection/selection menus beside it. Both menus fold away.
 
-## Loaded Audio
+## Preprocessing
 
-The Loaded Audio pane at the bottom of the window now has a ▾/▸ button to fold it
-away, and remembers whether you left it open.
+- **Merge is now inside Preprocessing**, as a second sub-tab next to Edit audio.
+  The separate Merge tab is gone.
+- Descriptive text is behind ⓘ icons, and the panels and Edit Audio sub-menus
+  have ▾/▸ buttons.
+- **Downsample** now rescales the spectrogram's frequency axis to the new
+  Nyquist instead of leaving an empty band above it.
+- A downsample adds a tag with the new sampling rate to the saved file name
+  (for example `_96dsp`), and a full-band filter on a downsampled recording no
+  longer gets a false `lpf` tag.
+
+## Home page
+
+The intro sentence is gone. **Load Audio** and a **Quick Guide** button sit under
+the title; the Quick Guide shows the description of each tab, now including
+Annotate.
+
+## Spectral Analysis
+
+The display and detection settings that used to sit in a left column are now side
+by side below the spectrogram, folded away with one ▾/▸ button. The log starts
+collapsed.
+
+## Temporal Analysis
+
+- The arch-detection settings and edge pad now regroup pulses immediately, like
+  the other grouping settings.
+- Confirm & Compute Metrics explains why when no pulses survive the grouping,
+  with the typical peak spacing, instead of showing a table of zeros.
+- Editing Specimen ID, Species, Country, Locality or Temp now updates the
+  results tables and the summary straight away.
+- Exported presets are suggested as `<species>_temp_preset.json`.
+
+## Citation
+
+The README now asks users to cite the Rthoptera paper (Rivas et al. 2025,
+*Methods in Ecology and Evolution*, https://doi.org/10.1111/2041-210X.70045).
 
 ## 📥 Which file do I download?
 
@@ -64,15 +73,15 @@ Pick the file that matches your operating system and processor.
 
 | File                                 | Use                                                     |
 | ------------------------------------ | ------------------------------------------------------- |
-| `Rthoptera.Desk_0.7.0_x64-setup.exe` | **Recommended** — standard installer, just double-click |
-| `Rthoptera.Desk_0.7.0_x64_en-US.msi` | Alternative for managed/enterprise deployment           |
+| `Rthoptera.Desk_0.8.0_x64-setup.exe` | **Recommended** — standard installer, just double-click |
+| `Rthoptera.Desk_0.8.0_x64_en-US.msi` | Alternative for managed/enterprise deployment           |
 
 ### macOS
 
 | File                               | Use                         |
 | ---------------------------------- | --------------------------- |
-| `Rthoptera.Desk_0.7.0_aarch64.dmg` | Apple Silicon (M1/M2/M3/M4) |
-| `Rthoptera.Desk_0.7.0_x64.dmg`     | Intel Macs                  |
+| `Rthoptera.Desk_0.8.0_aarch64.dmg` | Apple Silicon (M1/M2/M3/M4) |
+| `Rthoptera.Desk_0.8.0_x64.dmg`     | Intel Macs                  |
 
 Not sure which Mac you have? Click the Apple menu → **About This Mac**. "Apple M…"
 means Apple Silicon; "Intel" means the x64 build.
@@ -81,9 +90,9 @@ means Apple Silicon; "Intel" means the x64 build.
 
 | File                                  | Use                                                                 |
 | ------------------------------------- | ------------------------------------------------------------------- |
-| `Rthoptera.Desk_0.7.0_amd64.AppImage` | **Recommended** — works on most distros. Run `chmod +x` then launch |
-| `Rthoptera.Desk_0.7.0_amd64.deb`      | Debian, Ubuntu, Mint, etc.                                          |
-| `Rthoptera.Desk-0.7.0-1.x86_64.rpm`   | Fedora, RHEL, openSUSE, etc.                                        |
+| `Rthoptera.Desk_0.8.0_amd64.AppImage` | **Recommended** — works on most distros. Run `chmod +x` then launch |
+| `Rthoptera.Desk_0.8.0_amd64.deb`      | Debian, Ubuntu, Mint, etc.                                          |
+| `Rthoptera.Desk-0.8.0-1.x86_64.rpm`   | Fedora, RHEL, openSUSE, etc.                                        |
 
 > **Note:** Builds are currently 64-bit Intel/AMD (x86_64) for Windows and
 > Linux, plus both Intel and Apple Silicon for macOS. ARM Linux and

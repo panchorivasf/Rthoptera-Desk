@@ -25,12 +25,21 @@ Rthoptera Desk is a cross-platform desktop application for analyzing insect soun
 
 ## Citation
 
-If you use Rthoptera Desk in published work, please cite it:
+If you use Rthoptera Desk in published work, please cite the Rthoptera paper:
 
-> Rivas, F. (2026). *Rthoptera Desk* (Version 0.5.1) [Computer software]. https://github.com/panchorivasf/Rthoptera-Desk
+> Rivas, F., Brizio, C., Buzzetti, F. M., & Pijanowski, B. (2025). Rthoptera: Standardised insect bioacoustics in R. *Methods in Ecology and Evolution*, 16(6), 1084–1094. https://doi.org/10.1111/2041-210X.70045
+
+Rthoptera Desk is the desktop counterpart to the Rthoptera R package described
+there, and the temporal and spectral measurements and acoustic metrics it
+reports are the ones defined in that paper.
+
+If you also want to cite the software itself, for example to state which version
+you used:
+
+> Rivas, F. (2026). *Rthoptera Desk* (Version 0.8.0) [Computer software]. https://github.com/panchorivasf/Rthoptera-Desk
 
 GitHub's **Cite this repository** button (top right of this page) generates APA
-and BibTeX from [`CITATION.cff`](CITATION.cff).
+and BibTeX for the software from [`CITATION.cff`](CITATION.cff).
 
 Work using the **Auto-coded Oscillogram** should also cite the method it
 implements:

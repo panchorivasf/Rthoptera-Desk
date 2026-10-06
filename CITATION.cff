@@ -11,8 +11,8 @@ authors:
   - family-names: Rivas
     given-names: Francisco
     orcid: "https://orcid.org/0000-0002-1256-2225"
-version: "0.5.1"
-date-released: "2026-08-18"
+version: "0.8.0"
+date-released: "2026-10-05"
 url: "https://github.com/panchorivasf/Rthoptera-Desk"
 repository-code: "https://github.com/panchorivasf/Rthoptera-Desk"
 license: PolyForm-Noncommercial-1.0.0
