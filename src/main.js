@@ -12125,7 +12125,7 @@
       //                   frames also cross the silence between pulses, so on
       //                   a low duty cycle some frames are pure background and
       //                   entropy and flatness read high.
-      //   spec_*_tmean  — the mean of the motif's pulse rows. Every number is
+      //   spec_*_pulse_mean — the mean of the motif's pulse rows. Every number is
       //                   anchored to actual signal, at the pulse resolution.
       //
       // Disagreement between them is informative: it means the motif is not
@@ -12147,6 +12147,14 @@
         "freq_spread",
       ];
 
+      // <base>_<aggregate>[unit]: the aggregate sits BEFORE the unit, so every
+      // frequency column ends in _khz (peak_freq_pulse_mean_khz, not
+      // peak_freq_khz_tmean).
+      function pkAggName(k, agg) {
+        const m = /^(.*?)(_khz|_ms|_hz)?$/.exec(k);
+        return m[1] + "_" + agg + (m[2] || "");
+      }
+
       function pkMotifSpecMeans(motifId) {
         const rows = pkPulseData.filter((r) => r.motif_id === motifId);
         const out = {};
@@ -12161,7 +12169,7 @@
           // carriers within a pulse, which a single transform cannot report —
           // so it keeps its plain name. Everything else is suffixed to sit
           // beside the motif's own measurement without colliding.
-          out[k === "freq_spread" ? k : k + "_tmean"] = val;
+          out[k === "freq_spread" ? k : pkAggName(k, "pulse_mean")] = val;
         });
         return out;
       }
@@ -12384,27 +12392,27 @@
         // whose pulse holds a steady carrier can report the same
         // peak_freq_khz; only these columns separate them.
         //
-        // The p- prefix marks "aggregated over envelope peak rows", parallel to the
-        // _tmean suffix meaning "aggregated over pulse rows".
+        // _envpeak_ marks "aggregated over envelope peak rows", parallel to
+        // _pulse_ meaning "aggregated over pulse rows" (peak_freq_pulse_mean_khz).
         const pkFreqCols = (env_peaksIn) => {
           const f = env_peaksIn
             .map((pk) => peakFreqOf.get(pk))
             .filter((v) => typeof v === "number" && isFinite(v));
           if (!f.length)
             return {
-              peak_freq_pmean_khz: null,
-              peak_freq_psd_khz: null,
-              peak_freq_pmin_khz: null,
-              peak_freq_pmax_khz: null,
+              peak_freq_envpeak_mean_khz: null,
+              peak_freq_envpeak_sd_khz: null,
+              peak_freq_envpeak_min_khz: null,
+              peak_freq_envpeak_max_khz: null,
             };
           const s = sd(f);
           return {
-            peak_freq_pmean_khz: round4(
+            peak_freq_envpeak_mean_khz: round4(
               f.reduce((a, b) => a + b, 0) / f.length,
             ),
-            peak_freq_psd_khz: s === null ? null : round4(s),
-            peak_freq_pmin_khz: round4(Math.min(...f)),
-            peak_freq_pmax_khz: round4(Math.max(...f)),
+            peak_freq_envpeak_sd_khz: s === null ? null : round4(s),
+            peak_freq_envpeak_min_khz: round4(Math.min(...f)),
+            peak_freq_envpeak_max_khz: round4(Math.max(...f)),
           };
         };
 
@@ -12477,7 +12485,7 @@
                   : null,
               ...pkSpecCols(computeSpectralMetrics(start, end, pulseRes)),
               ...pkFreqCols(pulse),
-              // Historical name for peak_freq_psd_khz, kept so workbooks and
+              // Historical name for peak_freq_envpeak_sd_khz, kept so workbooks and
               // scripts written against older exports keep working. Same
               // number: how much the per-envelope peak carrier moves across this pulse.
               // Large values mean the pulse's own bandwidth is driven by drift
@@ -12602,7 +12610,7 @@
             // Pooled over every pulse in the motif, not averaged over its
             // pulses: a motif whose pulses each hold a steady but different
             // carrier has a small freq_spread (each pulse is tight) and a
-            // large peak_freq_psd_khz (the motif as a whole is not).
+            // large peak_freq_envpeak_sd_khz (the motif as a whole is not).
             ...pkFreqCols(allEnvPeaks),
           });
         });
@@ -13421,7 +13429,7 @@
             ["Motif duration", col(pkMotifData, "motif_dur_s"), 3, "s"],
             ["Motif period", col(pkMotifData, "motif_period_s"), 3, "s"],
             ["Duty cycle", col(pkMotifData, "duty_cycle_pct"), 1, "%"],
-            // The motif's OWN transform, not the _tmean average of its pulses.
+            // The motif's OWN transform, not the _pulse_mean average of its pulses.
             ["Peak frequency", col(pkMotifData, "peak_freq_khz"), 3, "kHz"],
             ["Bandwidth at -20 dB", col(pkMotifData, "bw_20db_khz"), 3, "kHz"],
             ["Bandwidth at -10 dB", col(pkMotifData, "bw_10db_khz"), 3, "kHz"],
@@ -13895,6 +13903,24 @@
         train_gap_sd: "pulse_gap_sd",
         train_period_ms: "pulse_period_ms",
         train_rate_tps: "pulse_rate_pps",
+        // column names from before the aggregate word moved ahead of the unit
+        peak_freq_khz_tmean: "peak_freq_pulse_mean_khz",
+        bw_20db_khz_tmean: "bw_20db_pulse_mean_khz",
+        bw_10db_khz_tmean: "bw_10db_pulse_mean_khz",
+        spec_centroid_khz_tmean: "spec_centroid_pulse_mean_khz",
+        spec_spread_khz_tmean: "spec_spread_pulse_mean_khz",
+        spec_skew_tmean: "spec_skew_pulse_mean",
+        spec_kurt_tmean: "spec_kurt_pulse_mean",
+        spec_entropy_tmean: "spec_entropy_pulse_mean",
+        spec_flatness_tmean: "spec_flatness_pulse_mean",
+        q_20db_tmean: "q_20db_pulse_mean",
+        spec_signal_ms_tmean: "spec_signal_pulse_mean_ms",
+        spec_res_hz_tmean: "spec_res_pulse_mean_hz",
+        spec_bin_hz_tmean: "spec_bin_pulse_mean_hz",
+        peak_freq_pmean_khz: "peak_freq_envpeak_mean_khz",
+        peak_freq_psd_khz: "peak_freq_envpeak_sd_khz",
+        peak_freq_pmin_khz: "peak_freq_envpeak_min_khz",
+        peak_freq_pmax_khz: "peak_freq_envpeak_max_khz",
       };
 
       // One row in the current vocabulary. A file already using the new names
@@ -14873,6 +14899,7 @@
         }
         summStatsRows = stats;
 
+        if (typeof saOnDataChanged === "function") saOnDataChanged();
         summUpdateTempNote();
         summRenderCards(summMerged, summIndividuals, summNRecordings);
         summRenderTable(stats);
@@ -15655,13 +15682,13 @@
         }
 
         // "Peak frequency" in the conventional sense: the maximum of the
-        // structure's own power spectrum. peak_freq_pmean_khz — the mean of
+        // structure's own power spectrum. peak_freq_envpeak_mean_khz — the mean of
         // the per-TOOTH carriers — is the fallback for workbooks exported
         // before the spectral columns were added to the temporal tables, and
         // is a different quantity, so it is only used when the real one is
         // absent rather than mixed in beside it.
         const pfStat = (cat) =>
-          statFor(cat, "peak_freq_khz") || statFor(cat, "peak_freq_pmean_khz");
+          statFor(cat, "peak_freq_khz") || statFor(cat, "peak_freq_envpeak_mean_khz");
 
         const rate = statFor("pulses", "env_peak_rate_eps");
         const meanAmp = statFor("pulses", "mean_amp");
@@ -15795,7 +15822,7 @@
             const addInd = phraseInto(ibits, iabits, false);
             addInd(indStat("env_peak_rate_eps"), "mean envelope peak rate", "envelope peaks/s", 2);
             addInd(
-              indStat("peak_freq_khz") || indStat("peak_freq_pmean_khz"),
+              indStat("peak_freq_khz") || indStat("peak_freq_envpeak_mean_khz"),
               "mean peak frequency",
               "kHz",
               3,
@@ -15837,7 +15864,7 @@
             const rate = _summMeanSd(rows, "env_peak_rate_eps");
             const pf =
               _summMeanSd(rows, "peak_freq_khz") ||
-              _summMeanSd(rows, "peak_freq_pmean_khz");
+              _summMeanSd(rows, "peak_freq_envpeak_mean_khz");
             const temps = [
               ...new Set(
                 rows
@@ -15908,7 +15935,7 @@
                 [lvl.chunk.prefix + "_gap_" + lvl.chunk.outSuffix, "a mean gap to the next of", lvl.chunk.outSuffix, 1],
                 [lvl.chunk.prefix + "_period_" + lvl.chunk.outSuffix, "a mean period of", lvl.chunk.outSuffix, 1],
                 [lvl.chunk.prefix + "_n_env_peaks", "a mean of", "envpeaks", 1],
-                [lvl.chunk.prefix + "_peak_freq_pmean_khz", "a mean carrier frequency of", "kHz", 3],
+                [lvl.chunk.prefix + "_peak_freq_envpeak_mean_khz", "a mean carrier frequency of", "kHz", 3],
               ]
             : lvl.gap
             ? [
@@ -15924,14 +15951,14 @@
                   ["pulse_dur_ms", "a mean duration of", "ms", 1],
                   ["env_peak_rate_eps", "a mean envelope peak rate of", "envelope peaks/s", 2],
                   ["pulse_gap_ms", "a mean gap to the next pulse of", "ms", 1],
-                  ["peak_freq_pmean_khz", "a mean carrier frequency of", "kHz", 3],
+                  ["peak_freq_envpeak_mean_khz", "a mean carrier frequency of", "kHz", 3],
                 ]
               : res.cat === "motifs"
                 ? [
                     ["motif_dur_s", "a mean duration of", "s", 2],
                     ["n_pulses", "a mean of", "pulses", 1],
                     ["duty_cycle_pct", "a mean duty cycle of", "%", 1],
-                    ["peak_freq_pmean_khz", "a mean carrier frequency of", "kHz", 3],
+                    ["peak_freq_envpeak_mean_khz", "a mean carrier frequency of", "kHz", 3],
                   ]
                 : res.cat === "envpeaks"
                   ? [
@@ -16469,15 +16496,15 @@
             wmean: [
               "mean_amp",
               "peak_freq_khz",
-              "peak_freq_pmean_khz",
+              "peak_freq_envpeak_mean_khz",
               "bw_20db_khz",
               "bw_10db_khz",
               "spec_centroid_khz",
               "q_20db",
             ],
             // Extremes aggregate exactly.
-            min: ["peak_freq_pmin_khz"],
-            max: ["peak_freq_pmax_khz"],
+            min: ["peak_freq_envpeak_min_khz"],
+            max: ["peak_freq_envpeak_max_khz"],
             // Envelope peaks per second across the whole syllable, interior silence
             // included — deliberately not the mean of the pulses' own rates,
             // which would describe the strokes rather than the syllable.
@@ -16505,14 +16532,14 @@
             wmean: [
               "duty_cycle_pct",
               "peak_freq_khz",
-              "peak_freq_pmean_khz",
+              "peak_freq_envpeak_mean_khz",
               "bw_20db_khz",
               "spec_centroid_khz",
               "pci_syl",
               "pci_agn",
             ],
-            min: ["peak_freq_pmin_khz"],
-            max: ["peak_freq_pmax_khz"],
+            min: ["peak_freq_envpeak_min_khz"],
+            max: ["peak_freq_envpeak_max_khz"],
             rateFrom: "n_pulses",
             rateName: "pulse_rate_pps",
           },
