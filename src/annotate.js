@@ -503,12 +503,41 @@
     return st.band;
   }
 
+  // The frequency band for a motif span handed over from another module
+  // (Temporal Analysis → Apply motifs to Annotate): the same rule a selection
+  // made here follows. A locked band, or a band chosen by hand / from a
+  // profile with auto off, is the species' standing decision and is reused;
+  // otherwise the band is derived from the span's own power spectrum with the
+  // current threshold (dB below the peak) and band mode.
+  window.anBandForSpan = function (t0, t1) {
+    if (!anReady()) return null;
+    if (st.band && (st.lockBand || !st.autoBand)) return st.band.slice();
+    const [lo, hi] = anSampleRange(t0, t1);
+    const spec = anSpectrum(rawSamples, lo, hi, st.psdNFft);
+    if (!spec) return null;
+    return anBandFromThreshold(
+      spec.power,
+      spec.freqs,
+      st.thresholdDb,
+      st.bandMode,
+      st.fMin || 0,
+      st.fMax || anNyq(),
+    );
+  };
+
   // Index into `annotations` of the box under a point, or null. Among
   // overlapping boxes the smallest is preferred — a short selection
   // inside a long one would otherwise be unreachable.
+  // Selections sent over from Temporal Analysis (Apply detections to Spectral
+  // Analysis) belong to Spectral Analysis only: this tab does not draw, list,
+  // count, edit or export them.
+  const anHidden = (a) => !!a.fromTemporalSel;
+  const anVisible = () => annotations.filter((a) => !anHidden(a));
+
   function anSelectionAt(t, f) {
     const hits = [];
     annotations.forEach((a, i) => {
+      if (anHidden(a)) return;
       if (t >= a.start && t <= a.end && f >= a.fLo && f <= a.fHi) hits.push(i);
     });
     if (!hits.length) return null;
@@ -549,7 +578,7 @@
       if (end <= start) return;
       let covered = 0;
       annotations.forEach((a) => {
-        if (a.label !== st.label) return;
+        if (anHidden(a) || a.label !== st.label) return;
         covered = Math.max(
           covered,
           Math.min(end, a.end) - Math.max(start, a.start),
@@ -613,7 +642,7 @@
       // Only this species' selections. One recording routinely holds
       // several species, and a band's provenance is worthless if it
       // counts the ones annotated for something else.
-      n_selections: annotations.filter((a) => a.label === st.label).length,
+      n_selections: annotations.filter((a) => !anHidden(a) && a.label === st.label).length,
       source: anLastFile || currentAudioFileName || "",
       created: new Date().toISOString().replace(/\.\d{3}Z$/, "+00:00"),
     };
@@ -757,7 +786,7 @@
 
   function anLabelsInUse() {
     const seen = [];
-    [...annotations]
+    anVisible()
       .sort((a, b) => a.start - b.start)
       .forEach((a) => {
         const l = a.label || "motif";
@@ -1013,6 +1042,7 @@
 
     // Committed boxes, coloured by species.
     annotations.forEach((a, i) => {
+      if (anHidden(a)) return;
       const x0 = anTx(a.start, w),
         x1 = anTx(a.end, w);
       if (x1 < -20 || x0 > w + 20) return;
@@ -1083,12 +1113,6 @@
         Math.max(9, Math.min(h - 2, y - 2)),
       );
     }
-    g.fillStyle = "rgba(230,237,243,0.55)";
-    g.fillText(
-      "spectrogram — click a box to select; boxes are not drawn here",
-      42,
-      11,
-    );
   }
 
   function anDrawPsd() {
@@ -1421,6 +1445,7 @@
         h = cv.clientHeight;
       let best = null;
       annotations.forEach((a, i) => {
+        if (anHidden(a)) return;
         const y0 = anFy(a.fHi, h),
           y1 = anFy(a.fLo, h);
         if (e.offsetY < y0 - 4 || e.offsetY > y1 + 4) return;
@@ -1841,7 +1866,7 @@
     if (legend) {
       legend.innerHTML = "";
       labels.forEach((l) => {
-        const n = annotations.filter((a) => (a.label || "motif") === l).length;
+        const n = annotations.filter((a) => !anHidden(a) && (a.label || "motif") === l).length;
         const s = document.createElement("span");
         s.style.cssText =
           "display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:11px;color:var(--txt2)";
@@ -1864,14 +1889,15 @@
 
     const count = $("anCount");
     if (count)
-      count.textContent = annotations.length
-        ? annotations.length +
+      count.textContent = anVisible().length
+        ? anVisible().length +
           " selection" +
-          (annotations.length === 1 ? "" : "s")
+          (anVisible().length === 1 ? "" : "s")
         : "";
 
     const order = annotations
       .map((a, i) => ({ a, i }))
+      .filter(({ a }) => !anHidden(a))
       .sort((p, q) => p.a.start - q.a.start);
     order.forEach(({ a, i }) => {
       const row = document.createElement("div");
@@ -1940,7 +1966,7 @@
       host.appendChild(row);
     });
 
-    if (!annotations.length) {
+    if (!anVisible().length) {
       const d = document.createElement("div");
       d.style.cssText = "color:var(--txt2);font-size:11px;padding:3px 0";
       d.textContent =
@@ -1953,8 +1979,8 @@
     if (cc) cc.textContent = nChk ? nChk + " checked" : "";
     const all = $("anCheckAll");
     if (all) {
-      all.checked = !!annotations.length && nChk === annotations.length;
-      all.indeterminate = nChk > 0 && nChk < annotations.length;
+      all.checked = !!anVisible().length && nChk === anVisible().length;
+      all.indeterminate = nChk > 0 && nChk < anVisible().length;
     }
     ["btnAnDelChecked", "btnAnRelabelChecked", "btnAnBandChecked"].forEach(
       (id) => {
@@ -1968,7 +1994,7 @@
 
   function anCheckAll(on) {
     anChecked.clear();
-    if (on) annotations.forEach((a) => anChecked.add(a.id));
+    if (on) anVisible().forEach((a) => anChecked.add(a.id));
     anRefreshList();
   }
 
@@ -2054,7 +2080,7 @@
   // which Raven needs when one table spans several files.
   async function anExport() {
     const checkedOnly = $("anExportCheckedOnly")?.checked;
-    let rows = annotations.filter((a) => !checkedOnly || anChecked.has(a.id));
+    let rows = annotations.filter((a) => !anHidden(a) && (!checkedOnly || anChecked.has(a.id)));
     if (!rows.length) {
       anSay(checkedOnly ? "nothing checked" : "no selections to export", false);
       return;
@@ -2198,14 +2224,14 @@
       anSay("that is already the name", false);
       return;
     }
-    const n = annotations.filter((a) => (a.label || "motif") === from).length;
+    const n = annotations.filter((a) => !anHidden(a) && (a.label || "motif") === from).length;
     if (!n) {
       anSay("no selections carry that label", false);
       return;
     }
     annotSnapshot("relabel " + from + " → " + to);
     annotations.forEach((a) => {
-      if ((a.label || "motif") === from) a.label = to;
+      if (!anHidden(a) && (a.label || "motif") === from) a.label = to;
     });
     // Hand the old label's colour to the new name, so a rename does not
     // recolour a table the annotator has been reading for an hour.

@@ -59,6 +59,7 @@
       // the playhead. Trim handles are unaffected; they are Preprocessing's
       // own selection and are handled before any of this.
       let viewerMode = "analyzer"; // "analyzer" | "preprocess"
+      let ppFullViewDue = false; // audio was reset while not in Preprocessing
       // Preprocessing's own time selection: {t0, t1} in seconds, or null.
       // Distinct from the trim selection — this one costs nothing to make
       // (no mode to enter), marks a stretch of time to look at or jump
@@ -116,6 +117,33 @@
         p.textContent = line;
         el.appendChild(p);
         el.scrollTop = el.scrollHeight;
+      }
+
+      // Transient notice, bottom-right. For problems that would otherwise only
+      // reach the status line or the (collapsed) log, where they go unseen: it
+      // shows for a few seconds, then slides down out of the window. Click it
+      // to dismiss early.
+      function showToast(msg, ms = 4000) {
+        let host = $("toastHost");
+        if (!host) {
+          host = document.createElement("div");
+          host.id = "toastHost";
+          document.body.appendChild(host);
+        }
+        const t = document.createElement("div");
+        t.className = "toast";
+        t.textContent = msg;
+        host.appendChild(t);
+        requestAnimationFrame(() => t.classList.add("in"));
+        const close = () => {
+          if (t._closing) return;
+          t._closing = true;
+          t.classList.remove("in");
+          t.classList.add("out");
+          setTimeout(() => t.remove(), 500);
+        };
+        t.addEventListener("click", close);
+        setTimeout(close, ms);
       }
 
       // ═══════════════════════════════════════════════════════════════════
@@ -353,12 +381,27 @@
             bar.addEventListener("click", () => set(row.style.display !== "none"));
 
             // Parameter Presets menu lives in the Detection parameters bar.
+            const detectBar = $("pkDetectBarWrap");
+            if (detectBar && label === "Detection parameters") {
+              detectBar.style.display = "flex";
+              detectBar.style.marginLeft = "8px";
+              bar.appendChild(detectBar);
+            }
             const presets = $("pkPresetMenuWrap");
             if (presets && label === "Detection parameters") {
               presets.style.display = "";
               presets.style.marginLeft = "8px";
               bar.appendChild(presets);
             }
+
+            // Anything tagged data-bar-mount="<row label>" is pulled into this
+            // bar, pushed to its right-hand end, so it stays visible folded.
+            document.querySelectorAll("[data-bar-mount]").forEach((el) => {
+              if (el.dataset.barMount !== label) return;
+              el.style.display = "flex";
+              el.style.marginLeft = "auto";
+              bar.appendChild(el);
+            });
 
             row.parentNode.insertBefore(bar, row);
             row.dataset.collapseReady = "true";
@@ -474,6 +517,76 @@
           pkTogglePresetMenu(false);
       });
 
+      // Playback-bar display drop-downs: one open at a time, closed by a
+      // click anywhere outside them. Flipped to open leftwards when the menu
+      // would run off the right edge of the window.
+      function ddToggle(btn) {
+        const dd = btn.closest(".dd");
+        const open = !dd.classList.contains("open");
+        document.querySelectorAll(".dd.open").forEach((d) => d.classList.remove("open"));
+        if (!open) return;
+        dd.classList.add("open");
+        const menu = dd.querySelector(".dd-menu");
+        menu.style.left = "0";
+        menu.style.right = "auto";
+        if (menu.getBoundingClientRect().right > window.innerWidth - 8) {
+          menu.style.left = "auto";
+          menu.style.right = "0";
+        }
+      }
+      document.addEventListener("click", (e) => {
+        if (!e.target.closest || !e.target.closest(".dd"))
+          document.querySelectorAll(".dd.open").forEach((d) => d.classList.remove("open"));
+      });
+      function ddCloseAll() {
+        document.querySelectorAll(".dd.open").forEach((d) => d.classList.remove("open"));
+        document.querySelectorAll(".sub.open").forEach((d) => d.classList.remove("open"));
+      }
+      // Preferences sub-menus open to the right of their item; one at a time.
+      function subToggle(btn) {
+        const sub = btn.closest(".sub");
+        const open = !sub.classList.contains("open");
+        document.querySelectorAll(".sub.open").forEach((d) => d.classList.remove("open"));
+        if (open) sub.classList.add("open");
+      }
+
+      // Text size scales the whole interface. In the packaged app that is the
+      // webview's own zoom (so canvases and mouse coordinates stay correct);
+      // a plain browser falls back to CSS zoom.
+      async function setTextSize(pct) {
+        const f = pct / 100;
+        try {
+          localStorage.setItem("rt_textsize", String(pct));
+        } catch (e) {}
+        let native = false;
+        try {
+          const wv = window.__TAURI__?.webview?.getCurrentWebview?.();
+          if (wv && wv.setZoom) {
+            await wv.setZoom(f);
+            native = true;
+          }
+        } catch (e) {
+          // Permission or API missing — fall through to CSS zoom.
+        }
+        document.documentElement.style.zoom = native || f === 1 ? "" : String(f);
+        document.querySelectorAll("[data-textsize]").forEach((b) =>
+          b.classList.toggle("on", Number(b.dataset.textsize) === pct),
+        );
+        ddCloseAll();
+        setTimeout(() => window.dispatchEvent(new Event("resize")), 50);
+      }
+      (function restoreTextSize() {
+        let pct = 100;
+        try {
+          pct = Number(localStorage.getItem("rt_textsize")) || 100;
+        } catch (e) {}
+        if (pct !== 100) setTextSize(pct);
+        else
+          document.querySelectorAll("[data-textsize]").forEach((b) =>
+            b.classList.toggle("on", Number(b.dataset.textsize) === 100),
+          );
+      })();
+
       // ⓘ icons: click to read the description (kept in the title attribute,
       // so hover still works and translations keep applying).
       document.addEventListener("click", (e) => {
@@ -569,6 +682,14 @@
             species: currentSpecies,
             country: currentCountry,
             locality: currentLocality,
+            rec_date: currentDate,
+            rec_time: currentTime,
+            latitude: metaNum(currentLat),
+            longitude: metaNum(currentLon),
+            elevation_m: metaNum(currentElev),
+            recorder: currentRecorder,
+            microphone: currentMicrophone,
+            accessories: currentAccessories,
           };
           const apply = (row) => {
             if (!row) return;
@@ -657,32 +778,697 @@
         if (entry) entry.tempC = v;
         refreshResultsMetadata();
       }
+      // Recording-session fields beyond country/locality/temperature. Latitude
+      // and longitude are optional and kept as typed (numeric in exports when
+      // they parse).
+      let currentDate = "";
+      let currentTime = "";
+      let currentLat = "";
+      let currentLon = "";
+      function setCurrentDate(v) {
+        currentDate = v;
+        const entry = audioLibrary.find((e) => e.id === audioLibActiveId);
+        if (entry) entry.date = v;
+        refreshResultsMetadata();
+      }
+      function setCurrentTime(v) {
+        currentTime = v;
+        const entry = audioLibrary.find((e) => e.id === audioLibActiveId);
+        if (entry) entry.time = v;
+        refreshResultsMetadata();
+      }
+      function setCurrentLat(v) {
+        currentLat = v;
+        const entry = audioLibrary.find((e) => e.id === audioLibActiveId);
+        if (entry) entry.lat = v;
+        refreshResultsMetadata();
+        metaMaybeAutoElev();
+      }
+      function setCurrentLon(v) {
+        currentLon = v;
+        const entry = audioLibrary.find((e) => e.id === audioLibActiveId);
+        if (entry) entry.lon = v;
+        refreshResultsMetadata();
+        metaMaybeAutoElev();
+      }
+      // Elevation follows the coordinates, as with the map: once a valid
+      // latitude and longitude are in (typed, loaded or remembered) and the
+      // elevation is empty, it is looked up and filled in. An elevation the
+      // user typed is never touched; one that was filled in automatically is
+      // refreshed when the coordinates change.
+      let _elevAuto = false,
+        _elevTimer = null,
+        _elevSeq = 0;
+      function metaMaybeAutoElev() {
+        clearTimeout(_elevTimer);
+        _elevTimer = setTimeout(async () => {
+          const lat = parseFloat(currentLat),
+            lon = parseFloat(currentLon);
+          if (!(isFinite(lat) && isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180))
+            return;
+          if (currentElev !== "" && !_elevAuto) return;
+          const seq = ++_elevSeq,
+            entryId = audioLibActiveId;
+          try {
+            const el = Math.round(await fetchElevation(lat, lon));
+            if (seq !== _elevSeq || entryId !== audioLibActiveId) return;
+            if (currentElev !== "" && !_elevAuto) return; // typed meanwhile
+            if (parseFloat(currentLat) !== lat || parseFloat(currentLon) !== lon) return;
+            setCurrentElev(String(el));
+            const inp = $("elevInput");
+            if (inp) inp.value = String(el);
+            _elevAuto = true;
+            log("Elevation " + el + " m looked up from the coordinates.", "ok");
+          } catch (e) {
+            // Offline or outside the elevation data: leave it for the user.
+          }
+        }, 900);
+      }
+      // Defaults from Preferences → Default metadata: values that rarely change
+      // between recordings, applied to each newly loaded recording and offered
+      // as suggestions. Equipment lists also grow as new items are typed.
+      const DEFAULTS_KEY = "rt_defaults";
+      const appDefaults = Object.assign(
+        {
+          country: "",
+          recordist: "",
+          author: "",
+          license: "",
+          recorder: "",
+          microphone: "",
+          accessories: "",
+          recorders: [],
+          microphones: [],
+          accessoryList: [],
+        },
+        (() => {
+          try {
+            return JSON.parse(localStorage.getItem(DEFAULTS_KEY) || "{}") || {};
+          } catch (e) {
+            return {};
+          }
+        })(),
+      );
+      function defPersist() {
+        try {
+          localStorage.setItem(DEFAULTS_KEY, JSON.stringify(appDefaults));
+        } catch (e) {}
+      }
+      let currentRecorder = "";
+      let currentMicrophone = "";
+      let currentAccessories = "";
+      function _setEntryMeta(field, v) {
+        const entry = audioLibrary.find((e) => e.id === audioLibActiveId);
+        if (entry) entry[field] = v;
+        refreshResultsMetadata();
+      }
+      function setCurrentRecorder(v) {
+        currentRecorder = v;
+        _setEntryMeta("recorder", v);
+      }
+      function setCurrentMicrophone(v) {
+        currentMicrophone = v;
+        _setEntryMeta("microphone", v);
+      }
+      function setCurrentAccessories(v) {
+        currentAccessories = v;
+        _setEntryMeta("accessories", v);
+      }
+      let currentElev = "";
+      function setCurrentElev(v) {
+        _elevAuto = false;
+        currentElev = v;
+        const entry = audioLibrary.find((e) => e.id === audioLibActiveId);
+        if (entry) entry.elev = v;
+        refreshResultsMetadata();
+      }
+      function metaNum(v) {
+        const n = parseFloat(v);
+        return v !== "" && isFinite(n) && String(n) === String(v).trim() ? n : v;
+      }
 
-      // Save/load Specimen ID + Species + Locality as a standalone .json —
-      // meant to live alongside a folder of recordings from the same
-      // specimen, so it's typed once and reloaded for every other file
-      // instead of retyped per recording.
+      // ── Recording metadata popup ───────────────────────────────────────
+      // Two sections: the recording SESSION (where/when — shared by every
+      // recording made in one outing) and the SPECIMEN (which animal). Both
+      // can be remembered in a list (kept in localStorage, so it survives
+      // restarts) and written to / read from one .json file.
+      const META_FIELDS = {
+        session: [
+          ["country", "countryInput", setCurrentCountry, () => currentCountry, "country"],
+          ["locality", "localityInput", setCurrentLocality, () => currentLocality, "locality"],
+          ["date", "dateInput", setCurrentDate, () => currentDate, "date"],
+          ["time", "timeInput", setCurrentTime, () => currentTime, "time"],
+          ["tempC", "tempCInput", setCurrentTempC, () => currentTempC, "temp_c"],
+          ["lat", "latInput", setCurrentLat, () => currentLat, "latitude"],
+          ["lon", "lonInput", setCurrentLon, () => currentLon, "longitude"],
+          ["elev", "elevInput", setCurrentElev, () => currentElev, "elevation_m"],
+          ["recorder", "recorderInput", setCurrentRecorder, () => currentRecorder, "recorder"],
+          ["microphone", "microphoneInput", setCurrentMicrophone, () => currentMicrophone, "microphone"],
+          ["accessories", "accessoriesInput", setCurrentAccessories, () => currentAccessories, "accessories"],
+        ],
+        specimen: [
+          ["specimenId", "specimenIdInput", setCurrentSpecimenId, () => currentSpecimenId, "specimen_id"],
+          ["species", "speciesInput", setCurrentSpecies, () => currentSpecies, "species"],
+        ],
+      };
+      const META_STORE_KEY = "rt_meta_store";
+      let metaStore = { session: [], specimen: [] };
+      try {
+        const saved = JSON.parse(localStorage.getItem(META_STORE_KEY) || "null");
+        if (saved && Array.isArray(saved.session) && Array.isArray(saved.specimen))
+          metaStore = saved;
+      } catch (e) {}
+      function metaPersist() {
+        try {
+          localStorage.setItem(META_STORE_KEY, JSON.stringify(metaStore));
+        } catch (e) {}
+      }
+      // The values currently on the active recording, keyed by internal name.
+      function metaCollect(kind) {
+        const o = {};
+        META_FIELDS[kind].forEach(([k, , , get]) => (o[k] = get()));
+        return o;
+      }
+      // Write values into the active recording AND the popup's inputs.
+      // Keys absent from `o` are left as they are.
+      function metaFill(kind, o) {
+        META_FIELDS[kind].forEach(([k, inputId, set]) => {
+          if (!(k in o)) return;
+          const v = String(o[k] ?? "");
+          set(v);
+          const el = $(inputId);
+          if (el) el.value = v;
+        });
+      }
+      function metaLabel(kind, o) {
+        const parts =
+          kind === "session"
+            ? [o.country, o.locality, o.date]
+            : [o.specimenId, o.species];
+        return parts.filter(Boolean).join(" · ") || "(empty)";
+      }
+      function metaRenderSaved(kind) {
+        const sel = $("meta" + kind[0].toUpperCase() + kind.slice(1) + "Saved");
+        if (!sel) return;
+        sel.innerHTML = '<option value="">— remembered —</option>';
+        metaStore[kind].forEach((it, i) => {
+          const op = document.createElement("option");
+          op.value = String(i);
+          op.textContent = it.name;
+          sel.appendChild(op);
+        });
+      }
+      function metaRemember(kind) {
+        const data = metaCollect(kind);
+        if (!Object.values(data).some((v) => v !== "")) {
+          log("Nothing to remember yet — fill in a field first.", "warn");
+          return;
+        }
+        const name = metaLabel(kind, data);
+        const i = metaStore[kind].findIndex((it) => it.name === name);
+        if (i >= 0) metaStore[kind][i] = { name, data };
+        else metaStore[kind].push({ name, data });
+        metaPersist();
+        metaRenderSaved(kind);
+        const sel = $("meta" + kind[0].toUpperCase() + kind.slice(1) + "Saved");
+        if (sel) sel.value = String(i >= 0 ? i : metaStore[kind].length - 1);
+        log('Remembered "' + name + '".', "ok");
+      }
+      function metaApplySaved(kind, idx) {
+        const it = metaStore[kind][Number(idx)];
+        if (idx === "" || !it) return;
+        metaFill(kind, it.data);
+      }
+      function metaForget(kind) {
+        const sel = $("meta" + kind[0].toUpperCase() + kind.slice(1) + "Saved");
+        if (!sel || sel.value === "") return;
+        metaStore[kind].splice(Number(sel.value), 1);
+        metaPersist();
+        metaRenderSaved(kind);
+      }
+      function metaApplySessionToAll() {
+        const s = metaCollect("session");
+        audioLibrary.forEach((e) => {
+          e.country = s.country;
+          e.locality = s.locality;
+          e.date = s.date;
+          e.time = s.time;
+          e.tempC = s.tempC;
+          e.lat = s.lat;
+          e.lon = s.lon;
+          e.elev = s.elev;
+          e.recorder = s.recorder;
+          e.microphone = s.microphone;
+          e.accessories = s.accessories;
+        });
+        log("Recording session applied to " + audioLibrary.length + " recording(s).", "ok");
+      }
+      function openRecordingMeta() {
+        if (!audioLibActiveId) {
+          log("Load audio first.", "warn");
+          return;
+        }
+        metaRenderSaved("session");
+        metaRenderSaved("specimen");
+        $("recMetaOverlay").classList.add("show");
+      }
+      function closeRecordingMeta() {
+        $("recMetaOverlay").classList.remove("show");
+      }
+      document.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Escape") return;
+        if ($("xcOverlay").classList.contains("show")) closeXcHelper();
+        else if ($("mapPickOverlay").classList.contains("show")) closeMapPicker();
+        else if ($("recMetaOverlay").classList.contains("show")) closeRecordingMeta();
+      });
+
+      // ── Map picker ─────────────────────────────────────────────────────
+      // Leaflet is fetched the first time the picker opens, so the app starts
+      // (and works) offline; only the map itself needs a connection. Street
+      // tiles: OpenStreetMap. Satellite: Esri World Imagery with place labels.
+      // Elevation: Open-Meteo, with Open-Topo-Data (SRTM) as a fallback.
+      const LEAFLET_BASE = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/";
+      let _leafletPromise = null;
+      function loadLeaflet() {
+        if (window.L) return Promise.resolve();
+        if (_leafletPromise) return _leafletPromise;
+        _leafletPromise = new Promise((resolve, reject) => {
+          const css = document.createElement("link");
+          css.rel = "stylesheet";
+          css.href = LEAFLET_BASE + "leaflet.min.css";
+          document.head.appendChild(css);
+          const sc = document.createElement("script");
+          sc.src = LEAFLET_BASE + "leaflet.min.js";
+          sc.onload = () => resolve();
+          sc.onerror = () => {
+            _leafletPromise = null;
+            reject(new Error("could not load the map library — check your internet connection"));
+          };
+          document.head.appendChild(sc);
+        });
+        return _leafletPromise;
+      }
+
+      let _pickMap = null,
+        _pickMarker = null,
+        _pickPoint = null,
+        _pickSeq = 0;
+
+      async function fetchElevation(lat, lon) {
+        const get = async (url, pick) => {
+          const r = await fetch(url);
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          const v = pick(await r.json());
+          if (typeof v !== "number" || !isFinite(v)) throw new Error("no data");
+          return v;
+        };
+        try {
+          return await get(
+            "https://api.open-meteo.com/v1/elevation?latitude=" + lat + "&longitude=" + lon,
+            (j) => j.elevation && j.elevation[0],
+          );
+        } catch (e) {
+          return await get(
+            "https://api.opentopodata.org/v1/srtm30m?locations=" + lat + "," + lon,
+            (j) => j.results && j.results[0] && j.results[0].elevation,
+          );
+        }
+      }
+
+      function _mapInfo(t) {
+        $("mapPickInfo").textContent = t;
+      }
+
+      async function mapPickPoint(lat, lon, fetchElev) {
+        lat = Math.round(lat * 1e6) / 1e6;
+        lon = Math.round((((((lon + 180) % 360) + 360) % 360) - 180) * 1e6) / 1e6;
+        _pickPoint = { lat, lon, elev: null };
+        if (_pickMarker) _pickMarker.setLatLng([lat, lon]);
+        else
+          _pickMarker = L.circleMarker([lat, lon], {
+            radius: 8,
+            color: "#fff",
+            weight: 2,
+            fillColor: "#f85149",
+            fillOpacity: 0.9,
+          }).addTo(_pickMap);
+        const use = $("mapPickUse");
+        if (!fetchElev) {
+          _mapInfo("Lat " + lat + ", Lon " + lon);
+          use.disabled = false;
+          return;
+        }
+        const seq = ++_pickSeq;
+        use.disabled = true;
+        _mapInfo("Lat " + lat + ", Lon " + lon + " — fetching elevation…");
+        try {
+          const el = await fetchElevation(lat, lon);
+          if (seq !== _pickSeq) return;
+          _pickPoint.elev = Math.round(el);
+          _mapInfo("Lat " + lat + ", Lon " + lon + " — elevation " + _pickPoint.elev + " m");
+        } catch (e) {
+          if (seq !== _pickSeq) return;
+          _mapInfo("Lat " + lat + ", Lon " + lon + " — elevation unavailable (" + e.message + "); you can type it in.");
+        }
+        use.disabled = false;
+      }
+
+      async function openMapPicker() {
+        $("mapPickOverlay").classList.add("show");
+        _pickPoint = null;
+        $("mapPickUse").disabled = true;
+        _mapInfo("Loading map…");
+        try {
+          await loadLeaflet();
+        } catch (e) {
+          _mapInfo("Map unavailable: " + e.message + ".");
+          return;
+        }
+        if (!_pickMap) {
+          _pickMap = L.map("mapPickDiv", { worldCopyJump: true });
+          const street = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            maxZoom: 19,
+            attribution: "© OpenStreetMap contributors",
+          });
+          const imagery = L.tileLayer(
+            "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+            { maxZoom: 19, attribution: "Imagery © Esri, Maxar, Earthstar Geographics" },
+          );
+          const labels = L.tileLayer(
+            "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+            { maxZoom: 19 },
+          );
+          const satellite = L.layerGroup([imagery, labels]);
+          street.addTo(_pickMap);
+          L.control.layers({ Street: street, Satellite: satellite }, null, { position: "topright" }).addTo(_pickMap);
+          _pickMap.on("click", (e) => mapPickPoint(e.latlng.lat, e.latlng.lng, true));
+        }
+        const lat = parseFloat($("latInput").value),
+          lon = parseFloat($("lonInput").value);
+        if (isFinite(lat) && isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
+          _pickMap.setView([lat, lon], 12);
+          mapPickPoint(lat, lon, false);
+          _mapInfo("Lat " + lat + ", Lon " + lon + " (current values) — click the map to choose another point.");
+        } else {
+          _pickMap.setView([20, 0], 2);
+          _mapInfo("Click the map to choose a point. Use the layer button (top right of the map) to switch between street and satellite.");
+        }
+        setTimeout(() => _pickMap.invalidateSize(), 50);
+      }
+
+      function closeMapPicker() {
+        $("mapPickOverlay").classList.remove("show");
+      }
+
+      function useMapPoint() {
+        if (!_pickPoint) return;
+        metaFill("session", {
+          lat: _pickPoint.lat,
+          lon: _pickPoint.lon,
+          ...(_pickPoint.elev !== null ? { elev: _pickPoint.elev } : {}),
+        });
+        closeMapPicker();
+      }
+
+      // ── Preferences → Default metadata ─────────────────────────────────
+      const DEF_LISTS = [
+        ["recorders", "recorder", "Recorders", "recorderInput"],
+        ["microphones", "microphone", "Microphones", "microphoneInput"],
+        ["accessoryList", "accessories", "Accessories", "accessoriesInput"],
+      ];
+      function defSet(key, v) {
+        appDefaults[key] = v;
+        defPersist();
+        defApplyToUi();
+      }
+      function defCleanList(text) {
+        return [
+          ...new Set(
+            String(text)
+              .split(/\r?\n/)
+              .map((x) => x.trim())
+              .filter(Boolean),
+          ),
+        ];
+      }
+      function defSetList(listKey, text) {
+        appDefaults[listKey] = defCleanList(text);
+        defPersist();
+        defRenderSelects();
+        defApplyToUi();
+      }
+      // Suggestion lists in the Recording metadata popup, and the Annotate
+      // author field, follow the defaults.
+      function defApplyToUi() {
+        const ids = { recorders: "dlRecorders", microphones: "dlMicrophones", accessoryList: "dlAccessories" };
+        Object.entries(ids).forEach(([k, id]) => {
+          const dl = $(id);
+          if (!dl) return;
+          dl.innerHTML = "";
+          appDefaults[k].forEach((v) => {
+            const o = document.createElement("option");
+            o.value = v;
+            dl.appendChild(o);
+          });
+        });
+        const au = $("anXcAuthor");
+        if (au && !au.value && appDefaults.author) au.value = appDefaults.author;
+      }
+      // A piece of equipment typed in a recording's metadata joins the list.
+      function metaRememberEquip(listKey, v) {
+        v = String(v || "").trim();
+        if (!v || appDefaults[listKey].includes(v)) return;
+        appDefaults[listKey].push(v);
+        defPersist();
+        defApplyToUi();
+      }
+      function defRenderSelects() {
+        DEF_LISTS.forEach(([listKey, defKey]) => {
+          const sel = $("def_" + defKey);
+          if (!sel) return;
+          sel.innerHTML = '<option value="">— none —</option>';
+          appDefaults[listKey].forEach((v) => {
+            const o = document.createElement("option");
+            o.value = v;
+            o.textContent = v;
+            sel.appendChild(o);
+          });
+          sel.value = appDefaults[listKey].includes(appDefaults[defKey]) ? appDefaults[defKey] : "";
+        });
+      }
+      function openDefaults() {
+        ddCloseAll();
+        ["country", "recordist", "author", "license"].forEach((k) => {
+          const el = $("def_" + k);
+          if (el) el.value = appDefaults[k] || "";
+        });
+        DEF_LISTS.forEach(([listKey]) => {
+          const ta = $("defList_" + listKey);
+          if (ta) ta.value = appDefaults[listKey].join("\n");
+        });
+        defRenderSelects();
+        $("defaultsOverlay").classList.add("show");
+      }
+      function closeDefaults() {
+        $("defaultsOverlay").classList.remove("show");
+      }
+      document.addEventListener("keydown", (ev) => {
+        if (ev.key === "Escape" && $("defaultsOverlay").classList.contains("show")) closeDefaults();
+      });
+      if (document.readyState === "loading")
+        document.addEventListener("DOMContentLoaded", defApplyToUi);
+      else defApplyToUi();
+
+      // ── Xeno-canto upload helper ───────────────────────────────────────
+      // Their upload form is filled in on the website (two pages, then verify),
+      // so this lists its fields in order. Text fields get a copy button; radio
+      // buttons, check boxes and drop-downs are shown as reminders. Values come
+      // from the Recording metadata where they exist; the rest (recordist,
+      // devices, sound details) are typed here and remembered.
+      const XC_PROFILE_KEY = "rt_xc_profile";
+      const XC_UPLOAD_URL = "https://xeno-canto.org/admin.php/upload/1/1";
+      const XC_PAGES = [
+        {
+          title: "Page 1 · Recording file + basic metadata",
+          rows: [
+            { label: "Recording file*", kind: "info", get: () => currentAudioFileName || "(no file)" },
+            { label: "Latitude, longitude", kind: "meta", get: () => (currentLat !== "" && currentLon !== "" ? currentLat + ", " + currentLon : "") },
+            { label: "Country*", kind: "meta", get: () => currentCountry, hint: "pick it in the drop-down" },
+            { label: "Location name*", kind: "meta", get: () => currentLocality },
+            { label: "Elevation (m)*", kind: "meta", get: () => currentElev },
+            { label: "Recording date*", kind: "meta", get: () => currentDate, hint: "yyyy-mm-dd" },
+            { label: "Time of day*", kind: "meta", get: () => currentTime, hint: "hh:mm, 24-hour" },
+            { label: "License*", kind: "choice", key: "license", placeholder: "e.g. CC BY-NC-SA", dflt: () => appDefaults.license },
+            { label: "Recordist name*", kind: "text", key: "recordist", dflt: () => appDefaults.recordist },
+            { label: "Recording device", kind: "meta", get: () => currentRecorder },
+            { label: "Microphone", kind: "meta", get: () => currentMicrophone },
+            { label: "Type*", kind: "choice", key: "type", options: ["single species", "soundscape"] },
+            { label: "Automatic recording*", kind: "choice", key: "automatic", options: ["yes", "no", "unknown"] },
+          ],
+        },
+        {
+          title: "Page 2 · Sound details (appears after you pick the species)",
+          rows: [
+            { label: "Species*", kind: "meta", get: () => currentSpecies, hint: "choose it from the suggestions" },
+            { label: "Subspecies", kind: "text", key: "subspecies" },
+            { label: "Sex", kind: "choice", key: "sex", options: ["", "uncertain", "male", "female"] },
+            { label: "Life stage", kind: "choice", key: "life", options: ["", "uncertain", "adult", "nymph"] },
+            { label: "Animal seen?*", kind: "choice", key: "seen", options: ["yes", "no", "unknown"] },
+            { label: "Sound type(s)", kind: "choice", key: "soundtype", placeholder: "e.g. calling song" },
+            { label: "Other sound type(s)", kind: "text", key: "othersound" },
+            { label: "Recording method*", kind: "choice", key: "method", options: ["field recording", "studio recording", "unknown"] },
+            { label: "Playback used?*", kind: "choice", key: "playback", options: ["no", "yes", "unknown"] },
+            { label: "Temperature (°C)", kind: "meta", get: () => currentTempC },
+            { label: "Background species", kind: "text", key: "background" },
+            { label: "Registration number", kind: "text", key: "regnum" },
+            { label: "Quality*", kind: "choice", key: "quality", options: ["", "A", "B", "C", "D", "E"] },
+            { label: "Remarks", kind: "area", key: "remarks" },
+          ],
+        },
+      ];
+      function xcProfile() {
+        try {
+          return JSON.parse(localStorage.getItem(XC_PROFILE_KEY) || "{}") || {};
+        } catch (e) {
+          return {};
+        }
+      }
+      function xcSave(key, v) {
+        const p = xcProfile();
+        p[key] = v;
+        try {
+          localStorage.setItem(XC_PROFILE_KEY, JSON.stringify(p));
+        } catch (e) {}
+      }
+      async function xcCopy(btn, text) {
+        try {
+          await navigator.clipboard.writeText(text);
+        } catch (e) {
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          try {
+            document.execCommand("copy");
+          } catch (e2) {}
+          ta.remove();
+        }
+        const old = btn.textContent;
+        btn.textContent = "✓";
+        setTimeout(() => (btn.textContent = old), 900);
+      }
+      function openXcHelper() {
+        const body = $("xcBody");
+        body.innerHTML = "";
+        const prof = xcProfile();
+        XC_PAGES.forEach((pg) => {
+          const h = document.createElement("div");
+          h.textContent = pg.title;
+          h.style.cssText = "font-size:11px;font-weight:700;color:var(--txt3);text-transform:uppercase;letter-spacing:.04em;margin:10px 0 4px;border-bottom:1px solid var(--border);padding-bottom:3px";
+          body.appendChild(h);
+          pg.rows.forEach((r) => {
+            const row = document.createElement("div");
+            row.style.cssText = "display:grid;grid-template-columns:170px 1fr 34px;gap:8px;align-items:center;margin-bottom:4px";
+            const lab = document.createElement("span");
+            lab.textContent = r.label;
+            lab.style.cssText = "font-size:11px;color:var(--txt2)";
+            row.appendChild(lab);
+            let getVal;
+            let copyable = true;
+            if (r.kind === "info" || r.kind === "meta") {
+              const inp = document.createElement("input");
+              inp.readOnly = true;
+              inp.value = r.get() || "";
+              inp.placeholder = r.get() ? "" : "(empty — set it in Recording metadata)";
+              inp.style.cssText = "font-size:11px;width:100%";
+              if (r.hint) inp.title = r.hint;
+              row.appendChild(inp);
+              getVal = () => inp.value;
+              copyable = r.kind === "meta";
+            } else if (r.kind === "choice" && r.options) {
+              const sel = document.createElement("select");
+              sel.style.cssText = "font-size:11px;width:100%";
+              r.options.forEach((o) => {
+                const op = document.createElement("option");
+                op.value = o;
+                op.textContent = o || "—";
+                sel.appendChild(op);
+              });
+              sel.value = prof[r.key] ?? r.options[0];
+              sel.onchange = () => xcSave(r.key, sel.value);
+              row.appendChild(sel);
+              copyable = false;
+            } else if (r.kind === "area") {
+              const ta = document.createElement("textarea");
+              ta.rows = 3;
+              ta.value = prof[r.key] || "";
+              ta.style.cssText = "font-size:11px;width:100%";
+              ta.oninput = () => xcSave(r.key, ta.value);
+              row.appendChild(ta);
+              getVal = () => ta.value;
+            } else {
+              const inp = document.createElement("input");
+              inp.type = "text";
+              inp.value = prof[r.key] || (r.dflt ? r.dflt() : "") || "";
+              inp.placeholder = r.placeholder || "";
+              inp.style.cssText = "font-size:11px;width:100%";
+              inp.oninput = () => xcSave(r.key, inp.value);
+              row.appendChild(inp);
+              getVal = () => inp.value;
+              // A choice-type field typed as text (license, sound type) is only a reminder.
+              copyable = r.kind !== "choice";
+            }
+            const cell = document.createElement("span");
+            if (copyable) {
+              const b = document.createElement("button");
+              b.type = "button";
+              b.textContent = "📋";
+              b.title = "Copy";
+              b.style.cssText = "font-size:11px;padding:2px 6px";
+              b.onclick = () => xcCopy(b, getVal());
+              cell.appendChild(b);
+            } else {
+              cell.textContent = "";
+              row.title = "Choose on the site";
+              lab.textContent = r.label + " ▸";
+            }
+            row.appendChild(cell);
+            body.appendChild(row);
+          });
+        });
+        $("xcOverlay").classList.add("show");
+      }
+      function closeXcHelper() {
+        $("xcOverlay").classList.remove("show");
+      }
+      function openXcUpload() {
+        try {
+          if (window.__TAURI__?.opener?.openUrl) {
+            window.__TAURI__.opener.openUrl(XC_UPLOAD_URL);
+            return;
+          }
+        } catch (e) {}
+        window.open(XC_UPLOAD_URL, "_blank");
+      }
+
+      // One file holds both sections. Deliberately no source_file: it is meant
+      // to be loaded onto other recordings of the same session/specimen, so
+      // naming one recording inside it would be a lie for all the others.
       function saveRecordingMetadata() {
         if (!audioLibActiveId) {
           log("Load audio first.", "warn");
           return;
         }
-        // Deliberately no source_file: this file is written once and loaded
-        // onto every other recording of the same specimen, so naming one
-        // recording inside it would be a lie for all the others.
-        const meta = {
-          specimen_id: currentSpecimenId,
-          species: currentSpecies,
-          country: currentCountry,
-          locality: currentLocality,
-        };
+        const s = metaCollect("session"),
+          p = metaCollect("specimen");
+        const meta = { format: "rthoptera-recording-metadata", recording_session: {}, specimen: {} };
+        META_FIELDS.session.forEach(([k, , , , f]) => (meta.recording_session[f] = s[k]));
+        META_FIELDS.specimen.forEach(([k, , , , f]) => (meta.specimen[f] = p[k]));
         try {
-          dlFile(
-            "specimen_metadata.json",
-            JSON.stringify(meta, null, 2),
-            "application/json",
-          );
-          log("Saved specimen metadata.", "ok");
+          dlFile("recording_metadata.json", JSON.stringify(meta, null, 2), "application/json", {
+            exactName: true,
+          });
+          log("Saved recording metadata.", "ok");
         } catch (e) {
           log("Metadata export failed: " + e.message, "err");
         }
@@ -695,25 +1481,20 @@
           return;
         }
         try {
-          const text = await file.text();
-          const meta = JSON.parse(text);
-          const spec = String(meta.specimen_id ?? meta.specimenId ?? "");
-          const sp = String(meta.species ?? "");
-          const cty = String(meta.country ?? "");
-          const loc = String(meta.locality ?? "");
-          setCurrentSpecimenId(spec);
-          setCurrentSpecies(sp);
-          setCurrentCountry(cty);
-          setCurrentLocality(loc);
-          const specInput = $("specimenIdInput");
-          if (specInput) specInput.value = spec;
-          const speciesInput = $("speciesInput");
-          if (speciesInput) speciesInput.value = sp;
-          const localityInput = $("localityInput");
-          if (localityInput) localityInput.value = loc;
-          const countryInput = $("countryInput");
-          if (countryInput) countryInput.value = cty;
-          log('Loaded specimen metadata from "' + file.name + '".', "ok");
+          const meta = JSON.parse(await file.text());
+          // Both the new two-section layout and the older flat
+          // specimen_metadata.json are accepted.
+          const src = { ...meta, ...(meta.recording_session || {}), ...(meta.specimen || {}) };
+          if (src.specimenId !== undefined && src.specimen_id === undefined)
+            src.specimen_id = src.specimenId;
+          ["session", "specimen"].forEach((kind) => {
+            const o = {};
+            META_FIELDS[kind].forEach(([k, , , , f]) => {
+              if (src[f] !== undefined) o[k] = src[f];
+            });
+            metaFill(kind, o);
+          });
+          log('Loaded recording metadata from "' + file.name + '".', "ok");
         } catch (e) {
           log("Could not read metadata file: " + e.message, "err");
         }
@@ -1040,13 +1821,12 @@
         if (opts.resetView) {
           fvMin = 0;
           fvMax = nyq;
-          $("fMinSlider").value = 0;
-          $("fMaxSlider").value = 1000;
-          $("fMinLbl").textContent = fmtHz(0);
-          $("fMaxLbl").textContent = fmtHz(nyq);
-          viewDur = Math.min(duration, 5);
+          // Preprocessing opens fully zoomed out (the whole recording); Spectral
+          // Analysis keeps its 5 s window. When the audio changed while another
+          // tab was showing, the full view is applied on entering Preprocessing.
+          viewDur = viewerMode === "preprocess" ? duration : Math.min(duration, 5);
+          ppFullViewDue = viewerMode !== "preprocess";
           viewStart = 0;
-          $("zoomSlider").value = 50;
         } else {
           // A downsample moves the Nyquist: a frequency view that spanned the
           // old range must follow it (otherwise the spectrogram keeps an
@@ -1055,10 +1835,6 @@
             const full = fvMax >= prevNyq - 1;
             fvMax = full ? nyq : Math.min(fvMax, nyq);
             fvMin = Math.min(fvMin, fvMax * 0.9);
-            $("fMinSlider").value = Math.round((fvMin / nyq) * 1000);
-            $("fMaxSlider").value = Math.round((fvMax / nyq) * 1000);
-            $("fMinLbl").textContent = fmtHz(fvMin);
-            $("fMaxLbl").textContent = fmtHz(fvMax);
           }
           // Keep the view in-bounds after a trim shortened the signal.
           viewDur = Math.min(viewDur, duration) || duration;
@@ -1074,8 +1850,6 @@
         $("btnPkDetect").disabled = false;
         if ($("btnPkAmpDetect")) $("btnPkAmpDetect").disabled = false;
         if (typeof onMeasResChange === "function") onMeasResChange();
-        $("statusBadge").textContent = "Loaded";
-        $("statusBadge").className = "badge ok";
         if (typeof updateEditPanelState === "function") updateEditPanelState();
 
         // ── Downstream analysis recompute (same chain as initial load) ────
@@ -1518,7 +2292,6 @@
         // Show the entire file so both handles are reachable.
         viewStart = 0;
         viewDur = duration;
-        if ($("zoomSlider")) $("zoomSlider").value = 0;
         // Switch to the select tool so other tools don't fight the handles.
         setTool("select");
         $("trimControls").style.display = "";
@@ -1718,6 +2491,7 @@
       function clearTimeDependentWork() {
         if (typeof pkEnvPeaks !== "undefined") {
           pkEnvPeaks = [];
+          pkHasDetected = false;
           pkPulses = [];
           pkMotifs = [];
           if (typeof pkConfirmed !== "undefined") pkConfirmed = false;
@@ -1841,7 +2615,7 @@
           if (ps)
             ps.textContent = pkEnvPeaks.length
               ? pkEnvPeaks.length +
-                " envelope peaks kept after trim — click Confirm to recompute metrics"
+                " envelope peaks kept after trim — click Compute Metrics from Peaks to recompute"
               : "Audio trimmed — set parameters and click Detect Envelope peaks";
           if (typeof pkLiveUpdate === "function" && pkEnvPeaks.length) {
             pkLiveUpdate("trimmed");
@@ -1986,9 +2760,17 @@
           editTags: [], // e.g. ["1hpf", "n0"] — filled in by batch edits, used to build the default save-as filename
           specimenId: "", // manually tagged; see setCurrentSpecimenId
           species: "", // manually tagged; see setCurrentSpecies
-          country: "", // manually tagged; see setCurrentCountry
+          country: appDefaults.country || "", // see setCurrentCountry; seeded from Preferences
           locality: "", // manually tagged; see setCurrentLocality
           tempC: "", // manually tagged; see setCurrentTempC
+          date: "",
+          time: "",
+          lat: "",
+          lon: "",
+          elev: "",
+          recorder: appDefaults.recorder || "",
+          microphone: appDefaults.microphone || "",
+          accessories: appDefaults.accessories || "",
         };
         audioLibrary.push(entry);
         audioLibActiveId = entry.id;
@@ -2049,6 +2831,7 @@
 
         pkEnv = null;
         pkEnvPeaks = [];
+        pkHasDetected = false;
         // Undo snapshots describe envelope peaks from the recording just left —
         // pressing Ctrl+Z afterwards would restore them onto other audio.
         pkResetUndo();
@@ -2088,6 +2871,7 @@
         [
           "btnPkConfirm",
           "btnPkApplySpectral",
+          "btnPkConfirmPulses",
           "btnPkDropUnassigned",
           "btnPkUndo",
           "btnPkFitApply",
@@ -2123,12 +2907,18 @@
         currentCountry = "";
         currentLocality = "";
         currentTempC = "";
+        currentDate = "";
+        currentTime = "";
+        currentLat = "";
+        currentLon = "";
+        currentElev = "";
+        currentRecorder = "";
+        currentMicrophone = "";
+        currentAccessories = "";
 
         clearRecordingAnalysis();
 
         if ($("fileLabel")) $("fileLabel").textContent = "no file";
-        $("statusBadge").textContent = "No file";
-        $("statusBadge").className = "badge warn";
         ["infoDur", "infoSr", "infoNyq", "infoCh"].forEach((id) => {
           const el = $(id);
           if (el) el.textContent = "—";
@@ -2141,6 +2931,10 @@
         if (localityInput) localityInput.value = "";
         const countryInput = $("countryInput");
         if (countryInput) countryInput.value = "";
+        ["tempCInput", "dateInput", "timeInput", "latInput", "lonInput", "elevInput", "recorderInput", "microphoneInput", "accessoriesInput"].forEach((id) => {
+          const el = $(id);
+          if (el) el.value = "";
+        });
         const metaGroup = $("recordingMetaGroup");
         if (metaGroup) metaGroup.style.display = "none";
 
@@ -2208,6 +3002,28 @@
         currentTempC = entry.tempC || "";
         const tempInput = $("tempCInput");
         if (tempInput) tempInput.value = currentTempC;
+        currentDate = entry.date || "";
+        currentTime = entry.time || "";
+        currentLat = entry.lat || "";
+        currentLon = entry.lon || "";
+        currentElev = entry.elev || "";
+        currentRecorder = entry.recorder || "";
+        currentMicrophone = entry.microphone || "";
+        currentAccessories = entry.accessories || "";
+        _elevAuto = false;
+        [
+          ["dateInput", currentDate],
+          ["timeInput", currentTime],
+          ["latInput", currentLat],
+          ["lonInput", currentLon],
+          ["elevInput", currentElev],
+          ["recorderInput", currentRecorder],
+          ["microphoneInput", currentMicrophone],
+          ["accessoriesInput", currentAccessories],
+        ].forEach(([id, v]) => {
+          const el = $(id);
+          if (el) el.value = v;
+        });
         const metaGroup = $("recordingMetaGroup");
         if (metaGroup) metaGroup.style.display = "flex";
 
@@ -3047,45 +3863,10 @@
       // ═══════════════════════════════════════════════════════════════════
       // VIEW CONTROLS
       // ═══════════════════════════════════════════════════════════════════
-      function onZoom(v) {
-        if (!rawSamples) return;
-        const t = v / 100,
-          minD = 0.005,
-          maxD = Math.min(duration, 600);
-        viewDur = Math.exp(Math.log(minD) * (1 - t) + Math.log(maxD) * t);
-        viewDur = Math.min(viewDur, duration);
-        viewStart = Math.max(0, Math.min(viewStart, duration - viewDur));
-        $("zoomVal").textContent = viewDur.toFixed(4) + "s";
-        render();
-        renderMinimap();
-      }
       function setViewStart(vs) {
         viewStart = Math.max(0, Math.min(vs, Math.max(0, duration - viewDur)));
         render();
         renderMinimap();
-      }
-      function onFreqSlider() {
-        if (!rawSamples) return;
-        const nyq = sampleRate / 2;
-        const lo = (parseInt($("fMinSlider").value) / 1000) * nyq;
-        const hi = (parseInt($("fMaxSlider").value) / 1000) * nyq;
-        if (hi > lo + nyq * 0.005) {
-          fvMin = lo;
-          fvMax = hi;
-        }
-        $("fMinLbl").textContent = fmtHz(fvMin);
-        $("fMaxLbl").textContent = fmtHz(fvMax);
-        render();
-      }
-      function resetFreq() {
-        if (!rawSamples) return;
-        fvMin = 0;
-        fvMax = sampleRate / 2;
-        $("fMinSlider").value = 0;
-        $("fMaxSlider").value = 1000;
-        $("fMinLbl").textContent = fmtHz(0);
-        $("fMaxLbl").textContent = fmtHz(fvMax);
-        render();
       }
       function onContrast() {
         specContrast = parseFloat($("contSlider").value) || 60;
@@ -3096,16 +3877,10 @@
       }
       function onThresh() {
         const pct = parseFloat($("threshPct").value) || 5;
-        $("threshPct2").value = pct;
         if (rawSamples)
           $("threshAbs").textContent = ((peakAmp * pct) / 100).toFixed(5);
         render();
       }
-      function syncThresh(v) {
-        $("threshPct").value = v;
-        onThresh();
-      }
-
       // ═══════════════════════════════════════════════════════════════════
       // COLORMAPS — accurate perceptual lookup tables (16-stop keyframes)
       // ═══════════════════════════════════════════════════════════════════
@@ -4112,25 +4887,20 @@
             e.preventDefault();
             if (!rawSamples) return;
             if (e.ctrlKey && src === "spec") {
+              // Zoom about the pointer: the frequency under it stays put, and
+              // the window is then shifted (never shrunk) to fit 0..Nyquist.
+              // Clamping each edge separately used to cut the new range short
+              // near an edge, so zooming out there could not grow it.
               const nyq = sampleRate / 2;
               const { f } = pixToTF(e.offsetX, e.offsetY, src);
-              const range = fvMax - fvMin,
-                factor = e.deltaY > 0 ? 1.3 : 0.77;
+              const range = fvMax - fvMin;
+              const factor = e.deltaY > 0 ? 1.3 : 1 / 1.3;
               const nr = Math.min(nyq, Math.max(nyq * 0.005, range * factor));
-              fvMin = Math.max(0, f - nr / 2);
-              fvMax = Math.min(nyq, f + nr / 2);
-              if (fvMin < 0) {
-                fvMax = Math.min(nyq, nr);
-                fvMin = 0;
-              }
-              if (fvMax > nyq) {
-                fvMin = Math.max(0, nyq - nr);
-                fvMax = nyq;
-              }
-              $("fMinSlider").value = Math.round((fvMin / nyq) * 1000);
-              $("fMaxSlider").value = Math.round((fvMax / nyq) * 1000);
-              $("fMinLbl").textContent = fmtHz(fvMin);
-              $("fMaxLbl").textContent = fmtHz(fvMax);
+              const u = range > 0 ? (f - fvMin) / range : 0.5;
+              let lo = f - u * nr;
+              lo = Math.max(0, Math.min(lo, nyq - nr));
+              fvMin = lo;
+              fvMax = lo + nr;
             } else {
               const W = getVizWidth();
               const { t: tc } = pixToTF(e.offsetX, e.offsetY, src);
@@ -4140,11 +4910,6 @@
                 0,
                 Math.min(tc - (viewDur * e.offsetX) / W, duration - viewDur),
               );
-              $("zoomSlider").value = Math.round(
-                (100 * (Math.log(viewDur) - Math.log(0.005))) /
-                  (Math.log(Math.min(duration, 600)) - Math.log(0.005)),
-              );
-              $("zoomVal").textContent = viewDur.toFixed(4) + "s";
             }
             render();
           },
@@ -4265,15 +5030,6 @@
         // here: metrics computed against the post-change annotations no
         // longer describe the restored ones and must be recomputed.
         refreshAnnotList();
-        $("detBadge").textContent = detections.length
-          ? "(" + detections.length + ")"
-          : "";
-        $("detCount").textContent = detMeasurements.length
-          ? detMeasurements.length + " units measured"
-          : detections.length
-            ? detections.length + " detections"
-            : "";
-        $("btnExport").disabled = !detections.length;
         const _exMeasU = $("btnExportMeas");
         if (detMeasurements.length) {
           renderMeasTable();
@@ -4330,9 +5086,6 @@
         spectralMetricsRows = null;
         selAid = null;
         nextAid = 1; // restart selection numbering, incl. for later "Apply to Spectral Analysis"
-        $("btnExport").disabled = true;
-        $("detCount").textContent = "";
-        $("detBadge").textContent = "";
         $("measHead").innerHTML = "";
         $("measBody").innerHTML = "";
         $("summaryCards").style.display = "none";
@@ -4365,7 +5118,7 @@
         if (!annotations.length) {
           const d = document.createElement("div");
           d.style.cssText = "color:var(--txt2);font-size:11px;padding:3px 0";
-          d.textContent = "None. Use ✏ Annotate tool.";
+          d.textContent = "None. Use ✏ Draw Selections.";
           ul.appendChild(d);
           return;
         }
@@ -4946,77 +5699,6 @@
       }
 
       // ═══════════════════════════════════════════════════════════════════
-      // AMPLITUDE DETECTOR
-      // ═══════════════════════════════════════════════════════════════════
-      function runAmpDetector() {
-        if (!rawSamples) {
-          log("Load audio first", "warn");
-          return;
-        }
-        const thr = (peakAmp * parseFloat($("threshPct").value)) / 100;
-        const minDurSamp = Math.round(
-          (parseFloat($("minDurMs").value) / 1000) * sampleRate,
-        );
-        const minGapSamp = Math.round(
-          (parseFloat($("minGapMs").value) / 1000) * sampleRate,
-        );
-        const n = envelope.length,
-          mask = new Uint8Array(n);
-        for (let i = 0; i < n; i++) mask[i] = envelope[i] >= thr ? 1 : 0;
-        const segs = [];
-        let inSeg = false,
-          ss = 0;
-        for (let i = 0; i < n; i++) {
-          if (!inSeg && mask[i]) {
-            inSeg = true;
-            ss = i;
-          } else if (inSeg && !mask[i]) {
-            segs.push({ s: ss, e: i });
-            inSeg = false;
-          }
-        }
-        if (inSeg) segs.push({ s: ss, e: n - 1 });
-        const merged = [];
-        segs.forEach((seg) => {
-          if (merged.length && seg.s - merged[merged.length - 1].e < minGapSamp)
-            merged[merged.length - 1].e = seg.e;
-          else merged.push({ ...seg });
-        });
-        detections = merged
-          .filter((s) => s.e - s.s >= minDurSamp)
-          .map((s) => ({ start: s.s / sampleRate, end: s.e / sampleRate }));
-        log("Amplitude detector: " + detections.length + " units", "ok");
-        $("detCount").textContent = detections.length + " detections";
-        $("detBadge").textContent = "(" + detections.length + ")";
-        $("btnExport").disabled = false;
-        if (detections.length) {
-          // Show the detections on the spectrogram immediately. Defer ALL
-          // spectral computation until the user clicks "Spectral Metrics".
-          // Clear any stale measurements so nothing looks pre-computed.
-          detMeasurements = [];
-          spectralMetricsRows = null;
-          $("measHead").innerHTML = "";
-          $("measBody").innerHTML = "";
-          $("summaryCards").style.display = "none";
-          const computeBtn = $("btnComputeSpectral");
-          if (computeBtn) computeBtn.disabled = false;
-          const clearMeasBtn = $("btnClearMeas");
-          if (clearMeasBtn) clearMeasBtn.disabled = true;
-          // No metrics yet -> keep Save Excel disabled until Spectral Metrics runs.
-          const saveExcel = $("btnSaveSpectralExcel");
-          if (saveExcel) saveExcel.disabled = true;
-          const reportBtn = $("btnExportTextReport");
-          if (reportBtn) reportBtn.disabled = true;
-        }
-        render();
-        renderMinimap();
-        switchMainTab("analyzer", $("maintab-analyzer"));
-        switchTab("detect", document.querySelector(".tab"));
-        // Force redraw after tab switch/layout
-        setTimeout(render, 50);
-      }
-
-      // ═══════════════════════════════════════════════════════════════════
       // MEASUREMENTS
       // ═══════════════════════════════════════════════════════════════════
       // Choose the FFT size for MEASUREMENTS based on the target frequency
@@ -5109,6 +5791,14 @@
             species: currentSpecies,
             country: currentCountry,
             locality: currentLocality,
+            rec_date: currentDate,
+            rec_time: currentTime,
+            latitude: metaNum(currentLat),
+            longitude: metaNum(currentLon),
+            elevation_m: metaNum(currentElev),
+            recorder: currentRecorder,
+            microphone: currentMicrophone,
+            accessories: currentAccessories,
             selection: i + 1,
             label: a.label || "",
             start: Math.round(a.start * 1e6) / 1e6,
@@ -5163,7 +5853,7 @@
         log(
           "Computed spectral metrics for " +
             spectralMetricsRows.length +
-            " selections. See Measurements pane; Save Excel when ready.",
+            " selections. See Measurements pane; Export All (Excel) when ready.",
           "ok",
         );
       }
@@ -5216,6 +5906,14 @@
               species: currentSpecies,
               country: currentCountry,
               locality: currentLocality,
+              rec_date: currentDate,
+              rec_time: currentTime,
+              latitude: metaNum(currentLat),
+              longitude: metaNum(currentLon),
+              elevation_m: metaNum(currentElev),
+              recorder: currentRecorder,
+              microphone: currentMicrophone,
+              accessories: currentAccessories,
               generated: new Date().toISOString(),
               n_selections: rows.length,
               sample_rate_hz: sampleRate,
@@ -5570,6 +6268,14 @@
             species: currentSpecies,
             country: currentCountry,
             locality: currentLocality,
+            rec_date: currentDate,
+            rec_time: currentTime,
+            latitude: metaNum(currentLat),
+            longitude: metaNum(currentLon),
+            elevation_m: metaNum(currentElev),
+            recorder: currentRecorder,
+            microphone: currentMicrophone,
+            accessories: currentAccessories,
             n: idx + 1,
             start: d.start,
             end: d.end,
@@ -5595,6 +6301,14 @@
         species: { lbl: "Species" },
         country: { lbl: "Country" },
         locality: { lbl: "Locality" },
+        rec_date: { lbl: "Date" },
+        rec_time: { lbl: "Time" },
+        latitude: { lbl: "Latitude" },
+        longitude: { lbl: "Longitude" },
+        elevation_m: { lbl: "Elevation (m)" },
+        recorder: { lbl: "Recorder" },
+        microphone: { lbl: "Microphone" },
+        accessories: { lbl: "Accessories" },
         label: { lbl: "Label" },
         start: { lbl: "Start (s)", dec: 4 },
         end: { lbl: "End (s)", dec: 4 },
@@ -5727,7 +6441,7 @@
             v: mean(envPeaks),
             fmt: (v) => v.toFixed(3),
           },
-          { lbl: "SD peak freq (kHz)", v: sd(peaks), fmt: (v) => v.toFixed(3) },
+          { lbl: "SD peak freq (kHz)", v: sd(envPeaks), fmt: (v) => v.toFixed(3) },
           {
             lbl: "Mean Q -3dB",
             v: mean(q3s),
@@ -5768,7 +6482,6 @@
         const _exMeasR = $("btnExportMeas");
         if (_exMeasR) _exMeasR.disabled = false;
         $("btnClearMeas").disabled = false;
-        $("detCount").textContent = detMeasurements.length + " units measured";
       }
       function clearMeasurements() {
         detMeasurements = [];
@@ -5783,9 +6496,6 @@
         $("btnExportTextReport").disabled = true;
         const computeBtn = $("btnComputeSpectral");
         if (computeBtn) computeBtn.disabled = !annotations.length;
-        $("detCount").textContent = detections.length
-          ? detections.length + " detections"
-          : "";
         render();
         renderMinimap();
         // Force redraw to ensure cleared measurements are immediately visible
@@ -5825,26 +6535,6 @@
         });
         dlFile("rthoptera_measurements.csv", csv, "text/csv");
         log("Exported measurement CSV", "ok");
-      }
-      function exportDetections() {
-        if (!detections.length) return;
-        const nyq = rawSamples ? sampleRate / 2 : 20000;
-        let txt =
-          "Selection\tView\tChannel\tBegin Time (s)\tEnd Time (s)\tLow Freq (Hz)\tHigh Freq (Hz)\tAnnotation\n";
-        detections.forEach((d, i) => {
-          txt +=
-            i +
-            1 +
-            "\tSpectrogram 1\t1\t" +
-            d.start.toFixed(6) +
-            "\t" +
-            d.end.toFixed(6) +
-            "\t0\t" +
-            nyq.toFixed(1) +
-            "\tstridulation\n";
-        });
-        dlFile("detections.txt", txt, "text/plain");
-        log("Exported " + detections.length + " detections", "ok");
       }
       async function dlFile(defaultFilename, content, mimeType, opts) {
         try {
@@ -7256,6 +7946,11 @@
         // Preprocessing would quietly create selections. viewerMode gates the
         // behaviour instead of the chrome.
         viewerMode = name === "preprocess" ? "preprocess" : "analyzer";
+        if (viewerMode === "preprocess" && ppFullViewDue && rawSamples) {
+          viewStart = 0;
+          viewDur = duration;
+          ppFullViewDue = false;
+        }
         if (viewerMode === "preprocess") {
           // One unambiguous affordance: click to place the playhead.
           const wi = $("waveI"),
@@ -7854,6 +8549,79 @@
         if (mpg) mpg.addEventListener("input", () => pkRefreshManualEchemes());
       });
 
+      // ── Live detection ──────────────────────────────────────────────────
+      // Once Detect has been run, every detection parameter takes effect as it
+      // is changed (typed, ticked, or loaded from a preset): detection re-runs
+      // after a short pause, without the busy overlay. Like pressing Detect, it
+      // re-derives the peaks, so manual peak edits are replaced.
+      let pkHasDetected = false,
+        pkLiveRunning = false,
+        pkLivePending = false,
+        pkLiveQuiet = false,
+        pkLiveTimer = null;
+      function pkScheduleRedetect(delay = 250) {
+        if (!pkHasDetected || !rawSamples) return;
+        clearTimeout(pkLiveTimer);
+        pkLiveTimer = setTimeout(pkRedetectNow, delay);
+      }
+      async function pkRedetectNow() {
+        if (!pkHasDetected || !rawSamples) return;
+        if (pkLiveRunning) {
+          pkLivePending = true;
+          return;
+        }
+        pkLiveRunning = true;
+        pkLiveQuiet = true;
+        try {
+          await _pkDetectStages(() => {});
+        } catch (e) {
+          if (!(e instanceof BusyCancelled)) log("Live detection failed: " + e.message, "err");
+        } finally {
+          pkLiveQuiet = false;
+          pkLiveRunning = false;
+          if (pkLivePending) {
+            pkLivePending = false;
+            pkRedetectNow();
+          }
+        }
+      }
+      // Amplitude Detector: re-run when its settings change, but only if it
+      // has produced detections (or the floor curve is on show).
+      let pkAmpLiveTimer = null;
+      function pkScheduleAmpRedetect() {
+        clearTimeout(pkAmpLiveTimer);
+        pkAmpLiveTimer = setTimeout(() => {
+          if (!pkEnv) return;
+          if (pkFloor) pkDetectFloor(true);
+          if (pkAmpDetections.length) pkRunAmpDetector();
+        }, 250);
+      }
+      pkOnReady(() => {
+        ["pkSmooth", "pkWin", "pkThresh", "pkDetThr", "pkLinkThr"].forEach((id) => {
+          const el = $(id);
+          if (el) el.addEventListener("input", () => pkScheduleRedetect());
+        });
+        // Without peaks, the motif lines follow the pulse selections live.
+        ["pkMaxPulseGap", "pkMaxMotifGap"].forEach((id) => {
+          const el = $(id);
+          if (el)
+            el.addEventListener("input", () => {
+              if (!pkEnvPeaks.length && pkEnv) pkDrawEnvelope();
+            });
+        });
+        const seqCb = $("pkMotifSeq");
+        if (seqCb)
+          seqCb.addEventListener("change", () => {
+            if (!pkEnvPeaks.length && pkEnv) pkDrawEnvelope();
+          });
+        const auto = $("pkDetThrAuto");
+        if (auto) auto.addEventListener("change", () => pkScheduleRedetect(0));
+        ["pkAmpThreshPct", "pkAmpMinDurMs", "pkAmpMinGapMs", "pkFloorWinMs"].forEach((id) => {
+          const el = $(id);
+          if (el) el.addEventListener("input", pkScheduleAmpRedetect);
+        });
+      });
+
       // ── Envelope computation ────────────────────────────────────────────
       function pkComputeEnv(smoothMs) {
         if (!rawSamples) return null;
@@ -8399,6 +9167,93 @@
       // as Spectral Analysis's runAmpDetector, but run directly on pkEnv
       // (already normalised 0..1) so no dependency on Spectral's own
       // envelope/peakAmp globals.
+      // ── Local noise floor (rolling minima) ───────────────────────────────
+      // In a song with loud and faint parts, reverberation of the loud
+      // elements lifts the LOCAL noise floor well above the true background,
+      // so one fixed threshold either over-merges the loud part or misses the
+      // faint one. This finds the envelope's local minima (the lowest point
+      // within +/- half the window), joins them into a floor curve and smooths
+      // it with a moving average over the same window. Display only for now.
+      let pkFloor = null; // { env, curve: Float32Array, minima: [idx], winMs }
+
+      function pkComputeFloor(env, winMs) {
+        const n = env.length;
+        const half = Math.max(1, Math.round((sampleRate * winMs) / 2000));
+        // Sliding-window minimum (monotonic deque), centred on i.
+        const wmin = new Float32Array(n);
+        const dq = new Int32Array(n);
+        let head = 0,
+          tail = 0,
+          next = 0;
+        for (let i = 0; i < n; i++) {
+          const hi = Math.min(n - 1, i + half);
+          while (next <= hi) {
+            while (tail > head && env[dq[tail - 1]] >= env[next]) tail--;
+            dq[tail++] = next++;
+          }
+          while (dq[head] < i - half) head++;
+          wmin[i] = env[dq[head]];
+        }
+        // Minima: samples that ARE their window's minimum. Ties inside one
+        // window (flat stretches) collapse to the first.
+        const minima = [];
+        let last = -1;
+        for (let i = 0; i < n; i++) {
+          if (env[i] !== wmin[i]) continue;
+          if (last >= 0 && i - last <= half) continue;
+          minima.push(i);
+          last = i;
+        }
+        // Anchor both ends so the curve spans the whole recording.
+        if (!minima.length || minima[0] !== 0) minima.unshift(0);
+        if (minima[minima.length - 1] !== n - 1) minima.push(n - 1);
+        const raw = new Float32Array(n);
+        for (let k = 0; k < minima.length - 1; k++) {
+          const a = minima[k],
+            b = minima[k + 1];
+          const va = k === 0 && a === 0 ? wmin[0] : env[a];
+          const vb = k + 1 === minima.length - 1 && b === n - 1 ? wmin[n - 1] : env[b];
+          for (let i = a; i <= b; i++) raw[i] = va + ((vb - va) * (i - a)) / Math.max(1, b - a);
+        }
+        // Centred moving average over the same window (prefix sums).
+        const ps = new Float64Array(n + 1);
+        for (let i = 0; i < n; i++) ps[i + 1] = ps[i] + raw[i];
+        const curve = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+          const lo = Math.max(0, i - half),
+            hi = Math.min(n - 1, i + half);
+          curve[i] = (ps[hi + 1] - ps[lo]) / (hi - lo + 1);
+        }
+        return { env, curve, minima, winMs };
+      }
+
+      function pkDetectFloor(skipRerun) {
+        if (!pkEnv) {
+          log("Load audio first", "warn");
+          return;
+        }
+        const winMs = parseFloat($("pkFloorWinMs").value);
+        if (!(winMs > 0)) {
+          log("Floor window must be above 0 ms.", "warn");
+          return;
+        }
+        pkFloor = pkComputeFloor(pkEnv, winMs);
+        log(
+          "Local noise floor: " + pkFloor.minima.length + " minima (window " + winMs + " ms)",
+          "ok",
+        );
+        // The detector now follows the floor: refresh any detections it made.
+        if (!skipRerun && pkAmpDetections.length) pkRunAmpDetector();
+        else pkDrawEnvelope();
+      }
+
+      function pkClearFloor() {
+        pkFloor = null;
+        // Back to the fixed Floor % level.
+        if (pkAmpDetections.length) pkRunAmpDetector();
+        else pkDrawEnvelope();
+      }
+
       function pkRunAmpDetector() {
         if (!pkEnv) {
           log("Load audio first", "warn");
@@ -8413,11 +9268,27 @@
           (parseFloat($("pkAmpMinGapMs").value) / 1000) * sampleRate,
         );
         const n = pkEnv.length;
+        // Rolling threshold: once the local floor has been detected (and not
+        // cleared with the X), Floor % is an offset ABOVE the local noise floor
+        // curve instead of a fixed level, so faint passages are still caught
+        // while the raised floor under loud passages (reverberation) no longer
+        // merges their elements.
+        let floorCurve = null;
+        if (pkFloor) {
+          const winMs = parseFloat($("pkFloorWinMs").value);
+          if (!(winMs > 0)) {
+            log("Floor window must be above 0 ms.", "warn");
+            return;
+          }
+          if (!pkFloor || pkFloor.env !== pkEnv || pkFloor.winMs !== winMs)
+            pkFloor = pkComputeFloor(pkEnv, winMs);
+          floorCurve = pkFloor.curve;
+        }
         const segs = [];
         let inSeg = false,
           ss = 0;
         for (let i = 0; i < n; i++) {
-          const above = pkEnv[i] >= thr;
+          const above = pkEnv[i] >= (floorCurve ? floorCurve[i] + thr : thr);
           if (!inSeg && above) {
             inSeg = true;
             ss = i;
@@ -8441,7 +9312,11 @@
             end: s.e / sampleRate,
           }));
         log(
-          "Temporal amplitude detector: " + pkAmpDetections.length + " detections",
+          "Temporal amplitude detector" +
+            (floorCurve ? " (threshold follows local floor)" : "") +
+            ": " +
+            pkAmpDetections.length +
+            " detections",
           "ok",
         );
         pkSelSelected = null;
@@ -8474,6 +9349,15 @@
         const exportBtn = $("btnPkExportSel");
         if (exportBtn)
           exportBtn.disabled = !(pkAmpDetections.length || pkAnnotations.length);
+        const cmp = $("btnPkConfirmPulses");
+        if (cmp) cmp.disabled = !pkPulseSpans().length;
+        const clearDraws = $("btnPkClearDraws");
+        if (clearDraws) clearDraws.disabled = !pkAnnotations.length;
+        pkRefreshApplyBtn();
+        ["btnPkExportDet"].forEach((id) => {
+          const b = $(id);
+          if (b) b.disabled = !(pkAmpDetections.length || pkAnnotations.length);
+        });
         pkRefreshSelList();
         pkRefreshManualEchemes();
       }
@@ -8493,6 +9377,35 @@
       function pkFindSelItem(list, id) {
         const arr = list === "det" ? pkAmpDetections : pkAnnotations;
         return arr.find((x) => x.id === id) || null;
+      }
+
+      // Delete everything in the multi-selection (the primary plus the extras)
+      // in one undoable step.
+      function pkDeleteSelectedGroup() {
+        const group = pkSelSelected ? [pkSelSelected, ...pkSelExtra] : [];
+        if (!group.length) return 0;
+        pkSnapshot("delete selections");
+        const dets = new Set(group.filter((g) => g.list === "det").map((g) => g.id));
+        const anns = new Set(group.filter((g) => g.list === "annot").map((g) => g.id));
+        pkAmpDetections = pkAmpDetections.filter((d) => !dets.has(d.id));
+        pkAnnotations = pkAnnotations.filter((a) => !anns.has(a.id));
+        pkSelSelected = null;
+        pkSelExtra = [];
+        pkUpdateSelUi();
+        pkDrawEnvelope();
+        return group.length;
+      }
+
+      function pkClearDraws() {
+        if (!pkAnnotations.length) return;
+        pkSnapshot("clear drawn selections");
+        pkAnnotations = [];
+        if (pkSelSelected && pkSelSelected.list === "annot") {
+          pkSelSelected = null;
+          pkSelExtra = [];
+        } else pkSelExtra = pkSelExtra.filter((x) => x.list !== "annot");
+        pkUpdateSelUi();
+        pkDrawEnvelope();
       }
 
       function pkDeleteSelection(list, id) {
@@ -8626,6 +9539,15 @@
       });
       window.addEventListener("blur", pkEndSplitHold);
 
+      // Add one detection/annotation to the multi-selection (no toggling).
+      function pkSelAdd(list, id) {
+        if (pkSelIsSel(list, id)) return;
+        if (!pkSelSelected) {
+          pkSelSelected = { list, id };
+          pkSelExtra = [];
+        } else pkSelExtra.push({ list, id });
+      }
+
       function pkSelRowClick(list, id, e) {
         if (e && (e.ctrlKey || e.metaKey || e.shiftKey)) {
           pkSelToggle(list, id);
@@ -8652,7 +9574,7 @@
         if (!items.length) {
           const d = document.createElement("div");
           d.style.cssText = "color:var(--txt2);font-size:11px;padding:3px 0";
-          d.textContent = "None. Run the Amplitude Detector or use ✏ Annotate.";
+          d.textContent = "None. Run the Amplitude Detector or use ✏ Draw Selections.";
           ul.appendChild(d);
           return;
         }
@@ -8779,9 +9701,11 @@
           dur_ms: round4(dur * 1000),
           tem_exc: temExc,
           dyn_exc: dynExc,
-          pci: pci.pci,
-          props_ent: pci.ent,
-          props_cv: pci.cv,
+          // Same division as the Motifs table's _syl columns (the annotated
+          // pulses and the gaps between them), so the same names.
+          pci_syl: pci.pci,
+          props_ent_syl: pci.ent,
+          props_cv_syl: pci.cv,
         };
       }
 
@@ -8805,7 +9729,7 @@
           "dur_ms",
           "tem_exc",
           "dyn_exc",
-          "pci",
+          "pci_syl",
         ];
         const head = $("pkEchemeHead");
         head.innerHTML = cols.map((c) => "<th>" + c + "</th>").join("");
@@ -8850,6 +9774,14 @@
             species: currentSpecies,
             country: currentCountry,
             locality: currentLocality,
+            rec_date: currentDate,
+            rec_time: currentTime,
+            latitude: metaNum(currentLat),
+            longitude: metaNum(currentLon),
+            elevation_m: metaNum(currentElev),
+            recorder: currentRecorder,
+            microphone: currentMicrophone,
+            accessories: currentAccessories,
           };
           prevEnd = it.end;
           return row;
@@ -8864,6 +9796,14 @@
           species: currentSpecies,
           country: currentCountry,
           locality: currentLocality,
+          rec_date: currentDate,
+          rec_time: currentTime,
+          latitude: metaNum(currentLat),
+          longitude: metaNum(currentLon),
+          elevation_m: metaNum(currentElev),
+          recorder: currentRecorder,
+          microphone: currentMicrophone,
+          accessories: currentAccessories,
         }));
         const sheets = [["Selections", selRows]];
         if (echemeRows.length) sheets.push(["Manual echemes", echemeRows]);
@@ -8914,7 +9854,22 @@
         "pkMaxPulseGap",
         "pkMotifSeq",
         "pkMaxMotifGap",
+        // Amplitude Detector
+        "pkAmpThreshPct",
+        "pkAmpMinDurMs",
+        "pkAmpMinGapMs",
+        "pkFloorWinMs",
       ];
+      // Presets shipped with the app. They only list the fields they set, so
+      // loading one leaves every other parameter as it is. Not stored in a
+      // slot, so they can be neither overwritten nor deleted.
+      const PK_BUILTIN_PRESETS = {
+        "builtin:acrididae": {
+          _name: "Acrididae",
+          pkSmooth: "50",
+          pkFloorWinMs: "50",
+        },
+      };
       function _pkPresetKey(n) {
         return "strid_pk_preset_" + n;
       }
@@ -8984,6 +9939,18 @@
           if (el.type === "checkbox") el.checked = !!data[id];
           else el.value = data[id];
         });
+        // The values above are written without firing any input/change event,
+        // so nothing downstream noticed them: the envelope kept the OLD
+        // smoothing and the motif-sequence row kept its old visibility. Bring
+        // both in line and redraw, so the plot always reflects the preset.
+        const ms = $("pkMotifSeq"),
+          msRow = $("pkMotifSeqRow");
+        if (ms && msRow) msRow.style.display = ms.checked ? "" : "none";
+        if (rawSamples) pkRefreshEnvelope();
+        else pkDrawEnvelope();
+        // Detection parameters take effect at once: re-run what has been run.
+        if (pkHasDetected) pkScheduleRedetect(0);
+        if (pkEnv) pkScheduleAmpRedetect();
       }
       function _pkRefreshPresetLabels() {
         const sel = $("pkPresetSelect");
@@ -9011,6 +9978,7 @@
         }
         const sel = $("pkPresetSelect");
         let n = sel ? sel.value : "";
+        if (PK_BUILTIN_PRESETS[n]) n = ""; // built-ins are read-only: save to a slot instead
         if (!n) {
           // pick the first empty slot automatically
           for (let i = 1; i <= 10; i++) {
@@ -9065,6 +10033,12 @@
           _pkPresetStatus("Select a preset slot first.", true);
           return;
         }
+        if (PK_BUILTIN_PRESETS[n]) {
+          const data = PK_BUILTIN_PRESETS[n];
+          _pkApply(data);
+          _pkPresetStatus('✔ Loaded built-in "' + data._name + '".');
+          return;
+        }
         let raw;
         try {
           raw = localStorage.getItem(_pkPresetKey(n));
@@ -9093,6 +10067,10 @@
         const n = sel ? sel.value : "";
         if (!n) {
           _pkPresetStatus("Select a preset slot first.", true);
+          return;
+        }
+        if (PK_BUILTIN_PRESETS[n]) {
+          _pkPresetStatus("Built-in presets can't be deleted.", true);
           return;
         }
         if (!localStorage.getItem(_pkPresetKey(n))) {
@@ -10010,7 +10988,7 @@
             motifs.length +
             " motifs" +
             (note ? "  (" + note + ")" : "") +
-            " · click Confirm to recompute metrics";
+            " · click Compute Metrics from Peaks to recompute";
         } else {
           $("pkStatus").textContent =
             pkEnvPeaks.length +
@@ -10341,6 +11319,7 @@
       }
 
       async function _pkDetectStages(progress) {
+        pkHasDetected = true;
         pkConfirmed = false;
         $("pkResults").style.display = "none";
 
@@ -10389,6 +11368,12 @@
           rawMotifs.length +
           " motifs" +
           pkAutoNote;
+        if (rawEnvPeaks.length === 0) {
+          const msg =
+            "No envelope peaks detected. Try lowering 'Detection thr. (%)' (or untick Auto) or 'Envelope peak threshold (%)'.";
+          log(msg, "warn");
+          if (!pkLiveQuiet) showToast("⚠ " + msg, 6000);
+        }
         $("btnPkConfirm").disabled = rawEnvPeaks.length === 0;
         const applyBtn = $("btnPkApplySpectral");
         if (applyBtn) applyBtn.disabled = rawEnvPeaks.length === 0;
@@ -10426,6 +11411,7 @@
 
       // ── Draw envelope canvas ────────────────────────────────────────────
       function pkDrawEnvelope() {
+        pkRefreshApplyBtn();
         const canvas = $("pkCanvas");
         const dpr = window.devicePixelRatio || 1;
         const W = canvas.offsetWidth || 800;
@@ -10519,7 +11505,10 @@
         // manual annotations (top band, violet) — independent of the
         // envelope-peak/pulse/motif spans above. Edge-grip bars are drawn
         // only in Select mode, when they are actually draggable.
-        const pkDrawSelBand = (item, list, y0, yH, fill, stroke) => {
+        // Amplitude detections ("det") are a semitransparent sky-blue fill above the
+        // envelope line (see below), drawn BEFORE the envelope line, with thin edge lines. Manual selections keep
+        // their small top band.
+        const pkDrawSelBand = (item, list, y0, yH, fill, stroke, full) => {
           const t0 = item.start,
             t1 = item.end;
           if (t1 < vStart || t0 > vEnd) return;
@@ -10527,15 +11516,36 @@
             x1 = Math.min(padL + pw, tX(t1));
           const selected = pkSelIsSel(list, item.id);
           ctx.fillStyle = fill;
-          ctx.fillRect(x0, y0, Math.max(1, x1 - x0), yH);
-          ctx.fillStyle = stroke;
-          ctx.fillRect(x0, y0, Math.max(1, x1 - x0), 2);
+          if (full) {
+            // Fill the sky BEHIND the envelope "mountain": from the top of the
+            // plot down to the envelope line, across the detection's span only,
+            // so nothing is painted below the line.
+            const n = pkEnv.length;
+            const iA = Math.max(0, Math.floor(Math.max(t0, vStart) * sampleRate));
+            const iB = Math.min(n - 1, Math.ceil(Math.min(t1, vEnd) * sampleRate));
+            const stp = Math.max(1, Math.floor((iB - iA) / (pw * 2)));
+            // The top strip stays clear for the motif and motif-sequence lines.
+            const fTop = padT + 10;
+            const fy = (a) => Math.max(fTop, aY(a));
+            ctx.beginPath();
+            ctx.moveTo(x0, fTop);
+            for (let i = iA; i <= iB; i += stp)
+              ctx.lineTo(tX(i / sampleRate), fy(pkEnv[i]));
+            ctx.lineTo(tX(iB / sampleRate), fy(pkEnv[iB]));
+            ctx.lineTo(x1, fTop);
+            ctx.closePath();
+            ctx.fill();
+          } else {
+            ctx.fillRect(x0, y0, Math.max(1, x1 - x0), yH);
+            ctx.fillStyle = stroke;
+            ctx.fillRect(x0, y0, Math.max(1, x1 - x0), 2);
+          }
           if (selected) {
             ctx.save();
             ctx.setLineDash([4, 3]);
             ctx.strokeStyle = "#f1c40f";
-            ctx.lineWidth = 1.5;
-            ctx.strokeRect(x0, padT, Math.max(1, x1 - x0), ph);
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x0 + 0.5, padT + 0.5, Math.max(1, x1 - x0) - 1, ph - 1);
             ctx.restore();
           }
           if (pkEditMode === "select") {
@@ -10544,15 +11554,38 @@
             ctx.fillStyle = stroke;
             [hx0, hx1].forEach((hx) => {
               if (hx < padL - 4 || hx > padL + pw + 4) return;
-              ctx.fillRect(hx - 1.5, padT, 3, ph);
+              ctx.fillRect(hx - 0.5, padT, 1, ph);
             });
           }
         };
+        // Without envelope peaks, the pulse selections are grouped live into
+        // motifs and motif sequences by the same gap settings, drawn as lines
+        // in the strip above the fills (blue = motif, orange = sequence).
+        if (!pkEnvPeaks.length) {
+          const g = pkGroupPulseSpans(pkPulseSpans());
+          g.seqs.forEach((seq) => {
+            const t0 = pkMotifSpan(seq[0]).start,
+              t1 = pkMotifSpan(seq[seq.length - 1]).end;
+            if (t1 < vStart || t0 > vEnd) return;
+            const x0 = Math.max(padL, tX(t0)),
+              x1 = Math.min(padL + pw, tX(t1));
+            ctx.fillStyle = "#D55E00";
+            ctx.fillRect(x0, padT - 6, Math.max(1, x1 - x0), 4);
+          });
+          g.motifs.forEach((mo) => {
+            const { start: t0, end: t1 } = pkMotifSpan(mo);
+            if (t1 < vStart || t0 > vEnd) return;
+            const x0 = Math.max(padL, tX(t0)),
+              x1 = Math.min(padL + pw, tX(t1));
+            ctx.fillStyle = "#0072B2";
+            ctx.fillRect(x0, padT, Math.max(1, x1 - x0), 3);
+          });
+        }
         pkAmpDetections.forEach((d) =>
-          pkDrawSelBand(d, "det", padT + ph - 7, 6, "rgba(255,159,10,0.18)", "#ffb454"),
+          pkDrawSelBand(d, "det", 0, 0, "rgba(86,180,233,0.32)", "#7cc7f0", true),
         );
         pkAnnotations.forEach((a) =>
-          pkDrawSelBand(a, "annot", padT + 1, 6, "rgba(214,140,255,0.18)", "#d68cff"),
+          pkDrawSelBand(a, "annot", 0, 0, "rgba(214,140,255,0.30)", "#d68cff", true),
         );
         // Live preview of a new manual annotation being dragged out
         if (pkAnnotDrawing) {
@@ -10590,6 +11623,43 @@
           } else ctx.lineTo(x, y);
         }
         ctx.stroke();
+
+        // The curve belongs to one envelope. If the envelope was recomputed
+        // (new smoothing, preset, re-detection) while the floor is on, rebuild
+        // it for the new envelope instead of letting it vanish.
+        if (pkFloor && pkFloor.env !== pkEnv)
+          pkFloor = pkComputeFloor(pkEnv, pkFloor.winMs);
+
+        // Local noise floor: bright green, over a dark edge so it reads on
+        // both the dark background and the pale envelope line.
+        if (pkFloor && pkFloor.env === pkEnv) {
+          const trace = () => {
+            ctx.beginPath();
+            let f = true;
+            for (let i = iStart; i <= iEnd; i += step) {
+              const x = tX(i / sampleRate),
+                y = aY(pkFloor.curve[i]);
+              if (f) {
+                ctx.moveTo(x, y);
+                f = false;
+              } else ctx.lineTo(x, y);
+            }
+          };
+          ctx.save();
+          ctx.lineJoin = "round";
+          ctx.lineCap = "round";
+          trace();
+          ctx.strokeStyle = "rgba(0,0,0,0.75)";
+          ctx.lineWidth = 5;
+          ctx.stroke();
+          trace();
+          ctx.strokeStyle = "#39ff14";
+          ctx.lineWidth = 2.2;
+          ctx.shadowColor = "rgba(57,255,20,0.9)";
+          ctx.shadowBlur = 8;
+          ctx.stroke();
+          ctx.restore();
+        }
 
         // Envelope peak markers (auto = orange dot; manual = cyan ring with white core)
         const hasSel = pkSelection.size > 0;
@@ -11604,7 +12674,7 @@
           mode === "add"
             ? "Add mode · click on the plot to add a envelope peak (snaps to the envelope) · drag still pans"
             : mode === "annotate"
-              ? "Annotate mode · drag on the plot to draw a manual selection · edge handles resize it in Select mode · Del to delete"
+              ? "Draw Selections mode · drag on the plot to draw a manual selection · edge handles resize it in Select mode · Del to delete"
               : "Select mode · click selects a envelope peak or a detection/annotation · shift-drag to box-select (or shift-click) · drag an edge to resize · hold S and click a detection to split it · Ctrl-click to multi-select, Ctrl+M to merge · use the panel for actions · Del to delete selection";
         const canvas = $("pkCanvas");
         if (pkEnv) canvas.style.cursor = mode === "add" ? "copy" : "crosshair";
@@ -11843,11 +12913,34 @@
                 pkSelection.add(p);
             });
           }
+          // Detections / selections the band encloses (or mostly covers in
+          // time) join the multi-selection too.
+          let selN = 0;
+          if (pkDidBand && geo) {
+            const t0 = geo.vStart + ((Math.min(pkBand.x0, pkBand.x1) - geo.padL) / geo.pw) * geo.vDur;
+            const t1 = geo.vStart + ((Math.max(pkBand.x0, pkBand.x1) - geo.padL) / geo.pw) * geo.vDur;
+            [["det", pkAmpDetections], ["annot", pkAnnotations]].forEach(([list, arr]) =>
+              arr.forEach((it) => {
+                const ov = Math.min(it.end, t1) - Math.max(it.start, t0);
+                if (ov > 0 && ov >= 0.5 * (it.end - it.start)) {
+                  pkSelAdd(list, it.id);
+                  selN++;
+                }
+              }),
+            );
+            if (selN) pkUpdateSelUi();
+          }
           pkBand = null;
           canvas.style.cursor = pkEditMode === "add" ? "copy" : "crosshair";
+          const nSel = pkSelSelected ? 1 + pkSelExtra.length : 0;
           pkLiveUpdate(
-            pkSelection.size
-              ? pkSelection.size + " selected (use panel for actions)"
+            pkSelection.size || nSel
+              ? [
+                  pkSelection.size ? pkSelection.size + " envelope peaks" : "",
+                  nSel ? nSel + " detections/selections" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" + ") + " selected (use panel for actions)"
               : null,
           );
           return;
@@ -11889,6 +12982,11 @@
                 ? pkSelection.size + " selected"
                 : "selection cleared",
             );
+          } else {
+            // No envelope peak under the pointer: shift-click toggles the
+            // detection/selection under it instead.
+            const hit = pkSelBodyHit(e.clientX, e.clientY);
+            if (hit) pkSelToggle(hit.list, hit.id);
           }
           return;
         }
@@ -11987,6 +13085,8 @@
           !isTyping &&
           pkSelection.size
         ) {
+          // Envelope peaks AND any detections/selections picked alongside them.
+          pkDeleteSelectedGroup();
           pkBulkRemove();
           e.preventDefault();
           return;
@@ -12000,7 +13100,7 @@
           !pkSelection.size &&
           pkSelSelected
         ) {
-          pkDeleteSelection(pkSelSelected.list, pkSelSelected.id);
+          pkDeleteSelectedGroup();
           e.preventDefault();
           return;
         }
@@ -12302,6 +13402,7 @@
             " ms: raise 'Max envelope peak gap' above that, or lower 'Min envelope peaks/pulse'.";
           $("pkStatus").textContent = "⚠ " + msg;
           log(msg, "warn");
+          showToast("⚠ " + msg, 6000);
           return;
         }
 
@@ -12345,6 +13446,14 @@
             species: currentSpecies,
             country: currentCountry,
             locality: currentLocality,
+            rec_date: currentDate,
+            rec_time: currentTime,
+            latitude: metaNum(currentLat),
+            longitude: metaNum(currentLon),
+            elevation_m: metaNum(currentElev),
+            recorder: currentRecorder,
+            microphone: currentMicrophone,
+            accessories: currentAccessories,
             motif_id: e.mi + 1,
             pulse_id: e.ti + 1,
             env_peak_id: e.pi + 1,
@@ -12463,6 +13572,14 @@
               species: currentSpecies,
               country: currentCountry,
               locality: currentLocality,
+              rec_date: currentDate,
+              rec_time: currentTime,
+              latitude: metaNum(currentLat),
+              longitude: metaNum(currentLon),
+              elevation_m: metaNum(currentElev),
+              recorder: currentRecorder,
+              microphone: currentMicrophone,
+              accessories: currentAccessories,
               motif_id: mi + 1,
               pulse_id: ti + 1,
               pulse_start: round4(start),
@@ -12586,6 +13703,14 @@
             species: currentSpecies,
             country: currentCountry,
             locality: currentLocality,
+            rec_date: currentDate,
+            rec_time: currentTime,
+            latitude: metaNum(currentLat),
+            longitude: metaNum(currentLon),
+            elevation_m: metaNum(currentElev),
+            recorder: currentRecorder,
+            microphone: currentMicrophone,
+            accessories: currentAccessories,
             motif_id: mi + 1,
             motif_start: round4(mStart),
             motif_end: round4(mEnd),
@@ -12634,6 +13759,14 @@
               species: currentSpecies,
               country: currentCountry,
               locality: currentLocality,
+              rec_date: currentDate,
+              rec_time: currentTime,
+              latitude: metaNum(currentLat),
+              longitude: metaNum(currentLon),
+              elevation_m: metaNum(currentElev),
+              recorder: currentRecorder,
+              microphone: currentMicrophone,
+              accessories: currentAccessories,
               seq_id: si + 1,
               seq_start: round4(sStart),
               seq_end: round4(sEnd),
@@ -12652,6 +13785,14 @@
           species: currentSpecies,
           country: currentCountry,
           locality: currentLocality,
+          rec_date: currentDate,
+          rec_time: currentTime,
+          latitude: metaNum(currentLat),
+          longitude: metaNum(currentLon),
+          elevation_m: metaNum(currentElev),
+          recorder: currentRecorder,
+          microphone: currentMicrophone,
+          accessories: currentAccessories,
           n_env_peaks: pkEnvPeakData.length,
           n_pulses: pkPulseData.length,
           n_motifs: pkMotifData.length,
@@ -12762,6 +13903,418 @@
           pkMotifData.length +
           " motifs" +
           resNote;
+        pkDrawEnvelope();
+      }
+
+      // ── Pulses without peaks ─────────────────────────────────────────────
+      // When envelope-peak detection is not used, a pulse is simply a time span:
+      // an amplitude detection, or a drawn / imported selection of type Pulse.
+      function pkPulseSpans() {
+        const spans = [
+          ...pkAmpDetections.map((d) => ({ start: d.start, end: d.end })),
+          ...pkAnnotations
+            .filter((a) => a.unit === "pulse")
+            .map((a) => ({ start: a.start, end: a.end })),
+        ].filter((p) => p.end > p.start);
+        spans.sort((a, b) => a.start - b.start);
+        return spans;
+      }
+
+      // Import the Pulses table of a Temporal Analysis export as Pulse selections.
+      async function pkImportPulsesFile(file) {
+        if (!file) return;
+        // Every outcome is reported with a toast: the log panel is folded away
+        // by default, so a log-only message looked like "nothing happened".
+        const fail = (msg) => {
+          log(msg, "warn");
+          showToast("⚠ " + msg, 6000);
+        };
+        if (!rawSamples || !pkEnv) {
+          fail("Load the matching audio before importing pulses.");
+          return;
+        }
+        let workbook;
+        try {
+          workbook = await _readXlsx(new Uint8Array(await file.arrayBuffer()));
+        } catch (err) {
+          fail("Could not read Excel file: " + err.message);
+          return;
+        }
+        // Pulses sheet (pulse_start / pulse_end), or any sheet with plain
+        // start / end columns (e.g. the Selections export), or Raven-style
+        // begin / end time columns.
+        const key = (row, ...names) =>
+          Object.keys(row).find((k) => names.includes(k.toLowerCase().trim()));
+        const PAIRS = [
+          [["pulse_start", "train_start"], ["pulse_end", "train_end"]],
+          [["start", "start_s", "begin time (s)"], ["end", "end_s", "end time (s)"]],
+        ];
+        let rows = null,
+          sK,
+          eK;
+        outer: for (const pair of PAIRS) {
+          for (const name of Object.keys(workbook)) {
+            const r = workbook[name];
+            if (!r || !r.length) continue;
+            const s = key(r[0], ...pair[0]),
+              e = key(r[0], ...pair[1]);
+            if (s && e) {
+              rows = r;
+              sK = s;
+              eK = e;
+              break outer;
+            }
+          }
+        }
+        if (!rows) {
+          fail("No pulse table found in that workbook (need pulse_start and pulse_end columns).");
+          return;
+        }
+        const iK = key(rows[0], "pulse_id", "train_id", "selection");
+        pkSnapshot("import pulses");
+        let added = 0,
+          skipped = 0,
+          outside = 0;
+        rows.forEach((r, i) => {
+          const start = parseFloat(r[sK]),
+            end = parseFloat(r[eK]);
+          if (!isFinite(start) || !isFinite(end) || end <= start || start < 0) {
+            skipped++;
+            return;
+          }
+          if (start > duration) {
+            outside++;
+            return;
+          }
+          const e = Math.min(end, duration);
+          if (pkAnnotations.some((a) => Math.abs(a.start - start) < 1e-6 && Math.abs(a.end - e) < 1e-6)) {
+            skipped++;
+            return;
+          }
+          pkAnnotations.push({
+            id: pkNextSelId++,
+            start,
+            end: e,
+            label: "pulse " + (iK != null && r[iK] !== "" && r[iK] != null ? r[iK] : i + 1),
+            unit: "pulse",
+            maxAmp: pkMaxEnvIn(start, e),
+            boundary: null,
+          });
+          added++;
+        });
+        pkUpdateSelUi();
+        pkDrawEnvelope();
+        const msg =
+          "Imported " + added + " pulse(s)" +
+          (skipped ? ", " + skipped + " skipped (invalid or already present)" : "") +
+          (outside ? ", " + outside + " beyond the end of this recording (is it the matching audio?)" : "");
+        log(msg, added ? "ok" : "warn");
+        showToast((added ? "✓ " : "⚠ ") + msg, added ? 3500 : 6000);
+      }
+
+      // Send the motifs to the Annotate module as selections labelled with the
+      // recording's Species.
+      // Motifs come from the envelope peaks when there are any, otherwise from
+      // the pulse selections (amplitude detections, drawn or imported pulses).
+      // A repeat Apply replaces what the previous one added.
+      function pkApplyMotifsToAnnotate() {
+        if (!rawSamples) {
+          log("Load audio first", "warn");
+          return;
+        }
+        let spans = [];
+        if (pkEnvPeaks.length) {
+          const pad = pkPulsePadSec();
+          pkComputeGroups().motifs.forEach((mo) => {
+            const pk = mo.flat();
+            spans.push({
+              start: pkClampT(pk[0].time - pad),
+              end: pkClampT(pk[pk.length - 1].time + pad),
+            });
+          });
+        } else {
+          pkGroupPulseSpans(pkPulseSpans()).motifs.forEach((mo) => spans.push(pkMotifSpan(mo)));
+        }
+        if (!spans.length) {
+          const msg = "No motifs to send. Detect envelope peaks, or run the Amplitude Detector / draw or import pulses first.";
+          log(msg, "warn");
+          showToast("⚠ " + msg, 6000);
+          return;
+        }
+        // In Annotate a selection's label is its species, so the recording's
+        // Species (Recording metadata) is carried over; "motif" only when none
+        // has been set.
+        const speciesLabel = (currentSpecies || "").trim() || "motif";
+        annotSnapshot("apply motifs to Annotate");
+        annotations = annotations.filter((a) => !a.fromTemporalMotif);
+        const nyq = sampleRate / 2;
+        let lastId = null;
+        let banded = 0;
+        spans.forEach((sp) => {
+          lastId = nextAid++;
+          // Frequency-delimit each motif by the Annotate module's amplitude
+          // threshold on its own power spectrum (full range if that fails).
+          let band = null;
+          try {
+            if (typeof window.anBandForSpan === "function")
+              band = window.anBandForSpan(sp.start, sp.end);
+          } catch (e) {}
+          if (band) banded++;
+          annotations.push({
+            start: sp.start,
+            end: sp.end,
+            fLo: band ? band[0] : 0,
+            fHi: band ? band[1] : nyq,
+            label: speciesLabel,
+            id: lastId,
+            fromTemporalMotif: true,
+          });
+        });
+        selAid = lastId;
+        refreshAnnotList();
+        render();
+        renderMinimap();
+        switchMainTab("annotate", $("maintab-annotate"));
+        log("Sent " + spans.length + " motif(s) to the Annotate module (" + banded + " frequency-delimited by the power-spectrum threshold)", "ok");
+      }
+
+      async function pkConfirmFromPulses() {
+        const spans = pkPulseSpans();
+        if (!pkEnv || !spans.length) {
+          const msg = "No pulses to measure. Run the Amplitude Detector, draw selections of type Pulse, or use Import Pulses.";
+          log(msg, "warn");
+          showToast("⚠ " + msg, 6000);
+          return;
+        }
+        await withBusy(
+          "Computing metrics from pulses…",
+          (progress) => _pkConfirmPulseStages(spans, progress),
+          { cancellable: true },
+        );
+        if (busyWasCancelled) {
+          pkEnvPeakData = [];
+          pkPulseData = [];
+          pkMotifData = [];
+          pkMotifSeqData = [];
+          pkSummaryData = null;
+          pkConfirmed = false;
+          $("pkResults").style.display = "none";
+          $("pkStatus").textContent = "Metrics cancelled — nothing was computed.";
+        }
+      }
+
+      // Group pulse spans into motifs (consecutive pulses no further apart than
+      // Max pulse gap) and, if asked, motifs into sequences (Max motif gap).
+      const pkMotifSpan = (mo) => ({ start: mo[0].start, end: mo[mo.length - 1].end });
+      function pkGroupPulseSpans(spans) {
+        if (!spans.length) return { motifs: [], seqs: [] };
+        const maxPulseGap = (parseFloat($("pkMaxPulseGap").value) || 100) / 1000;
+        const maxMotifGap = (parseFloat($("pkMaxMotifGap").value) || 350) / 1000;
+        const motifs = [];
+        let cur = [spans[0]];
+        for (let i = 1; i < spans.length; i++) {
+          if (spans[i].start - spans[i - 1].end > maxPulseGap) {
+            motifs.push(cur);
+            cur = [spans[i]];
+          } else cur.push(spans[i]);
+        }
+        motifs.push(cur);
+        const seqs = [];
+        if ($("pkMotifSeq").checked) {
+          let sc = [motifs[0]];
+          for (let i = 1; i < motifs.length; i++) {
+            if (pkMotifSpan(motifs[i]).start - pkMotifSpan(motifs[i - 1]).end > maxMotifGap) {
+              seqs.push(sc);
+              sc = [motifs[i]];
+            } else sc.push(motifs[i]);
+          }
+          seqs.push(sc);
+        }
+        return { motifs, seqs };
+      }
+
+      async function _pkConfirmPulseStages(spans, progress) {
+        const useMotifSeq = $("pkMotifSeq").checked;
+        const { motifs, seqs } = pkGroupPulseSpans(spans);
+        const mSpan = pkMotifSpan;
+
+        const meta = () => ({
+          source_file: pkSourceFile(),
+          temp_c: currentTempC,
+          specimen_id: currentSpecimenId,
+          species: currentSpecies,
+          country: currentCountry,
+          locality: currentLocality,
+          rec_date: currentDate,
+          rec_time: currentTime,
+          latitude: metaNum(currentLat),
+          longitude: metaNum(currentLon),
+          elevation_m: metaNum(currentElev),
+          recorder: currentRecorder,
+          microphone: currentMicrophone,
+          accessories: currentAccessories,
+        });
+        const noFreq = {
+          peak_freq_envpeak_mean_khz: null,
+          peak_freq_envpeak_sd_khz: null,
+          peak_freq_envpeak_min_khz: null,
+          peak_freq_envpeak_max_khz: null,
+        };
+
+        // The amplitude within a pulse, sampled every 1 ms from the envelope.
+        const nEnv = pkEnv.length;
+        const sampleAmps = (start, end) => {
+          const out = [];
+          const k = Math.floor((end - start) / 0.001 + 1e-9);
+          for (let j = 0; j <= k; j++) {
+            const i = Math.round((start + j * 0.001) * sampleRate);
+            out.push(pkEnv[Math.min(nEnv - 1, Math.max(0, i))]);
+          }
+          return out;
+        };
+
+        progress("Pulse metrics…", 0.2);
+        await busyTick();
+        pkEnvPeakData = [];
+        pkPulseData = [];
+        const pulseRes = pkPulseSpecRes();
+        for (let mi = 0; mi < motifs.length; mi++) {
+          const motif = motifs[mi];
+          for (let ti = 0; ti < motif.length; ti++) {
+            await busyYield();
+            const { start, end } = motif[ti];
+            const amps = sampleAmps(start, end);
+            // Dynamic excursion: sum of |diff| of the 1 ms amplitude samples.
+            // Temporal excursion needs envelope peaks, so it is not calculated.
+            let dynExc = 0;
+            for (let i = 1; i < amps.length; i++) dynExc += Math.abs(amps[i] - amps[i - 1]);
+            const next = motif[ti + 1];
+            pkPulseData.push({
+              ...meta(),
+              motif_id: mi + 1,
+              pulse_id: ti + 1,
+              pulse_start: round4(start),
+              pulse_end: round4(end),
+              pulse_dur_ms: round4((end - start) * 1000),
+              n_env_peaks: null,
+              env_peak_rate_eps: null,
+              mean_amp: round4(mean(amps)),
+              max_amp: round4(Math.max(...amps)),
+              tem_exc: null,
+              dyn_exc: round4(dynExc),
+              pulse_gap_ms: next ? round4((next.start - end) * 1000) : null,
+              pulse_period_ms: next ? round4((next.start - start) * 1000) : null,
+              ...pkSpecCols(computeSpectralMetrics(start, end, pulseRes)),
+              ...noFreq,
+              freq_spread: null,
+            });
+          }
+        }
+
+        progress("Motif metrics…", 0.75);
+        await busyTick();
+        pkMotifData = [];
+        const motifRes = pkMotifSpecRes();
+        motifs.forEach((motif, mi) => {
+          const { start: mStart, end: mEnd } = mSpan(motif);
+          const mDur = mEnd - mStart;
+          const nPulses = motif.length;
+          const onsetSpan = nPulses > 1 ? motif[nPulses - 1].start - motif[0].start : 0;
+          const myPulses = pkPulseData.filter((t) => t.motif_id === mi + 1);
+          const sumDur = myPulses.reduce((a, t) => a + t.pulse_dur_ms, 0);
+          const propsSyl = [];
+          myPulses.forEach((t, i) => {
+            propsSyl.push(t.pulse_dur_ms / 1000 / mDur);
+            if (t.pulse_gap_ms !== null && i < myPulses.length - 1)
+              propsSyl.push(t.pulse_gap_ms / 1000 / mDur);
+          });
+          const syl = pkPatternComplexity(propsSyl, nPulses, mDur);
+          const nextMotif = motifs[mi + 1];
+          pkMotifData.push({
+            ...meta(),
+            motif_id: mi + 1,
+            motif_start: round4(mStart),
+            motif_end: round4(mEnd),
+            motif_dur_s: round4(mDur),
+            motif_gap_s: nextMotif ? round4(mSpan(nextMotif).start - mEnd) : null,
+            motif_period_s: nextMotif ? round4(mSpan(nextMotif).start - mStart) : null,
+            n_pulses: nPulses,
+            pulse_rate_pps: nPulses > 1 && onsetSpan > 0 ? round4((nPulses - 1) / onsetSpan) : null,
+            duty_cycle_pct: mDur > 0 ? round4((sumDur / 1000 / mDur) * 100) : 0,
+            tem_exc_mean: null,
+            dyn_exc_mean: round4(mean(myPulses.map((t) => t.dyn_exc))),
+            props_ent_syl: syl.ent,
+            props_cv_syl: syl.cv,
+            pci_syl: syl.pci,
+            // The agnostic variant divides the motif at every envelope peak.
+            props_ent_agn: null,
+            props_cv_agn: null,
+            pci_agn: null,
+            ...pkSpecCols(computeSpectralMetrics(mStart, mEnd, motifRes)),
+            ...pkMotifSpecMeans(mi + 1),
+            ...noFreq,
+          });
+        });
+
+        pkMotifSeqData = [];
+        seqs.forEach((seq, si) => {
+          const sStart = mSpan(seq[0]).start,
+            sEnd = mSpan(seq[seq.length - 1]).end;
+          const nextSeq = seqs[si + 1];
+          pkMotifSeqData.push({
+            ...meta(),
+            seq_id: si + 1,
+            seq_start: round4(sStart),
+            seq_end: round4(sEnd),
+            seq_dur_s: round4(sEnd - sStart),
+            seq_gap_s: nextSeq ? round4(mSpan(nextSeq[0]).start - sEnd) : null,
+            n_motifs: seq.length,
+          });
+        });
+
+        const nz = (a) => a.filter((v) => v != null);
+        const periods = nz(pkMotifData.map((r) => r.motif_period_s)).filter((v) => v > 0).map((v) => 1 / v);
+        pkSummaryData = {
+          ...meta(),
+          n_env_peaks: 0,
+          n_pulses: pkPulseData.length,
+          n_motifs: pkMotifData.length,
+          pci_syl_mean: round4(mean(pkMotifData.map((r) => r.pci_syl))),
+          pci_syl_sd: round4(sd(pkMotifData.map((r) => r.pci_syl))),
+          pci_agn_mean: null,
+          pci_agn_sd: null,
+          duty_cycle_mean: round4(mean(pkMotifData.map((r) => r.duty_cycle_pct))),
+          duty_cycle_sd: round4(sd(pkMotifData.map((r) => r.duty_cycle_pct))),
+          pulse_rate_pps_mean: round4(mean(nz(pkMotifData.map((r) => r.pulse_rate_pps)))),
+          pulse_rate_pps_sd: round4(sd(nz(pkMotifData.map((r) => r.pulse_rate_pps)))),
+          echeme_rate_per_s: periods.length ? round4(mean(periods)) : null,
+          echeme_rate_per_s_sd: periods.length > 1 ? round4(sd(periods)) : null,
+          motif_dur_mean: round4(mean(pkMotifData.map((r) => r.motif_dur_s))),
+          motif_dur_sd: round4(sd(pkMotifData.map((r) => r.motif_dur_s))),
+          n_pulses_per_motif_mean: round4(mean(pkMotifData.map((r) => r.n_pulses))),
+          n_pulses_per_motif_sd: round4(sd(pkMotifData.map((r) => r.n_pulses))),
+          pulse_dur_mean: round4(mean(pkPulseData.map((t) => t.pulse_dur_ms))),
+          pulse_dur_sd: round4(sd(pkPulseData.map((t) => t.pulse_dur_ms))),
+          pulse_gap_mean: round4(mean(nz(pkPulseData.map((t) => t.pulse_gap_ms)))),
+          pulse_gap_sd: round4(sd(nz(pkPulseData.map((t) => t.pulse_gap_ms)))),
+          env_peaks_per_pulse_mean: null,
+          env_peaks_per_pulse_sd: null,
+          env_peak_rate_mean: null,
+          env_peak_rate_sd: null,
+          tem_exc_mean: null,
+          tem_exc_sd: null,
+          dyn_exc_mean: round4(mean(pkPulseData.map((t) => t.dyn_exc))),
+          dyn_exc_sd: round4(sd(pkPulseData.map((t) => t.dyn_exc))),
+        };
+
+        pkConfirmed = true;
+        if ($("btnExportTextReport")) $("btnExportTextReport").disabled = false;
+        $("pkResults").style.display = "";
+        $("pkTabBtnMotSeq").style.display = useMotifSeq ? "" : "none";
+        pkShowTable("pulse");
+        pkRenderSummaryCards();
+        $("pkStatus").textContent =
+          "✓ from pulses: " + pkPulseData.length + " pulses | " + pkMotifData.length + " motifs";
         pkDrawEnvelope();
       }
 
@@ -12936,7 +14489,7 @@
         ].filter(([, data]) => data && data.length);
 
         if (!sheets.length) {
-          log("Nothing to export — run Confirm & Compute first.", "warn");
+          log("Nothing to export — compute the metrics first.", "warn");
           return;
         }
 
@@ -13650,9 +15203,13 @@
         }
       }
 
+      // Clears the detection results (envelope peaks, pulses, motifs, tables)
+      // and the current selection. The envelope itself stays on screen: it is
+      // the signal, not a detection, and is only replaced by a new detection or
+      // a new recording.
       function pkClear() {
-        pkEnv = null;
         pkEnvPeaks = [];
+        pkHasDetected = false;
         pkPulses = [];
         pkMotifs = [];
         pkEnvPeakData = [];
@@ -13670,147 +15227,140 @@
         const applyBtn = $("btnPkApplySpectral");
         if (applyBtn) applyBtn.disabled = true;
         $("pkStatus").textContent = "Cleared";
-        const canvas = $("pkCanvas");
-        const ctx = canvas.getContext("2d");
-        ctx.fillStyle = "#0d1117";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        pkFrozenGroups = false;
+        if (typeof pkResetUndo === "function") pkResetUndo();
+        const dropBtn = $("btnPkDropUnassigned");
+        if (dropBtn) dropBtn.disabled = true;
+        pkDrawEnvelope();
       }
 
+      // The single "Apply to Spectral Analysis": sends pulses (or motifs, per
+      // "Apply as") to Spectral Analysis as selections, whichever way they were
+      // found — envelope peaks, amplitude detections, drawn or imported pulses.
+      // If some detections/selections are selected on the plot, only those go.
+      // A repeat Apply replaces what the previous one added, so editing and
+      // re-applying updates the selections instead of piling up duplicates.
       function pkApplyDetectionsToSpectral() {
         if (!rawSamples) {
           log("Load audio first", "warn");
           return;
         }
-        if (!pkEnvPeaks.length) {
-          log("No envelope peak detections to apply", "warn");
-          return;
-        }
-
         const kind = $("pkApplySelectionType")?.value || "pulse";
-        const minEnvPeaks = parseInt($("pkMinEnvPeaks").value) || 3;
-        const pulses = pkBuildPulses().filter((t) => t.length >= minEnvPeaks);
-        if (!pulses.length) {
-          log(
-            "No pulse selections available for current envelope peak settings.",
-            "warn",
-          );
-          return;
+        const spans = []; // {start, end, label}
+        const picked = pkSelSelected ? [pkSelSelected, ...pkSelExtra] : [];
+        if (picked.length) {
+          const keys = new Set(picked.map((g) => g.list + ":" + g.id));
+          pkSortedSelections()
+            .filter((it) => keys.has(it.list + ":" + it.id))
+            .forEach((it) =>
+              spans.push({
+                start: it.start,
+                end: it.end,
+                label:
+                  it.list === "det"
+                    ? "detection " + it.n
+                    : it.label || (PK_SEL_UNIT_LABEL[it.unit] || it.unit || "selection") + " " + it.n,
+              }),
+            );
+        } else {
+          if (pkEnvPeaks.length) {
+            const minEnvPeaks = parseInt($("pkMinEnvPeaks").value) || 3;
+            const pulses = pkBuildPulses().filter((t) => t.length >= minEnvPeaks);
+            const selections =
+              kind === "motif"
+                ? pkFrozenGroups
+                  ? pkFrozenMotifs(pkBuildPulses(), pkReadParams().minEnvPeaks)
+                  : pkGroupMotifs(pulses, parseFloat($("pkMaxPulseGap").value) || 100)
+                : pulses;
+            const pad = pkPulsePadSec();
+            selections.forEach((selection, i) => {
+              // A pulse is an array of envelope peaks; a motif an array of pulses.
+              const isMotif = Array.isArray(selection[0]);
+              const first = isMotif ? selection[0][0] : selection[0];
+              const lastGroup = selection[selection.length - 1];
+              const last = isMotif ? lastGroup[lastGroup.length - 1] : lastGroup;
+              spans.push({
+                start: pkClampT(first.time - pad),
+                end: pkClampT(last.time + pad),
+                label: kind + " " + (i + 1),
+              });
+            });
+          }
+          const ps = pkPulseSpans();
+          if (kind === "motif")
+            pkGroupPulseSpans(ps).motifs.forEach((mo, i) =>
+              spans.push({ ...pkMotifSpan(mo), label: "motif " + (i + 1) }),
+            );
+          else ps.forEach((p, i) => spans.push({ ...p, label: "pulse " + (i + 1) }));
         }
-
-        const selections =
-          kind === "motif"
-            ? pkFrozenGroups
-              ? pkFrozenMotifs(pkBuildPulses(), pkReadParams().minEnvPeaks)
-              : pkGroupMotifs(pulses, parseFloat($("pkMaxPulseGap").value) || 100)
-            : pulses;
-        if (!selections.length) {
-          log(
-            "No " +
-              kind +
-              " selections could be built from current detections.",
-            "warn",
-          );
+        if (!spans.length) {
+          const msg =
+            "Nothing to apply. Detect envelope peaks, run the Amplitude Detector, or draw / import pulses first.";
+          log(msg, "warn");
+          showToast("⚠ " + msg, 6000);
           return;
         }
 
         annotSnapshot("apply " + kind + " selections");
-
-        // Replace whatever this function added last time — otherwise
-        // editing detections (splitting/joining/deleting envelope peaks) and
-        // re-applying just piles fresh, correctly-numbered selections on
-        // top of the stale ones from before the edit, instead of updating
-        // them. Selections created some other way (manual drag-select)
-        // are untouched since only previously-applied ids are removed.
-        if (pkAppliedAnnotationIds.length) {
-          const stale = new Set(pkAppliedAnnotationIds);
-          annotations = annotations.filter((a) => !stale.has(a.id));
-          pkAppliedAnnotationIds = [];
-        }
-
-        const nyq = rawSamples ? sampleRate / 2 : 20000;
+        // Replace what the last Apply added; selections made any other way stay.
+        annotations = annotations.filter((a) => !a.fromTemporalSel);
+        const nyq = sampleRate / 2;
         let added = 0,
-          skipped = 0;
-        const addedIds = [];
-        const pad = pkPulsePadSec();
-        selections.forEach((selection, i) => {
-          // selection is a pulse (array of envelope peaks) or, for kind="motif", a
-          // motif (array of pulses). Resolve the first/last TOOTH either way,
-          // then pad each edge to match the padded pulse/motif extent.
-          const isMotif = Array.isArray(selection[0]);
-          const firstEnvPeak = isMotif ? selection[0][0] : selection[0];
-          const lastGroup = selection[selection.length - 1];
-          const lastEnvPeak = isMotif
-            ? lastGroup[lastGroup.length - 1]
-            : lastGroup;
-          const start = pkClampT(firstEnvPeak.time - pad);
-          const end = pkClampT(lastEnvPeak.time + pad);
+          skipped = 0,
+          lastId = null;
+        spans.forEach((sp) => {
           if (
             annotations.find(
-              (x) =>
-                Math.abs(x.start - start) < 1e-6 &&
-                Math.abs(x.end - end) < 1e-6,
+              (x) => Math.abs(x.start - sp.start) < 1e-6 && Math.abs(x.end - sp.end) < 1e-6,
             )
           ) {
             skipped++;
             return;
           }
-          const aid = nextAid++;
+          lastId = nextAid++;
           annotations.push({
-            start,
-            end,
+            start: sp.start,
+            end: sp.end,
             fLo: 0,
             fHi: nyq,
-            label: kind + " " + (i + 1),
-            id: aid,
+            label: sp.label,
+            id: lastId,
+            // Spectral Analysis only: hidden from the Annotate module.
+            fromTemporalSel: "sel",
           });
-          addedIds.push(aid);
           added++;
         });
-
-        pkAppliedAnnotationIds = addedIds.slice();
-
-        if (addedIds.length) {
-          selAid = addedIds[addedIds.length - 1];
+        if (lastId !== null) {
+          selAid = lastId;
           const a = annotations.find((x) => x.id === selAid);
           if (a) {
             const selDur = Math.max(0.05, a.end - a.start);
-            const targetDur = Math.min(
-              duration,
-              Math.max(viewDur, selDur * 1.5),
-            );
-            const centerStart = a.start - (targetDur - (a.end - a.start)) / 2;
+            const targetDur = Math.min(duration, Math.max(viewDur, selDur * 1.5));
             viewDur = targetDur;
-            viewStart = Math.max(0, Math.min(centerStart, duration - viewDur));
+            viewStart = Math.max(
+              0,
+              Math.min(a.start - (targetDur - (a.end - a.start)) / 2, duration - viewDur),
+            );
           }
         }
-
-        // Rebuild the selection list UI; this also enables the Spectral
-        // Metrics button (btnComputeSpectral) now that selections exist, so the
-        // user can compute spectral metrics on the imported selections.
         refreshAnnotList();
         render();
         renderMinimap();
         switchMainTab("analyzer", $("maintab-analyzer"));
         setTool("select");
-        // Force redraw after tab switch/layout
         setTimeout(render, 50);
+        log(
+          added
+            ? "Applied " + added + " " + kind + " selection(s) to Spectral Analysis" + (skipped ? " (" + skipped + " skipped as duplicates)" : "")
+            : "Nothing new to apply — those spans are already selections in Spectral Analysis.",
+          added ? "ok" : "warn",
+        );
+      }
 
-        if (added) {
-          log(
-            "Applied " +
-              added +
-              " " +
-              kind +
-              " selections to Spectral Analysis" +
-              (skipped ? " (" + skipped + " skipped)" : ""),
-            "ok",
-          );
-        } else {
-          log(
-            "No new " + kind + " selections were added to Spectral Analysis.",
-            "warn",
-          );
-        }
+      // Enabled whenever anything could be applied.
+      function pkRefreshApplyBtn() {
+        const b = $("btnPkApplySpectral");
+        if (b) b.disabled = !(pkEnvPeaks.length || pkPulseSpans().length);
       }
 
       // Enable Detect Envelope peaks button when audio loads
@@ -13903,6 +15453,11 @@
         train_gap_sd: "pulse_gap_sd",
         train_period_ms: "pulse_period_ms",
         train_rate_tps: "pulse_rate_pps",
+        // Before 0.2.0 the single pulse-based PCI had no suffix; it is now the
+        // _syl one (the _agn twin was added alongside it).
+        props_ent: "props_ent_syl",
+        props_cv: "props_cv_syl",
+        pci: "pci_syl",
         // column names from before the aggregate word moved ahead of the unit
         peak_freq_khz_tmean: "peak_freq_pulse_mean_khz",
         bw_20db_khz_tmean: "bw_20db_pulse_mean_khz",
@@ -14095,6 +15650,14 @@
           kl === "species" ||
           kl === "country" ||
           kl === "locality" ||
+          kl === "rec_date" ||
+          kl === "rec_time" ||
+          kl === "latitude" ||
+          kl === "longitude" ||
+          kl === "elevation_m" ||
+          kl === "recorder" ||
+          kl === "microphone" ||
+          kl === "accessories" ||
           kl === "selection" ||
           kl === "n" ||
           // Bookkeeping stamped onto selected rows: which position the

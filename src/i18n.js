@@ -246,8 +246,8 @@
         "Baja cada frecuencia en este porcentaje solo para ESCUCHAR — el audio almacenado, las mediciones, las exportaciones y los gráficos no se ven afectados. A diferencia de Velocidad, esto mantiene el tempo: 0 = desactivado.",
       "Select/Seek (S)":
         "Seleccionar/Buscar (S)",
-      "Draw annotation (A)":
-        "Dibujar anotación (A)",
+      "Draw selection (A)":
+        "Dibujar selección (A)",
       "Pan/scroll (H)":
         "Desplazar (H)",
       "Ignore the vertical drag: annotations cover the whole frequency axis, so you only aim at the time axis.":
@@ -715,8 +715,8 @@
         "Abbassa ogni frequenza di questa percentuale solo per l'ASCOLTO — l'audio memorizzato, le misurazioni, le esportazioni e i grafici restano invariati. A differenza di Velocità, questo mantiene il tempo: 0 = disattivato.",
       "Select/Seek (S)":
         "Seleziona/Cerca (S)",
-      "Draw annotation (A)":
-        "Disegna annotazione (A)",
+      "Draw selection (A)":
+        "Disegna selezione (A)",
       "Pan/scroll (H)":
         "Scorri (H)",
       "Ignore the vertical drag: annotations cover the whole frequency axis, so you only aim at the time axis.":
@@ -1184,8 +1184,8 @@
         "Reduz cada frequência nesta porcentagem apenas para ESCUTA — o áudio armazenado, as medições, as exportações e os gráficos permanecem inalterados. Ao contrário de Velocidade, isso mantém o andamento: 0 = desativado.",
       "Select/Seek (S)":
         "Selecionar/Buscar (S)",
-      "Draw annotation (A)":
-        "Desenhar anotação (A)",
+      "Draw selection (A)":
+        "Desenhar seleção (A)",
       "Pan/scroll (H)":
         "Deslocar (H)",
       "Ignore the vertical drag: annotations cover the whole frequency axis, so you only aim at the time axis.":
@@ -1523,11 +1523,12 @@
     });
 
     document.documentElement.lang = lang;
-    const sel = document.getElementById("langSelect");
-    if (sel) sel.value = lang;
+    document.querySelectorAll("[data-lang]").forEach((b) => {
+      b.classList.toggle("on", b.dataset.lang === lang);
+    });
   }
 
-  // Exposed globally: setLanguage is the <select>'s onchange handler,
+  // Exposed globally: setLanguage is the Preferences menu's handler,
   // t()/applyTranslations are what any later pass reuses to cover more
   // of the app.
   window.t = t;

@@ -1,78 +1,108 @@
-# Rthoptera Desk 0.7.3
+# Rthoptera Desk 0.8.0
 
-A new **Summary Analysis** tab in Summarize for comparing species — PCA, 3D PCA,
-radar plots, which variables separate species, a leave-one-out identification
-test, and species profiles and a knowledge base to identify unknown recordings —
-with temperature adjustment. Also clearer names for the mean-frequency columns.
+A large update to Temporal and Spectral Analysis, plus recording metadata, a
+Preferences menu and a helper for uploading to xeno-canto. The headline: the
+**Amplitude Detector** can now follow the local noise floor, so faint and loud
+parts of a song are segmented in one pass, and pulses can be measured **without
+envelope peaks**.
 
-## Summary Analysis (Summarize → Summary Analysis)
+## Temporal Analysis
 
-Reads the tables merged on the Summary tab, so run **Merge & Summarize** first.
-Each recording (or each specimen) is one observation, described by the mean of
-every chosen variable; the species comes from the species tag. Pick the variables
-(a **Suggested set** gives about ten indicators) and the species to show, then
-**Run analysis**.
+- **Amplitude Detector with a local noise floor.** *Detect local minima* finds the
+  envelope's local minima within a window (*Floor win.*, ms), joins and smooths
+  them, and draws the result as a bright green curve. Once it is on, the detector
+  thresholds relative to that curve (Floor % becomes an offset above it), so
+  reverberation under the loud parts no longer merges elements while the faint
+  parts are still caught. The **X** switches it off. Changing the window rebuilds
+  the curve.
+- **Detection parameters take effect immediately.** After the first Detect, changing
+  Smooth, the peak window and thresholds, or Auto re-runs detection after a short
+  pause, with no overlay. The same goes for the Amplitude Detector settings, and
+  for loading a preset. Like Detect, it re-derives the peaks, so manual peak edits
+  are replaced.
+- **Pulses without peaks.** *Import Pulses* reads the Pulses table of an export as
+  Pulse selections. *Compute Metrics from Pulses* measures amplitude detections and
+  drawn or imported pulses directly: pulses are grouped into motifs by Max pulse
+  gap, with the same pulse and motif columns as the peaks path. Dynamic excursion
+  and max amplitude come from the envelope sampled every 1 ms inside each pulse;
+  temporal excursion and the per-peak columns are not calculated. Motif and motif
+  sequence lines are drawn live above the pulses.
+- **Renamed:** *Import Peaks*, *Compute Metrics from Peaks*, *Clear peaks* (which now
+  keeps the envelope on screen), *Draw Selections*, *Clear draws*.
+- **One Apply to Spectral Analysis**, whichever way the units were found; *Apply as*
+  picks Pulse or Motif selections. If some detections are selected, only those are
+  sent. Results stay out of the Annotate tab. **Apply motifs to Annotate** sends one
+  selection per motif, labelled with the recording's Species and
+  frequency-delimited by the power-spectrum threshold.
+- **Selections on the plot.** Detections and drawn selections are a semitransparent
+  fill above the envelope line, with thin edges. Shift+drag, Shift+click and
+  Ctrl+click select several; **Delete** removes the whole selection.
+- **Presets** now include the Amplitude Detector settings, and a built-in
+  **Acrididae** preset (Smooth 50, Floor win. 50 ms) is added. Loading a preset
+  recomputes the envelope straight away.
+- **Pop-up notices** (bottom-right, fade after a few seconds) for problems that were
+  only in the folded log: no peaks detected, no pulses with enough peaks, failed
+  imports.
+- **Detection parameters** reflowed: boxes are only as wide as they need, with two
+  columns where it helps. The always-visible bar buttons are larger.
 
-- **Choosing variables.** Variables come from the **Motifs** table by default;
-  tick **Pulses**, **EnvPeaks**, **Spectral** or **MotifSeqs** to draw from them
-  too. The same measurement averaged over motifs, pulses and envelope peaks (peak
-  frequency, spectral centroid …) is almost the same number three times, and
-  copies would over-weight it in the PCA and the tests. **Drop near-duplicates**
-  unticks, from each group of variables that move together *within species*
-  (default |r| ≥ 0.95), all but the one that separates the species best, a
-  motif-level variable winning a near-tie, and says what it removed.
+## Spectral Analysis
 
-- **PCA biplot.** Z-scored variables, species centroids, 1σ / 1.5σ / 2σ covariance
-  ellipses, variable loadings, any two of the first three PCs. Click a point to
-  write its recording name beside it.
-- **3D PCA.** Drag to rotate, wheel to zoom, ellipsoid outlines per species.
-  Hover a point for its recording ID, click to pin it, or show all IDs. **HTML**
-  saves an interactive copy as one self-contained page that needs no internet.
-- **Radar plot.** Each variable scaled 0–1 across the observations; species mean
-  with a ±1 SD band.
-- **Which variables separate the species?** A ranking by η² and F from a one-way
-  ANOVA, plus how much each variable depends on temperature.
-- **Leave-one-out test.** Each observation is classified from the profiles of all
-  the others with two methods — Mahalanobis (each species' own variance) and LDA
-  (pooled covariance) — reporting the share correct, the share in the top 3,
-  per-species hit rates and the most frequent mix-ups. It can leave out the whole
-  specimen instead of one recording.
-- **Compare recordings or species.** Tick 2 to 6 recordings, or species means, and
-  see a radar (each variable as a share of the largest value, so it works with
-  just two recordings) and a table of the real values and their ratio.
-- **Species profiles and knowledge base.** *Extract species profiles* gives, for
-  each species, the mean, spread and covariance of the chosen variables.
-  *Save to knowledge base* writes a `.kb.json` file (added to a loaded one when the
-  variables match), species can be renamed inside it, and the file keeps the
-  names you gave. *Compare with knowledge base* ranks the closest species for each
-  recording, and for all of them pooled, by LDA and Mahalanobis, with how many
-  variables fall within each species' mean ± 2 SD, and a radar of the unknown
-  against its three closest species.
-- **Temperature.** *Adjust for temperature* fits a slope for every variable within
-  species and moves each value to a reference temperature before the analyses.
-  A knowledge base keeps its reference temperature and slopes, and comparisons
-  adjust the unknown with them.
-- **Names.** Edit the name of any recording or species, or re-assign a recording to
-  another species; giving two species one name merges them.
-- **Settings.** **Save settings** and **Load settings** keep the variables,
-  species, edited names, temperature options, plot options and comparison picks
-  as a `.json` file. **Reset analysis** starts again from scratch.
-- Exports: PNG and SVG for the plots, and a CSV of scores, loadings and variable
-  relevance. Species names in the legends are shown in full.
+- A collapsible **Detection & selection tools** row now sits above the spectrogram
+  (selection tools, import, selections list). Display options moved into drop-down
+  menus in the playback bar (Spectrogram, Grid, Envelope & Floor, Show).
+- The Amplitude Detector, the Time Axis zoom slider and the Frequency range
+  sliders are gone from this tab. Scroll zooms time; Ctrl+scroll zooms frequency.
+- **Fixed:** Ctrl+scroll could not zoom out near the edge of the frequency range.
+- **Fixed:** the Excel export stayed disabled after *Spectral Metrics* (a leftover
+  variable name). It is now **Export All (Excel)**, as in Temporal Analysis.
 
-## Clearer column names
+## Recording metadata (new)
 
-The mean-frequency and mean-spectrum columns now say what they average over and
-keep the unit last:
-- Motif rows: the mean over the motif's pulses is `…_pulse_mean…`, for example
-  `peak_freq_pulse_mean_khz` (was `peak_freq_khz_tmean`) and
-  `spec_signal_pulse_mean_ms` (was `spec_signal_ms_tmean`).
-- Pulse and motif rows: the aggregates over envelope peaks are
-  `peak_freq_envpeak_mean_khz`, `_envpeak_sd_khz`, `_envpeak_min_khz` and
-  `_envpeak_max_khz` (were `peak_freq_pmean_khz`, `_psd_`, `_pmin_`, `_pmax_`).
+A **Recording metadata** button replaces the specimen fields in the header. The
+popup has a **Recording session** (country, locality, date, time, temperature,
+elevation, optional latitude and longitude) and a **Specimen** (ID, species).
 
-Workbooks exported with the old names still import into Summarize; the columns are
-renamed on the way in. Scripts of your own that read the old names need updating.
+- **Extract from map** opens a Leaflet map (street or satellite) to pick the
+  coordinates; elevation is looked up automatically, and also when you type
+  coordinates yourself and leave the elevation empty. Needs an internet connection.
+- **Remember** keeps entries for reuse; **Save to file / Load from file** writes
+  both sections to one `.json` (older `specimen_metadata.json` files still load).
+- Exported tables gain `rec_date`, `rec_time`, `latitude`, `longitude` and
+  `elevation_m` columns.
+- **Equipment** (recorder, microphone, accessories) is part of the session and is
+  exported as `recorder`, `microphone` and `accessories` columns.
+- **Preferences → Default metadata** keeps values you reuse: country, recordist,
+  annotation author, license, and lists of recorders, microphones and accessories
+  with a default for each. Country and the default equipment are filled into every
+  newly loaded recording, equipment typed in a recording joins the lists, and the
+  Xeno-canto helper and the Annotate export use the recordist, license and author.
+
+## Xeno-canto upload helper (new)
+
+In the Recording metadata popup: a step-by-step list of the fields on
+xeno-canto's two-page upload form, in order, with a copy button beside each text
+field and reminders for the choices made on the site. It does not send anything.
+
+## Annotate
+
+- Selections sent from Temporal Analysis for Spectral Analysis are hidden here.
+- The spectrogram help text moved into an ⓘ icon (hover to peek, click to keep open).
+
+## Interface
+
+- New **Preferences** menu (Home, Language, **Text Size**, Version) replaces the
+  title in the header; the "Loaded" badge is gone.
+- Preprocessing opens with the whole recording in view.
+- Wider, blue vertical scrollbars.
+
+## Consistent names for the pulse-based complexity columns
+
+The **Manual Echemes** table (on screen and in the exported sheet) now uses
+`pci_syl`, `props_ent_syl` and `props_cv_syl`, the same names and calculation as
+the Motifs table. **Summarize and Summary Analysis** rename the old `props_ent`,
+`props_cv` and `pci` columns to their `_syl` names when a workbook is imported.
+Scripts of your own that read the old Manual Echemes column names need updating.
 
 ## 📥 Which file do I download?
 
@@ -82,15 +112,15 @@ Pick the file that matches your operating system and processor.
 
 | File                                 | Use                                                     |
 | ------------------------------------ | ------------------------------------------------------- |
-| `Rthoptera.Desk_0.7.3_x64-setup.exe` | **Recommended** — standard installer, just double-click |
-| `Rthoptera.Desk_0.7.3_x64_en-US.msi` | Alternative for managed/enterprise deployment           |
+| `Rthoptera.Desk_0.8.0_x64-setup.exe` | **Recommended** — standard installer, just double-click |
+| `Rthoptera.Desk_0.8.0_x64_en-US.msi` | Alternative for managed/enterprise deployment           |
 
 ### macOS
 
 | File                               | Use                         |
 | ---------------------------------- | --------------------------- |
-| `Rthoptera.Desk_0.7.3_aarch64.dmg` | Apple Silicon (M1/M2/M3/M4) |
-| `Rthoptera.Desk_0.7.3_x64.dmg`     | Intel Macs                  |
+| `Rthoptera.Desk_0.8.0_aarch64.dmg` | Apple Silicon (M1/M2/M3/M4) |
+| `Rthoptera.Desk_0.8.0_x64.dmg`     | Intel Macs                  |
 
 Not sure which Mac you have? Click the Apple menu → **About This Mac**. "Apple M…"
 means Apple Silicon; "Intel" means the x64 build.
@@ -99,9 +129,9 @@ means Apple Silicon; "Intel" means the x64 build.
 
 | File                                  | Use                                                                 |
 | ------------------------------------- | ------------------------------------------------------------------- |
-| `Rthoptera.Desk_0.7.3_amd64.AppImage` | **Recommended** — works on most distros. Run `chmod +x` then launch |
-| `Rthoptera.Desk_0.7.3_amd64.deb`      | Debian, Ubuntu, Mint, etc.                                          |
-| `Rthoptera.Desk-0.7.3-1.x86_64.rpm`   | Fedora, RHEL, openSUSE, etc.                                        |
+| `Rthoptera.Desk_0.8.0_amd64.AppImage` | **Recommended** — works on most distros. Run `chmod +x` then launch |
+| `Rthoptera.Desk_0.8.0_amd64.deb`      | Debian, Ubuntu, Mint, etc.                                          |
+| `Rthoptera.Desk-0.8.0-1.x86_64.rpm`   | Fedora, RHEL, openSUSE, etc.                                        |
 
 > **Note:** Builds are currently 64-bit Intel/AMD (x86_64) for Windows and
 > Linux, plus both Intel and Apple Silicon for macOS. ARM Linux and
