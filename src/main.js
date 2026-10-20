@@ -1776,6 +1776,17 @@
         // original audio.
         const fd = audioEdits.find((e) => e.type === "freqdrop");
         if (fd && fd.pct > 0) sig = applyFreqDrop(sig, fd.pct);
+        // Noise padding grows the signal, so it goes after every filter but
+        // before the fades, which then shape the padded edges.
+        const np = audioEdits.find((e) => e.type === "noisepad");
+        if (np && np.sec > 0) sig = applyNoisePad(sig, sr, np.sec, np.seed);
+        // Fades go on after everything else: they shape the edges of the
+        // signal as it will actually be heard and saved, and a filter run
+        // after them would ring across the ramp.
+        const fin = audioEdits.find((e) => e.type === "fadein");
+        const fout = audioEdits.find((e) => e.type === "fadeout");
+        if (fin || fout)
+          sig = applyFades(sig, sr, fin ? fin.sec : 0, fout ? fout.sec : 0);
 
         const prevNyq = sampleRate ? sampleRate / 2 : 0; // for the frequency view below
         rawSamples = sig instanceof Float32Array ? sig : Float32Array.from(sig);
@@ -2133,6 +2144,282 @@
         return _resampleLinear(filtered, sr / targetSr, outLen);
       }
 
+      // Linear amplitude ramps over the first/last `inSec`/`outSec` seconds of the
+      // signal (clamped to its length; where both would overlap, each gets
+      // half). Returns a NEW Float32Array; never mutates the input.
+      function applyFades(sig, sr, inSec, outSec) {
+        const out = Float32Array.from(sig);
+        const n = out.length;
+        let nIn = Math.round(inSec * sr);
+        let nOut = Math.round(outSec * sr);
+        if (nIn + nOut > n) {
+          const k = n / (nIn + nOut);
+          nIn = Math.floor(nIn * k);
+          nOut = Math.floor(nOut * k);
+        }
+        for (let i = 0; i < nIn; i++) out[i] *= i / nIn;
+        for (let i = 0; i < nOut; i++) out[n - 1 - i] *= i / nOut;
+        return out;
+      }
+      // ── Noise padding ───────────────────────────────────────────────────
+      // Adds synthetic background noise before and after the recording (room
+      // for a fade in / fade out) that matches the recording's own noise.
+      //
+      // 1. Find the target-free frames: STFT frames whose broadband energy sits
+      //    within 3 dB of the file's quietest 10 %. No user selection needed.
+      // 2. Per frequency bin, take the MOST COMMON amplitude among those frames
+      //    (peak of the dB histogram, pooled over neighbouring bins for
+      //    stability). A mode, not a mean, so stray target energy in a few
+      //    frames hardly moves it. Noise magnitudes are Rayleigh distributed,
+      //    whose log-histogram peaks at sqrt(2)*sigma, so sigma = mode/sqrt(2).
+      // 3. Synthesise: filter fresh Gaussian white noise so every bin has that
+      //    sigma (STFT gain + overlap-add). The phases and the frame-to-frame
+      //    fluctuations are random, like the real noise.
+      // Joins are equal-power crossfades, so there is no click at the seams.
+      function _mulberry32(a) {
+        return function () {
+          a = (a + 0x6d2b79f5) | 0;
+          let t = Math.imul(a ^ (a >>> 15), 1 | a);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+      function _hannPeriodic(N) {
+        const w = new Float64Array(N);
+        for (let i = 0; i < N; i++)
+          w[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / N);
+        return w;
+      }
+      // Returns {N, sigma[N/2+1], nQuiet, nFrames, quietSec} or null when the
+      // file is too short or has too little quiet material to learn from.
+      function estimateNoiseProfile(sig, sr) {
+        let N = 512;
+        while (N < 8192 && N < sr / 25) N *= 2;
+        while (N > 256 && sig.length < 16 * N) N /= 2;
+        if (sig.length < 16 * N) return null;
+        const hop = N / 2,
+          K = N / 2 + 1;
+        const w = _hannPeriodic(N);
+        const nFrames = Math.floor((sig.length - N) / hop) + 1;
+        // Pass 1: windowed energy of every frame, in dB.
+        const eDb = new Float64Array(nFrames);
+        for (let f = 0; f < nFrames; f++) {
+          let e = 0;
+          const s = f * hop;
+          for (let i = 0; i < N; i++) {
+            const v = sig[s + i] * w[i];
+            e += v * v;
+          }
+          eDb[f] = e > 1e-14 ? 10 * Math.log10(e) : -Infinity; // skip digital silence
+        }
+        const live = [];
+        for (let f = 0; f < nFrames; f++)
+          if (eDb[f] > -Infinity) live.push(eDb[f]);
+        if (live.length < 12) return null;
+        live.sort((a, b) => a - b);
+        const ref = live[Math.floor(0.1 * (live.length - 1))];
+        let quiet = [];
+        for (let f = 0; f < nFrames; f++)
+          if (eDb[f] <= ref + 3 && eDb[f] > -Infinity) quiet.push(f);
+        if (quiet.length < 12) return null;
+        const MAXQ = 2000;
+        if (quiet.length > MAXQ) {
+          const keep = [];
+          for (let i = 0; i < MAXQ; i++)
+            keep.push(quiet[Math.floor((i * quiet.length) / MAXQ)]);
+          quiet = keep;
+        }
+        const nq = quiet.length;
+        // Pass 2: dB magnitude spectra of the quiet frames only.
+        const db = new Float32Array(nq * K);
+        const re = new Float64Array(N),
+          im = new Float64Array(N);
+        let gmin = Infinity,
+          gmax = -Infinity;
+        for (let q = 0; q < nq; q++) {
+          const s = quiet[q] * hop;
+          for (let i = 0; i < N; i++) {
+            re[i] = sig[s + i] * w[i];
+            im[i] = 0;
+          }
+          fft(re, im, N);
+          for (let k = 0; k < K; k++) {
+            const v = 20 * Math.log10(Math.hypot(re[k], im[k]) + 1e-12);
+            db[q * K + k] = v;
+            if (v < gmin) gmin = v;
+            if (v > gmax) gmax = v;
+          }
+        }
+        // Per bin: peak of the smoothed dB histogram, pooled over +-B bins.
+        const B = Math.max(1, Math.min(24, Math.ceil((400 / nq - 1) / 2)));
+        const lo = Math.floor(gmin);
+        const nb = Math.min(300, Math.ceil(gmax) - lo + 2);
+        const hist = new Float64Array(nb),
+          sm = new Float64Array(nb);
+        const ker = [];
+        for (let d = -4; d <= 4; d++)
+          ker.push(Math.exp(-(d * d) / (2 * 1.5 * 1.5)));
+        const sigma = new Float64Array(K);
+        for (let k = 1; k < K - 1; k++) {
+          hist.fill(0);
+          const k0 = Math.max(1, k - B),
+            k1 = Math.min(K - 2, k + B);
+          for (let q = 0; q < nq; q++)
+            for (let kk = k0; kk <= k1; kk++) {
+              const b = Math.min(
+                nb - 1,
+                Math.max(0, Math.floor(db[q * K + kk] - lo)),
+              );
+              hist[b]++;
+            }
+          let best = 0,
+            bi = 0;
+          for (let b = 0; b < nb; b++) {
+            let a = 0;
+            for (let d = -4; d <= 4; d++) {
+              const j = b + d;
+              if (j >= 0 && j < nb) a += hist[j] * ker[d + 4];
+            }
+            sm[b] = a;
+            if (a > best) {
+              best = a;
+              bi = b;
+            }
+          }
+          // Parabolic refinement of the peak position.
+          let off = 0;
+          if (bi > 0 && bi < nb - 1) {
+            const a = sm[bi - 1],
+              c = sm[bi + 1],
+              d = a - 2 * sm[bi] + c;
+            if (d < 0) off = (0.5 * (a - c)) / d;
+          }
+          const modeDb = lo + bi + 0.5 + off;
+          sigma[k] = Math.pow(10, modeDb / 20) / Math.SQRT2;
+        }
+        sigma[0] = 0; // no DC offset
+        sigma[K - 1] = 0;
+        return { N, sigma, nQuiet: nq, nFrames, quietSec: (nq * hop) / sr };
+      }
+
+      // Gaussian white noise filtered so its STFT bin amplitudes follow
+      // profile.sigma (STFT gain + weighted overlap-add). Float32Array(len).
+      function synthNoise(profile, len, seed) {
+        const N = profile.N,
+          K = N / 2 + 1,
+          hop = N / 4;
+        const rnd = _mulberry32(seed);
+        const total = len + 2 * N;
+        const g = new Float64Array(total);
+        for (let i = 0; i < total; i += 2) {
+          const r = Math.sqrt(-2 * Math.log(rnd() + 1e-300)),
+            t = 2 * Math.PI * rnd();
+          g[i] = r * Math.cos(t);
+          if (i + 1 < total) g[i + 1] = r * Math.sin(t);
+        }
+        const w = _hannPeriodic(N);
+        let S2 = 0;
+        for (let i = 0; i < N; i++) S2 += w[i] * w[i];
+        const sigWhite = Math.sqrt(S2 / 2);
+        const gain = new Float64Array(K);
+        for (let k = 0; k < K; k++) gain[k] = profile.sigma[k] / sigWhite;
+        const out = new Float64Array(total),
+          wsum = new Float64Array(total);
+        const re = new Float64Array(N),
+          im = new Float64Array(N);
+        for (let s = 0; s + N <= total; s += hop) {
+          for (let i = 0; i < N; i++) {
+            re[i] = g[s + i] * w[i];
+            im[i] = 0;
+          }
+          fft(re, im, N);
+          for (let k = 0; k < K; k++) {
+            re[k] *= gain[k];
+            im[k] *= gain[k];
+          }
+          for (let k = 1; k < N / 2; k++) {
+            re[N - k] = re[k];
+            im[N - k] = -im[k];
+          }
+          _ifft(re, im, N);
+          for (let i = 0; i < N; i++) {
+            out[s + i] += re[i] * w[i];
+            wsum[s + i] += w[i] * w[i];
+          }
+        }
+        const res = new Float32Array(len);
+        for (let i = 0; i < len; i++) res[i] = out[N + i] / wsum[N + i];
+        return res;
+      }
+
+      // sig -> [noise | sig | noise], `sec` seconds of noise at each end. Sets
+      // _noisePadInfo for the caller to report. Returns sig untouched (info.ok
+      // false) when no usable noise profile can be learned.
+      let _noisePadInfo = null;
+      let _noiseProfileCache = null;
+      function applyNoisePad(sig, sr, sec, seed) {
+        // Cache the (expensive) profile across rebuilds that did not change
+        // the signal it is learned from, e.g. fade tweaks.
+        const key =
+          sr +
+          "|" +
+          sig.length +
+          "|" +
+          JSON.stringify(
+            audioEdits.filter(
+              (e) =>
+                e.type !== "noisepad" &&
+                e.type !== "fadein" &&
+                e.type !== "fadeout",
+            ),
+          );
+        let prof;
+        if (
+          _noiseProfileCache &&
+          _noiseProfileCache.src === origSamples &&
+          _noiseProfileCache.key === key
+        )
+          prof = _noiseProfileCache.prof;
+        else {
+          prof = estimateNoiseProfile(sig, sr);
+          _noiseProfileCache = { src: origSamples, key, prof };
+        }
+        if (!prof) {
+          _noisePadInfo = { ok: false };
+          return sig;
+        }
+        const P = Math.round(sec * sr),
+          n = sig.length;
+        const X = Math.max(
+          1,
+          Math.min(Math.round(0.02 * sr), Math.floor(n / 10)),
+        );
+        const head = synthNoise(prof, P + X, seed),
+          tail = synthNoise(prof, P + X, seed + 1);
+        const out = new Float32Array(P + n + P);
+        for (let i = 0; i < n; i++) out[P + i] = sig[i];
+        for (let i = 0; i < P; i++) {
+          out[i] = head[i];
+          out[P + n + i] = tail[X + i];
+        }
+        for (let j = 0; j < X; j++) {
+          const t = ((j + 0.5) / X) * (Math.PI / 2),
+            a = Math.cos(t),
+            b = Math.sin(t);
+          out[P + j] = head[P + j] * a + sig[j] * b;
+          out[P + n - X + j] = sig[n - X + j] * a + tail[j] * b;
+        }
+        let e = 0;
+        for (let i = 0; i < P; i++) e += head[i] * head[i];
+        _noisePadInfo = {
+          ok: true,
+          nQuiet: prof.nQuiet,
+          nFrames: prof.nFrames,
+          quietSec: prof.quietSec,
+          rmsDb: P ? 10 * Math.log10(e / P + 1e-20) : -Infinity,
+        };
+        return out;
+      }
       function audioHasEdit(type) {
         return audioEdits.some((e) => e.type === type);
       }
@@ -2150,6 +2437,10 @@
       function setFreqDropEdit(pct) {
         audioEdits = audioEdits.filter((e) => e.type !== "freqdrop");
         audioEdits.push({ type: "freqdrop", pct });
+      }
+      function setFadeEdit(type, sec) {
+        audioEdits = audioEdits.filter((e) => e.type !== type);
+        audioEdits.push({ type, sec });
       }
       function setDownsampleEdit(targetSr) {
         audioEdits = audioEdits.filter((e) => e.type !== "resample");
@@ -2426,6 +2717,117 @@
         log("Frequency drop removed", "ok");
       }
 
+      function applyFadeEdit(type) {
+        if (!origSamples) {
+          log("Load audio first", "warn");
+          return;
+        }
+        const sec = parseFloat($("editFadeSec").value);
+        if (!isFinite(sec) || sec <= 0) {
+          log("Fade length must be greater than 0 s.", "warn");
+          return;
+        }
+        if (sec > duration) {
+          log(
+            "Fade is longer than the recording (" +
+              duration.toFixed(2) +
+              " s).",
+            "warn",
+          );
+          return;
+        }
+        setFadeEdit(type, sec);
+        rebuildAudioFromEdits({ resetView: false });
+        log(
+          (type === "fadein" ? "Fade in " : "Fade out ") + sec + " s",
+          "ok",
+        );
+      }
+      // Pad both ends with noise matched to the recording's own background.
+      // withFades also sets a fade in and fade out (length from the Fade
+      // field), so the recording rises out of silence into the noise and back.
+      // The timeline shifts by the pad length, so time-dependent work
+      // (detections, envelope peaks, annotations) is cleared, as for a trim.
+      function applyNoisePadEdit(withFades) {
+        if (!origSamples) {
+          log("Load audio first", "warn");
+          return;
+        }
+        const sec = parseFloat($("editPadSec").value);
+        if (!isFinite(sec) || sec <= 0 || sec > 60) {
+          log("Noise pad length must be between 0 and 60 s.", "warn");
+          return;
+        }
+        let fadeSec = 0;
+        if (withFades) {
+          fadeSec = parseFloat($("editFadeSec").value);
+          if (!isFinite(fadeSec) || fadeSec <= 0) {
+            log("Fade length must be greater than 0 s.", "warn");
+            return;
+          }
+        }
+        const prev = audioEdits.find((e) => e.type === "noisepad");
+        if (!prev || prev.sec !== sec) clearTimeDependentWork();
+        audioEdits = audioEdits.filter((e) => e.type !== "noisepad");
+        audioEdits.push({
+          type: "noisepad",
+          sec,
+          seed: prev ? prev.seed : Math.floor(Math.random() * 2147483647),
+        });
+        if (withFades) {
+          setFadeEdit("fadein", fadeSec);
+          setFadeEdit("fadeout", fadeSec);
+        }
+        _noisePadInfo = null;
+        rebuildAudioFromEdits({ resetView: true });
+        const info = _noisePadInfo;
+        if (!info || !info.ok) {
+          audioEdits = audioEdits.filter((e) => e.type !== "noisepad");
+          rebuildAudioFromEdits({ resetView: true });
+          log(
+            "Not enough quiet material to learn the background noise from (needs a few hundred ms without the target sound).",
+            "warn",
+          );
+          return;
+        }
+        log(
+          "Added " +
+            sec +
+            " s of matched noise at each end" +
+            (withFades ? " with " + fadeSec + " s fades" : "") +
+            " — profile learned from " +
+            info.quietSec.toFixed(1) +
+            " s of target-free audio (" +
+            Math.round((100 * info.nQuiet) / info.nFrames) +
+            "% of the file), noise level " +
+            info.rmsDb.toFixed(1) +
+            " dBFS.",
+          "ok",
+        );
+      }
+      function clearNoisePad() {
+        if (!audioHasEdit("noisepad")) return;
+        clearTimeDependentWork();
+        audioEdits = audioEdits.filter((e) => e.type !== "noisepad");
+        rebuildAudioFromEdits({ resetView: true });
+        log("Noise padding removed", "ok");
+      }
+
+      function clearFades() {
+        if (!audioHasEdit("fadein") && !audioHasEdit("fadeout")) return;
+        audioEdits = audioEdits.filter(
+          (e) => e.type !== "fadein" && e.type !== "fadeout",
+        );
+        rebuildAudioFromEdits({ resetView: false });
+        log("Fades removed", "ok");
+      }
+      function clearFade(type) {
+        if (!audioHasEdit(type)) return;
+        audioEdits = audioEdits.filter((e) => e.type !== type);
+        rebuildAudioFromEdits({ resetView: false });
+        log((type === "fadein" ? "Fade in" : "Fade out") + " removed", "ok");
+      }
+
       // Candidate target rates for the Downsample dropdown, spanning
       // consumer audio through the ultrasonic range these recordings can
       // reach. Filtered down to whatever sits below the file's OWN rate —
@@ -2652,6 +3054,12 @@
           "editDownsampleSr",
           "btnApplyDownsample",
           "btnClearDownsample",
+          "editPadSec",
+          "btnNoisePad",
+          "btnNoisePadFade",
+          "editFadeSec",
+          "btnFadeIn",
+          "btnFadeOut",
           "btnSaveEditedAudio",
         ].forEach((id) => {
           const el = $(id);
@@ -2666,6 +3074,12 @@
         // Same for the downsample Reset.
         const cd = $("btnClearDownsample");
         if (cd) cd.disabled = !has || !audioHasEdit("resample");
+        const cnp = $("btnClearNoisePad");
+        if (cnp) cnp.disabled = !has || !audioHasEdit("noisepad");
+        const cfd = $("btnClearFades");
+        if (cfd)
+          cfd.disabled =
+            !has || !(audioHasEdit("fadein") || audioHasEdit("fadeout"));
         const st = $("editStatus");
         if (st) {
           if (!has) {
@@ -2695,6 +3109,12 @@
               parts.push(
                 "downsampled to " + rs.targetSr.toLocaleString() + " Hz",
               );
+            const npEd = audioEdits.find((e) => e.type === "noisepad");
+            if (npEd) parts.push("noise pad " + npEd.sec + " s each end");
+            const fiEd = audioEdits.find((e) => e.type === "fadein");
+            if (fiEd) parts.push("fade in " + fiEd.sec + " s");
+            const foEd = audioEdits.find((e) => e.type === "fadeout");
+            if (foEd) parts.push("fade out " + foEd.sec + " s");
             st.textContent = parts.length
               ? "Active: " + parts.join(" · ")
               : "No edits applied.";
@@ -2708,9 +3128,17 @@
             ? "Undo " +
               (last.type === "trim"
                 ? "trim"
-                : last.type === "resample"
+                : last.type === "noisepad"
+                  ? "noise padding"
+                  : last.type === "resample"
                   ? "downsample"
-                  : "bandpass filter")
+                  : last.type === "fadein"
+                    ? "fade in"
+                    : last.type === "fadeout"
+                      ? "fade out"
+                      : last.type === "freqdrop"
+                        ? "frequency drop"
+                        : "bandpass filter")
             : "Nothing to undo.";
         }
       }
@@ -2729,6 +3157,10 @@
         if (last.type === "trim") clearTrim();
         else if (last.type === "bandpass") clearBandpass();
         else if (last.type === "resample") clearDownsample();
+        else if (last.type === "freqdrop") clearFreqDrop();
+        else if (last.type === "noisepad") clearNoisePad();
+        else if (last.type === "fadein" || last.type === "fadeout")
+          clearFade(last.type);
       }
 
       // ═══════════════════════════════════════════════════════════════════
@@ -3465,6 +3897,9 @@
           }
         }
         if (audioEdits.some((e) => e.type === "trim")) parts.push("trimmed");
+        if (audioEdits.some((e) => e.type === "noisepad")) parts.push("noisepad");
+        if (audioEdits.some((e) => e.type === "fadein")) parts.push("fadein");
+        if (audioEdits.some((e) => e.type === "fadeout")) parts.push("fadeout");
         return parts.length ? "_" + parts.join("_") : "_copy";
       }
 
@@ -9491,18 +9926,21 @@
 
       // Split the detection/annotation under time t into two at t. Both halves
       // keep the original's properties; annotations get their max amplitude
-      // recomputed. A split within 1 ms of an edge is refused (zero-length).
+      // recomputed. The halves are separated by a small gap centred on t so
+      // they don't touch; a split that would leave either half shorter than
+      // 1 ms is refused.
       function pkSplitSelectionAt(list, id, t) {
         const item = pkFindSelItem(list, id);
         if (!item) return;
         const minPart = 0.001;
-        if (t - item.start < minPart || item.end - t < minPart) {
+        const halfGap = 0.001;
+        if (t - halfGap - item.start < minPart || item.end - (t + halfGap) < minPart) {
           log("Split point is too close to the selection's edge", "warn");
           return;
         }
         pkSnapshot("split selection");
-        const right = { ...item, id: pkNextSelId++, start: t };
-        item.end = t;
+        const right = { ...item, id: pkNextSelId++, start: t + halfGap };
+        item.end = t - halfGap;
         if (list === "annot") {
           item.maxAmp = pkMaxEnvIn(item.start, item.end);
           right.maxAmp = pkMaxEnvIn(right.start, right.end);
@@ -9535,9 +9973,20 @@
         if (pkEnv) pkDrawEnvelope();
       };
       document.addEventListener("keyup", (e) => {
-        if (e.key === "s" || e.key === "S") pkEndSplitHold();
+        if (e.key === "s" || e.key === "S" || e.code === "KeyS") pkEndSplitHold();
       });
       window.addEventListener("blur", pkEndSplitHold);
+      document.addEventListener("visibilitychange", pkEndSplitHold);
+      // A keyup can be swallowed (native dialog, focus change, Ctrl/Alt chord
+      // released first), which left split mode latched. Any other key press
+      // while "held" proves S is no longer the only thing down, so release.
+      document.addEventListener(
+        "keydown",
+        (e) => {
+          if (pkSplitHeld && e.key !== "s" && e.key !== "S" && e.code !== "KeyS") pkEndSplitHold();
+        },
+        true,
+      );
 
       // Add one detection/annotation to the multi-selection (no toggling).
       function pkSelAdd(list, id) {
@@ -12690,8 +13139,7 @@
         const rect = canvas.getBoundingClientRect();
         // Hold S + click on a detection/annotation: split it at the click.
         if (pkSplitHeld) {
-          const hit = pkSelBodyHit(e.clientX, e.clientY);
-          const t = pkClientXToTime(e.clientX);
+          const hit = pkSelBodyHit(e.clientX, e.clientY);          const t = pkClientXToTime(e.clientX);
           if (hit && t !== null) pkSplitSelectionAt(hit.list, hit.id, t);
           return;
         }

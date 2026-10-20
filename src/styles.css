@@ -855,12 +855,28 @@
         transform: translateY(80px);
       }
 
-      /* Temporal Analysis · Detection parameters: each box is only as wide as
-         its contents need, and the longer ones lay their controls out in two
-         columns. */
+      /* Temporal Analysis · Detection parameters: the boxes always share one
+         row, each as wide as its contents need. Wide windows lay a box's
+         controls out in two columns; narrower ones stack them in one, so the
+         box grows downward instead of sideways. The row scrolls sideways only
+         if even the stacked boxes do not fit. */
+      .pk-params {
+        flex-wrap: nowrap !important;
+        align-items: flex-start;
+        overflow-x: auto;
+        container-type: inline-size;
+      }
       .pk-params > .panel {
         flex: 0 0 auto;
         min-width: 0 !important;
+      }
+      .pk-cols .row {
+        flex-wrap: wrap;
+        min-width: 0;
+      }
+      .pk-cols button {
+        min-width: 0;
+        white-space: normal;
       }
       .pk-cols-env,
       .pk-cols-grp,
@@ -890,6 +906,19 @@
       }
       .pk-cols-amp > :nth-child(n + 4) {
         grid-column: 2;
+      }
+      @container (max-width: 1500px) {
+        .pk-cols-env,
+        .pk-cols-grp,
+        .pk-cols-amp {
+          display: flex !important;
+          flex-direction: column;
+        }
+        .pk-cols-grp > :nth-child(6) {
+          margin-top: 4px !important;
+          padding-top: 4px !important;
+          border-top: 1px solid var(--border) !important;
+        }
       }
 
       /* Annotate · spectrogram help: an info icon at the bottom-left of the
@@ -946,3 +975,4 @@
       .an-info.pinned .an-info-x {
         display: block;
       }
+

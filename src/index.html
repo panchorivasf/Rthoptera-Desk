@@ -888,6 +888,144 @@
                     </div>
                   </div>
 
+                  <!-- Noise padding -->
+                  <div
+                    style="
+                      border-top: 1px solid var(--border);
+                      padding-top: 5px;
+                    "
+                  >
+                    <div
+                      style="
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: var(--txt3);
+                        margin-bottom: 3px;
+                      "
+                    >
+                      Noise padding
+                     <span class="info-icon" data-i18n-title title="Adds synthetic background noise before and after the recording, matched bin by bin to the most common amplitude in the recording's own quiet (target-free) parts. The quiet parts are found automatically, so make sure no call is cut off at the very start or end. 'Pad + fade' also fades in and out over the Fade length below.">&#9432;</span></div>
+                    <div class="row" style="gap: 4px">
+                      <span
+                        style="color: var(--txt2); font-size: 11px; width: 56px"
+                        >Length</span
+                      >
+                      <input
+                        type="number"
+                        id="editPadSec"
+                        value="1"
+                        min="0.1"
+                        step="0.5"
+                        disabled
+                        style="width: 64px"
+                        data-i18n-title
+                        title="Length of the noise added at EACH end, in seconds."
+                      />
+                      <span style="color: var(--txt2); font-size: 11px">s</span>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <button
+                        id="btnNoisePad"
+                        onclick="applyNoisePadEdit(false)"
+                        disabled
+                        style="font-size: 11px; flex: 1"
+                        data-i18n-title
+                        title="Add matched background noise at the start and end."
+                      >
+                        Pad with noise
+                      </button>
+                      <button
+                        id="btnNoisePadFade"
+                        onclick="applyNoisePadEdit(true)"
+                        disabled
+                        style="font-size: 11px; flex: 1"
+                        data-i18n-title
+                        title="Add the noise padding, then fade in and out (Fade length below)."
+                      >
+                        Pad + fade
+                      </button>
+                      <button
+                        id="btnClearNoisePad"
+                        onclick="clearNoisePad()"
+                        disabled
+                        style="font-size: 11px"
+                        data-i18n-title
+                        title="Remove the noise padding."
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Fade in / fade out -->
+                  <div
+                    style="
+                      border-top: 1px solid var(--border);
+                      padding-top: 5px;
+                    "
+                  >
+                    <div
+                      style="
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: var(--txt3);
+                        margin-bottom: 3px;
+                      "
+                    >
+                      Fade
+                     <span class="info-icon" data-i18n-title title="Ramps the amplitude linearly from silence over the first (fade in) or last (fade out) stretch of the recording. Applied after every other edit, so it shapes the edges of the audio as it is heard and saved.">&#9432;</span></div>
+                    <div class="row" style="gap: 4px">
+                      <span
+                        style="color: var(--txt2); font-size: 11px; width: 56px"
+                        >Length</span
+                      >
+                      <input
+                        type="number"
+                        id="editFadeSec"
+                        value="1"
+                        min="0.01"
+                        step="0.1"
+                        disabled
+                        style="width: 64px"
+                        data-i18n-title
+                        title="Fade length in seconds."
+                      />
+                      <span style="color: var(--txt2); font-size: 11px">s</span>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <button
+                        id="btnFadeIn"
+                        onclick="applyFadeEdit('fadein')"
+                        disabled
+                        style="font-size: 11px; flex: 1"
+                        data-i18n-title
+                        title="Fade in from silence at the start of the recording."
+                      >
+                        ◢ Fade in
+                      </button>
+                      <button
+                        id="btnFadeOut"
+                        onclick="applyFadeEdit('fadeout')"
+                        disabled
+                        style="font-size: 11px; flex: 1"
+                        data-i18n-title
+                        title="Fade out to silence at the end of the recording."
+                      >
+                        ◣ Fade out
+                      </button>
+                      <button
+                        id="btnClearFades"
+                        onclick="clearFades()"
+                        disabled
+                        style="font-size: 11px"
+                        data-i18n-title
+                        title="Remove both fades."
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+
                   <div
                     id="editStatus"
                     style="
@@ -2087,9 +2225,6 @@
             <!-- Amplitude Detector button: right-hand end of the Detection
                  parameters header bar (see setupCollapsiblePanels). -->
             <div data-bar-mount="Detection parameters" style="display: none; gap: 6px; align-items: center" onclick="event.stopPropagation()">
-              <button onclick="pkRunAmpDetector()" id="btnPkAmpDetect" disabled class="pri" style="font-size: 10px; padding: 1px 8px" data-i18n-title title="Threshold the envelope directly, independent of envelope peak detection. Results are editable by dragging their edges.">
-                &#9889; Amplitude Detector
-              </button>
               <button onclick="pkExportSelections()" id="btnPkExportDet" disabled style="font-size: 10px; padding: 1px 8px" data-i18n-title title="Export the amplitude detections and manual selections to an Excel workbook.">
                 &#11015; Export detections
               </button>
@@ -2683,6 +2818,9 @@
                     </button>
                     <button onclick="pkClearFloor()" style="font-size: 10px; padding: 2px 8px" title="Clear the noise-floor curve; the Amplitude Detector goes back to a fixed Floor % level.">&#10005;</button>
                   </div>
+                  <button onclick="pkRunAmpDetector()" id="btnPkAmpDetect" disabled class="pri" style="font-size: 10px; padding: 2px 8px; width: 100%" data-i18n-title title="Threshold the envelope directly, independent of envelope peak detection. Results are editable by dragging their edges.">
+                    &#9889; Amplitude Detector
+                  </button>
                   <div
                     id="pkAmpDetCount"
                     style="font-size: 10px; color: var(--txt2)"
