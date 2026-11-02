@@ -16484,13 +16484,16 @@
       // column, so "everything" is a selection like any other downstream.
       const SUMM_SEL_ALL = "All rows";
 
-      const SUMM_CATS = ["envPeaks", "pulses", "motifs", "motseq", "spectral"];
+      // str: the fixed-length song fingerprint from the STR module, one row per
+      // recording, so STR profiles pool and compare like any other table.
+      const SUMM_CATS = ["envPeaks", "pulses", "motifs", "motseq", "spectral", "str"];
       const SUMM_LABEL = {
         envPeaks: "EnvPeaks",
         pulses: "Pulses",
         motifs: "Motifs",
         motseq: "MotifSeqs",
         spectral: "Spectral",
+        str: "STR",
       };
       const SUMM_SHEET_NAME = {
         envPeaks: "EnvPeaks",
@@ -16498,6 +16501,7 @@
         motifs: "Motifs",
         motseq: "MotifSeqs",
         spectral: "Spectral_Analysis",
+        str: "STR_fingerprint",
       };
 
       // Pre-rename column names → their current spellings. The classifier
@@ -16591,6 +16595,10 @@
       // the merged Summary is recomputed fresh from the pooled raw rows.
       function _summClassifySheet(name, rows) {
         const nm = name.toLowerCase();
+        // An STR export: only its fingerprint is a table to pool. Its other
+        // sheets (STR_pulses, STR_vectors, STR_summary) must not be mistaken
+        // for Temporal Analysis tables below.
+        if (nm.startsWith("str_")) return nm === "str_fingerprint" ? "str" : null;
         // The pre-rename vocabulary is accepted alongside the new one
         // throughout this classifier: "train" for pulse and "peak" for
         // envelope peak. Workbooks exported before the rename carry the old names,
@@ -16799,7 +16807,7 @@
               log(
                 '"' +
                   f.name +
-                  '": no recognizable Envelope peaks/Pulses/Motifs/Spectral table found — skipped.',
+                  '": no recognizable Envelope peaks/Pulses/Motifs/Spectral/STR_fingerprint table found — skipped.',
                 "warn",
               );
               continue;
@@ -17397,8 +17405,14 @@
         // distinct recording keys, not files, or re-importing Pulses and
         // Motifs spectral exports for one audio file would look like 2+
         // recordings.
+        // An STR export holds one fingerprint row per recording, so a file
+        // with nothing but that table counts its rows' recordings instead.
         const nRecordings = new Set(
-          summFilesData.map((f) => f.recordingKey),
+          summFilesData.flatMap((f) =>
+            Object.keys(f.sheets).length === 1 && f.sheets.str
+              ? f.sheets.str.map((r) => _summRecordingKey(String(r.source_file || f.name)))
+              : [f.recordingKey],
+          ),
         ).size;
         // A row's own tag value (specimen_id/species/locality, tagged at
         // export time) wins; only fall back to this file's editable field
@@ -17409,7 +17423,7 @@
           ["country", "country"],
           ["locality", "locality"],
         ];
-        const merged = { envPeaks: [], pulses: [], motifs: [], motseq: [], spectral: [] };
+        const merged = { envPeaks: [], pulses: [], motifs: [], motseq: [], spectral: [], str: [] };
         summFilesData.forEach((f) => {
           SUMM_CATS.forEach((cat) => {
             const rows = f.sheets[cat];
@@ -17477,7 +17491,9 @@
           merged.pulses.length +
           " pulses, " +
           merged.motifs.length +
-          " motifs merged.";
+          " motifs" +
+          (merged.str.length ? ", " + merged.str.length + " STR fingerprints" : "") +
+          " merged.";
         log(
           "Summarize: merged " + summFilesData.length + " file(s).",
           "ok",
@@ -17589,6 +17605,8 @@
           cards.push({ lbl: "Motif Seqs", v: merged.motseq.length });
         if (merged.spectral.length)
           cards.push({ lbl: "Spectral rows", v: merged.spectral.length });
+        if (merged.str.length)
+          cards.push({ lbl: "STR fingerprints", v: merged.str.length });
         const pooledMean = (cat, key, digits) => {
           const row = summStatsRows.find(
             (s) =>
@@ -20355,6 +20373,7 @@
           [SUMM_SHEET_NAME.motifs, summMerged.motifs],
           [SUMM_SHEET_NAME.motseq, summMerged.motseq],
           [SUMM_SHEET_NAME.spectral, summMerged.spectral],
+          [SUMM_SHEET_NAME.str, summMerged.str],
           ["Summary_Obs", _summWithFormulaCols(allStats)],
         ].filter(([, data]) => data && data.length);
 

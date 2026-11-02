@@ -279,6 +279,7 @@
             class="tab"
             id="maintab-str"
             onclick="switchMainTab('str', this)"
+            title="STR: Simplified Temporal Representation (dominant frequency + barcode of the pulses)"
             style="font-size: 12px; padding: 4px 14px"
           >
             STR
@@ -7787,6 +7788,7 @@
                       <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="saLvl_envPeaks" onchange="saLevelChanged()" /> EnvPeaks</label>
                       <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="saLvl_spectral" onchange="saLevelChanged()" /> Spectral</label>
                       <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="saLvl_motseq" onchange="saLevelChanged()" /> MotifSeqs</label>
+                      <label class="chk" style="font-size: 11px; color: var(--txt2)" title="The fixed-length song fingerprint from the STR module (STR_fingerprint sheet of an STR export): rhythm histograms, echeme shape and the dominant frequency, one row per recording."><input type="checkbox" id="saLvl_str" onchange="saLevelChanged()" /> STR</label>
                       <span
                         class="info-icon"
                         data-i18n-title

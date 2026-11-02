@@ -27,9 +27,11 @@ function strInit() {
     '" style="width:64px;font-size:11px"></label>';
   root.innerHTML =
     '<div style="font-size:11px;color:var(--txt2);line-height:1.6;max-width:950px">' +
-    "Turns each checked recording into its <b>dominant frequency</b> plus a <b>barcode of its pulses</b> " +
-    "(bar width = pulse duration, bar height = maximum amplitude, gaps = silence). " +
-    "The frequency comes from a long window averaged over all the pulses, so a single noisy moment cannot move it." +
+    "<b>STR = Simplified Temporal Representation.</b> The song is reduced to the two things that carry most of its identity: " +
+    "its <b>dominant frequency</b> and the <b>timing of its pulses</b>, drawn as a barcode " +
+    "(bar width = pulse duration, bar height = maximum amplitude, the spaces between bars = the silent gaps). " +
+    "The frequency comes from a long window averaged over all the pulses, so a single noisy moment cannot move it. " +
+    "Compute it from the checked recordings, or build it from the Pulses table of a Temporal Analysis export." +
     "</div>" +
     '<div class="panel" style="max-width:950px"><h2>Dominant frequency</h2><div class="row" style="gap:10px;flex-wrap:wrap;align-items:center">' +
     num("strWin", "Window (ms)", 50, "Length of each spectrum window. Longer windows give a finer, steadier peak.", 5, 5) +
@@ -45,6 +47,8 @@ function strInit() {
     "</div></div>" +
     '<div class="panel" style="max-width:950px"><div class="row" style="gap:10px;flex-wrap:wrap;align-items:center">' +
     '<button id="strRun" class="suc" style="font-size:11px" onclick="strRun()">&#9654; Compute STR for checked recordings</button>' +
+    '<button style="font-size:11px" onclick="document.getElementById(\'strXlsx\').click()" title="Build the STR from the Pulses sheet of a Temporal Analysis Excel export (pulse_start, pulse_end, amplitude, peak frequency). No audio is needed, and the pulses and motifs are exactly the ones you checked and edited there. A workbook holding several recordings (e.g. merged in Summarize) gives one STR per source_file.">&#128194; From Temporal Analysis table (.xlsx)</button>' +
+    '<input type="file" id="strXlsx" accept=".xlsx" multiple style="display:none" onchange="strImportTables(this.files); this.value=\'\';">' +
     num("strEGap", "Echeme gap (ms)", 100, "Pulses closer together than this belong to the same echeme. Changing it regroups instantly.", 1, 10) +
     '<label class="chk" style="font-size:11px;color:var(--txt2)" title="Bar heights are divided by the loudest pulse of each echeme, or of the whole song. Changing it redraws instantly.">Normalise per <select id="strNorm" style="font-size:11px" onchange="strRegroup()"><option value="echeme">echeme</option><option value="song">song</option></select></label>' +
     '<button id="strExport" style="font-size:11px" onclick="strExport()" disabled>&#11015; Export (Excel)</button>' +
@@ -62,6 +66,9 @@ function strInit() {
     '<div class="panel"><div class="row" style="gap:8px;align-items:center"><span style="font-size:11px;color:var(--txt2)">STR vector</span><span style="flex:1"></span>' +
     '<button style="font-size:10px;padding:1px 8px" onclick="strCopyVector()">Copy</button></div>' +
     '<div id="strVector" style="font-family:monospace;font-size:11px;color:var(--txt2);word-break:break-all;max-height:110px;overflow:auto"></div></div>' +
+    '<div class="panel"><div style="font-size:11px;color:var(--txt2);margin-bottom:2px" title="A fixed set of numbers summarising the whole song, the same for every recording, so songs can be compared and pooled into species profiles. Histograms are shares of pulses or intervals; the along-echeme profiles are relative, so recording length and gain do not matter.">STR fingerprint (fixed length, for comparing and pooling songs)</div>' +
+    '<canvas id="strFp" style="width:100%;height:90px;display:block"></canvas>' +
+    '<div id="strFpNote" style="font-size:11px;color:var(--txt2);margin-top:3px"></div></div>' +
     "</div></div>";
   document.getElementById("strCanvas").addEventListener("click", strCanvasClick);
   window.addEventListener("resize", () => strSel >= 0 && strDraw());
@@ -219,7 +226,115 @@ async function strProcess(entry, samples, sr, P) {
     const filt = applyBandpass(samples, sr, lo, hi);
     pulses = strDetect(strEnvelope(filt, sr, res), P);
   }
-  return { id: entry.id, name: entry.name, sr, dur: samples.length / sr, dom, pulses, echemes: [] };
+  return { id: entry.id, name: entry.name, source: "audio", sr, dur: samples.length / sr, dom, pulses, echemes: [], meta: strEntryMeta(entry) };
+}
+// Specimen, species and temperature travel with the fingerprint so Summarize
+// can group and temperature-correct it like any other table. The active
+// recording's fields may have been edited since it was loaded.
+function strEntryMeta(entry) {
+  const active = entry.id === audioLibActiveId;
+  return {
+    specimen_id: (active ? currentSpecimenId : entry.specimenId) || "",
+    species: (active ? currentSpecies : entry.species) || "",
+    temp_c: (active ? currentTempC : entry.tempC) || "",
+  };
+}
+
+// ── from a Temporal Analysis export ──────────────────────────────────
+// The Pulses sheet already holds pulses the user checked by eye, so they are
+// taken as they are. Amplitude: max_amp (pulses-only route) or mean_amp (peak
+// route, which has no maximum). Dominant frequency: the median of the pulses'
+// peak_freq_khz, the nearest thing to a long window averaged over the pulses
+// that the table offers. motif_id, when present, defines the echemes.
+function strFromRows(name, rows) {
+  const num = (v) => {
+    const x = typeof v === "number" ? v : parseFloat(v);
+    return isFinite(x) ? x : null;
+  };
+  const pulses = [];
+  rows.forEach((r) => {
+    const s = num(r.pulse_start),
+      e = num(r.pulse_end);
+    if (s === null || e === null || !(e > s)) return;
+    const amp = num(r.max_amp) ?? num(r.mean_amp);
+    pulses.push({
+      start: s,
+      end: e,
+      dur_ms: num(r.pulse_dur_ms) ?? (e - s) * 1000,
+      amp: amp === null ? 1 : Math.abs(amp),
+      motif: num(r.motif_id),
+      f: num(r.peak_freq_khz),
+    });
+  });
+  pulses.sort((a, b) => a.start - b.start);
+  const fs = pulses.map((p) => p.f).filter((f) => f !== null && f > 0).sort((a, b) => a - b);
+  const mid = fs.length >> 1,
+    f0 = fs.length ? Math.round((fs.length % 2 ? fs[mid] : (fs[mid - 1] + fs[mid]) / 2) * 1000) / 1000 : null;
+  return {
+    id: null,
+    name,
+    source: "table",
+    sr: num(rows[0] && rows[0].sample_rate_hz),
+    dur: pulses.length ? pulses[pulses.length - 1].end : 0,
+    dom: f0 === null ? null : { f0, spec: null },
+    pulses,
+    echemes: [],
+    byMotif: pulses.length > 0 && pulses.every((p) => p.motif !== null),
+    meta: {
+      specimen_id: (rows.find((x) => x.specimen_id) || {}).specimen_id || "",
+      species: (rows.find((x) => x.species) || {}).species || "",
+      temp_c: (rows.find((x) => x.temp_c !== undefined && x.temp_c !== "") || {}).temp_c ?? "",
+    },
+  };
+}
+async function strImportTables(files) {
+  if (!files || !files.length) return;
+  const out = [],
+    problems = [];
+  for (const file of files) {
+    let wb;
+    try {
+      wb = await _readXlsx(new Uint8Array(await file.arrayBuffer()));
+    } catch (e) {
+      problems.push(file.name + ": " + e.message);
+      continue;
+    }
+    // Prefer the sheet called Pulses; otherwise any sheet with pulse_start/pulse_end.
+    const names = Object.keys(wb),
+      has = (n) => wb[n] && wb[n].length && "pulse_start" in wb[n][0] && "pulse_end" in wb[n][0],
+      sheet = names.find((n) => n.toLowerCase() === "pulses" && has(n)) || names.find(has);
+    if (!sheet) {
+      problems.push(file.name + ": no Pulses sheet (needs pulse_start and pulse_end columns)");
+      continue;
+    }
+    const groups = new Map();
+    wb[sheet].forEach((r) => {
+      const k = r.source_file ? String(r.source_file) : file.name.replace(/\.xlsx$/i, "");
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(r);
+    });
+    groups.forEach((rows, k) => {
+      const r = strFromRows(k, rows);
+      if (r.pulses.length) out.push(r);
+      else problems.push(k + ": no valid pulse rows");
+    });
+  }
+  if (!out.length) {
+    strSetStatus("Nothing imported. " + problems.join("; "), true);
+    return;
+  }
+  strResults = out;
+  strSel = 0;
+  strEchemeSel = -1;
+  strRegroup();
+  document.getElementById("strResults").style.display = "flex";
+  document.getElementById("strExport").disabled = false;
+  strSetStatus(
+    out.length + " recording(s) built from Temporal Analysis tables. Echemes follow the table's motif_id where present." +
+      (problems.length ? " Skipped: " + problems.join("; ") + "." : ""),
+    false,
+  );
+  strSelect(0);
 }
 
 // Echeme grouping and normalisation: cheap, so they follow the controls live.
@@ -230,7 +345,9 @@ function strRegroup() {
     r.echemes = [];
     r.pulses.forEach((p, i) => {
       const prev = r.pulses[i - 1];
-      if (!prev || p.start - prev.end > gap) r.echemes.push({ first: i, last: i, start: p.start, end: p.end, max: 0 });
+      // A table's own motifs win over the Echeme gap: they were checked by eye.
+      const split = r.byMotif ? !prev || p.motif !== prev.motif : !prev || p.start - prev.end > gap;
+      if (split) r.echemes.push({ first: i, last: i, start: p.start, end: p.end, max: 0 });
       const e = r.echemes[r.echemes.length - 1];
       e.last = i;
       e.end = p.end;
@@ -367,7 +484,7 @@ function strDraw() {
     accent = css.getPropertyValue("--accent").trim() || "#58a6ff";
   const v = strView(r),
     L = STR_M.L, R = STR_M.R, T = STR_M.T, B = STR_M.B,
-    pw = w - L - R, ph = h - T - B, mid = T + ph / 2,
+    pw = w - L - R, ph = h - T - B, base = T + ph,
     X = (t) => L + ((t - v.t0) / (v.t1 - v.t0)) * pw;
   if (strEchemeSel < 0)
     r.echemes.forEach((e, i) => {
@@ -375,23 +492,32 @@ function strDraw() {
       g.fillStyle = "rgba(128,128,140,0.12)";
       g.fillRect(X(e.start), T, Math.max(1, X(e.end) - X(e.start)), ph);
     });
+  // Amplitude is never negative, so the bars rise from a 0 baseline rather
+  // than mirroring about a centre line: same information, twice the height.
   g.strokeStyle = "rgba(150,150,160,0.35)";
   g.beginPath();
-  g.moveTo(L, mid);
-  g.lineTo(L + pw, mid);
+  [0.5, 1].forEach((f) => {
+    g.moveTo(L, base - f * ph);
+    g.lineTo(L + pw, base - f * ph);
+  });
+  g.stroke();
+  g.strokeStyle = "rgba(150,150,160,0.7)";
+  g.beginPath();
+  g.moveTo(L, base);
+  g.lineTo(L + pw, base);
   g.stroke();
   g.fillStyle = accent;
   v.list.forEach((p) => {
     const bw = Math.max(1, X(p.end) - X(p.start)),
-      bh = p.amp_norm * (ph / 2);
-    g.fillRect(X(p.start), mid - bh, bw, bh * 2);
+      bh = p.amp_norm * ph;
+    g.fillRect(X(p.start), base - bh, bw, bh);
     p._x0 = X(p.start);
     p._x1 = X(p.start) + bw;
   });
   g.fillStyle = ink;
   g.font = "10px sans-serif";
   g.textAlign = "right";
-  [["1", T + 8], ["0", mid + 3], ["1", T + ph]].forEach(([s, y]) => g.fillText(s, L - 5, y));
+  [["1", T + 4], ["0.5", base - ph / 2 + 3], ["0", base + 3]].forEach(([s, y]) => g.fillText(s, L - 5, y));
   g.textAlign = "center";
   const span = v.t1 - v.t0,
     useMs = span < 2;
@@ -399,11 +525,13 @@ function strDraw() {
     const t = v.t0 + (span * i) / 5;
     g.fillText(useMs ? (t * 1000).toFixed(0) : t.toFixed(span < 20 ? 1 : 0), X(t), h - 8);
   }
+  g.textAlign = "right";
+  g.fillText(useMs ? "ms" : "s", L - 16, h - 8); // clear of the first tick label, centred on L
   g.textAlign = "left";
-  g.fillText(useMs ? "ms" : "s", L + pw - 12, h - 8 - 12);
-  if (!v.list.length) g.fillText("No pulses found.", L + 10, mid - 8);
+  if (!v.list.length) g.fillText("No pulses found.", L + 10, base - ph / 2);
   strDrawSpec(r);
   strShowVector(r, v);
+  strDrawFingerprint(r);
 }
 function strCanvasClick(ev) {
   if (strEchemeSel >= 0) return;
@@ -429,6 +557,16 @@ function strDrawSpec(r) {
   const css = getComputedStyle(document.body),
     ink = css.getPropertyValue("--txt2").trim() || "#999",
     accent = css.getPropertyValue("--accent").trim() || "#58a6ff";
+  if (!r.dom.spec) {
+    g.fillStyle = ink;
+    g.font = "11px sans-serif";
+    g.fillText(
+      "Built from a table: no audio, so no spectrum. Dominant frequency = median peak_freq_khz of the pulses (" + r.dom.f0.toFixed(2) + " kHz).",
+      8,
+      h / 2,
+    );
+    return;
+  }
   const { spec, stride, binHz } = r.dom,
     L = 40, R = 12, T = 8, B = 20,
     mx = Math.max(...spec),
@@ -458,16 +596,190 @@ function strDrawSpec(r) {
 }
 
 // ── vector + export ──────────────────────────────────────────────────
+// [dominant kHz, dur_1, amp_1, gap_1, dur_2, amp_2, gap_2, ..., dur_n, amp_n]:
+// each pulse is followed by the silence before the next one, so the vector
+// holds the whole rhythm, not just the pulses. No gap after the last pulse.
 function strVector(r, list) {
   const v = [r.dom ? Math.round(r.dom.f0 * 1000) / 1000 : null];
-  list.forEach((p) => v.push(Math.round(p.dur_ms * 100) / 100, Math.round(p.amp_norm * 1000) / 1000));
+  list.forEach((p, i) => {
+    v.push(Math.round(p.dur_ms * 100) / 100, Math.round(p.amp_norm * 1000) / 1000);
+    if (i < list.length - 1) v.push(Math.round((list[i + 1].start - p.end) * 1e5) / 100);
+  });
   return v;
 }
 function strShowVector(r, view) {
   const v = strVector(r, view.list),
-    shown = v.slice(0, 80).join(", ");
+    shown = v.slice(0, 90).join(", ");
   document.getElementById("strVector").textContent =
-    "[" + shown + (v.length > 80 ? ", … (" + ((v.length - 1) / 2) + " pulses)" : "") + "]   =  [dominant kHz, duration ms, amplitude, duration ms, amplitude, …]";
+    "[" + shown + (v.length > 90 ? ", … (" + view.list.length + " pulses)" : "") +
+    "]   =  [dominant kHz, duration ms, amplitude, gap ms, duration ms, amplitude, gap ms, …, duration ms, amplitude]";
+}
+// ── fingerprint ──────────────────────────────────────────────────────
+// The vector's length depends on how many pulses were recorded, so two songs
+// cannot be compared number by number. The fingerprint summarises the same
+// barcode into a FIXED set of numbers, always in the same order, so songs can
+// be averaged, compared and pooled into species profiles (Summary Analysis
+// reads it as the "STR" table). Blocks:
+//   scalars      dominant frequency and the classic rate/duty/echeme values
+//   pdur_*       share of pulses per duration bin (log spaced)
+//   ioi_*        share of onset-to-onset intervals per bin (log spaced); the
+//                intervals that cross echemes land in the long bins, so the
+//                rhythm at both levels is in one histogram
+//   amp_pNN      mean amplitude shape along an echeme (time normalised, each
+//                echeme scaled to its own loudest pulse)
+//   dur_pNN      pulse duration along an echeme, relative to that echeme's mean
+// Histograms are proportions and profiles are relative, so the fingerprint
+// does not depend on recording length or gain.
+const STR_FP = {
+  durEdges: strLogEdges(0.5, 500, 8),
+  ioiEdges: strLogEdges(1, 2000, 12),
+  ampPos: 16,
+  durPos: 8,
+};
+function strLogEdges(a, b, n) {
+  const e = [];
+  for (let i = 0; i <= n; i++) e.push(a * Math.pow(b / a, i / n));
+  return e;
+}
+function strBinLabel(edges, i) {
+  const f = (x) => (x < 10 ? x.toFixed(1) : Math.round(x));
+  return f(edges[i]) + "-" + f(edges[i + 1]) + "ms";
+}
+function strHist(vals, edges) {
+  const n = edges.length - 1,
+    h = new Array(n).fill(0);
+  vals.forEach((v) => {
+    let k = 0;
+    while (k < n - 1 && v >= edges[k + 1]) k++; // below the first edge -> bin 0, above the last -> last bin
+    h[k]++;
+  });
+  const s = vals.length || 1;
+  return h.map((c) => c / s);
+}
+// Value of a piecewise-linear profile (points sorted by x in [0, 1]) at u.
+function strInterp(pts, u) {
+  if (u <= pts[0][0]) return pts[0][1];
+  for (let i = 1; i < pts.length; i++)
+    if (u <= pts[i][0]) {
+      const [x0, y0] = pts[i - 1],
+        [x1, y1] = pts[i];
+      return x1 > x0 ? y0 + ((u - x0) / (x1 - x0)) * (y1 - y0) : y1;
+    }
+  return pts[pts.length - 1][1];
+}
+function strFingerprint(r) {
+  const P = r.pulses,
+    E = r.echemes,
+    r4 = (x) => (x === null || !isFinite(x) ? null : Math.round(x * 1e4) / 1e4),
+    mean = (a) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : null),
+    median = (a) => {
+      if (!a.length) return null;
+      const s = [...a].sort((x, y) => x - y),
+        m = s.length >> 1;
+      return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+    };
+  if (P.length < 2) return null;
+  const fp = {};
+  const multi = E.filter((e) => e.last > e.first),
+    within = [];
+  multi.forEach((e) => {
+    for (let i = e.first; i < e.last; i++) within.push((P[i + 1].start - P[i].end) * 1000);
+  });
+  fp.dominant_khz = r.dom ? r4(r.dom.f0) : null;
+  fp.pulse_rate_pps = r4(mean(multi.map((e) => (e.last - e.first) / (P[e.last].start - P[e.first].start))));
+  fp.duty_cycle_pct = r4(
+    mean(
+      multi.map((e) => {
+        let on = 0;
+        for (let i = e.first; i <= e.last; i++) on += P[i].end - P[i].start;
+        return (100 * on) / (e.end - e.start);
+      }),
+    ),
+  );
+  fp.pulses_per_echeme = r4(mean(E.map((e) => e.last - e.first + 1)));
+  fp.echeme_dur_ms = r4(mean(E.map((e) => (e.end - e.start) * 1000)));
+  fp.echeme_period_ms = r4(E.length > 1 ? mean(E.slice(1).map((e, i) => (e.start - E[i].start) * 1000)) : null);
+  fp.pulse_dur_median_ms = r4(median(P.map((p) => p.dur_ms)));
+  fp.pulse_gap_median_ms = r4(median(within));
+
+  strHist(P.map((p) => p.dur_ms), STR_FP.durEdges).forEach((v, i) => (fp["pdur_" + strBinLabel(STR_FP.durEdges, i)] = r4(v)));
+  const ioi = [];
+  for (let i = 1; i < P.length; i++) ioi.push((P[i].start - P[i - 1].start) * 1000);
+  strHist(ioi, STR_FP.ioiEdges).forEach((v, i) => (fp["ioi_" + strBinLabel(STR_FP.ioiEdges, i)] = r4(v)));
+
+  // Profiles along the echeme, from echemes with at least 3 pulses (fewer
+  // points describe no shape). x = pulse centre, 0 at the echeme's first
+  // pulse centre and 1 at its last.
+  const shaped = E.filter((e) => e.last - e.first >= 2),
+    amp = new Array(STR_FP.ampPos).fill(0),
+    dur = new Array(STR_FP.durPos).fill(0);
+  shaped.forEach((e) => {
+    const c = (p) => (p.start + p.end) / 2,
+      x0 = c(P[e.first]),
+      span = c(P[e.last]) - x0 || 1,
+      ps = P.slice(e.first, e.last + 1),
+      mDur = ps.reduce((s, p) => s + p.dur_ms, 0) / ps.length || 1,
+      ap = ps.map((p) => [(c(p) - x0) / span, e.max > 0 ? p.amp / e.max : 0]),
+      dp = ps.map((p) => [(c(p) - x0) / span, p.dur_ms / mDur]);
+    for (let k = 0; k < STR_FP.ampPos; k++) amp[k] += strInterp(ap, (k + 0.5) / STR_FP.ampPos);
+    for (let k = 0; k < STR_FP.durPos; k++) dur[k] += strInterp(dp, (k + 0.5) / STR_FP.durPos);
+  });
+  const two = (k) => String(k + 1).padStart(2, "0");
+  amp.forEach((v, k) => (fp["amp_p" + two(k)] = shaped.length ? r4(v / shaped.length) : null));
+  dur.forEach((v, k) => (fp["dur_p" + two(k)] = shaped.length ? r4(v / shaped.length) : null));
+  return fp;
+}
+function strDrawFingerprint(r) {
+  const cv = document.getElementById("strFp"),
+    note = document.getElementById("strFpNote");
+  if (!cv) return;
+  const dpr = window.devicePixelRatio || 1,
+    w = cv.clientWidth,
+    h = cv.clientHeight;
+  cv.width = w * dpr;
+  cv.height = h * dpr;
+  const g = cv.getContext("2d");
+  g.scale(dpr, dpr);
+  const fp = strFingerprint(r);
+  if (!fp) {
+    note.textContent = "Needs at least 2 pulses.";
+    return;
+  }
+  const css = getComputedStyle(document.body),
+    ink = css.getPropertyValue("--txt2").trim() || "#999",
+    accent = css.getPropertyValue("--accent").trim() || "#58a6ff";
+  const keys = Object.keys(fp),
+    groups = [
+      ["Pulse duration", keys.filter((k) => k.startsWith("pdur_")), 1],
+      ["Onset-to-onset interval", keys.filter((k) => k.startsWith("ioi_")), 1],
+      ["Amplitude along echeme", keys.filter((k) => k.startsWith("amp_p")), 1],
+      ["Duration along echeme", keys.filter((k) => k.startsWith("dur_p")), 2],
+    ],
+    total = groups.reduce((s, gr) => s + gr[1].length, 0),
+    gap = 14,
+    T = 14,
+    B = 6,
+    bw = (w - gap * (groups.length - 1)) / total;
+  let x = 0;
+  g.font = "10px sans-serif";
+  groups.forEach(([label, ks, max]) => {
+    g.fillStyle = ink;
+    g.fillText(label, x, 10);
+    g.strokeStyle = "rgba(150,150,160,0.35)";
+    g.strokeRect(x, T, bw * ks.length, h - T - B);
+    g.fillStyle = accent;
+    ks.forEach((k, i) => {
+      const v = fp[k] === null ? 0 : Math.min(1, fp[k] / max),
+        bh = v * (h - T - B);
+      g.fillRect(x + i * bw + 1, h - B - bh, Math.max(1, bw - 2), bh);
+    });
+    x += bw * ks.length + gap;
+  });
+  const n = keys.length;
+  note.textContent =
+    n + " numbers. Rate " + (fp.pulse_rate_pps ?? "–") + " pulses/s, duty cycle " + (fp.duty_cycle_pct ?? "–") +
+    " %, " + (fp.pulses_per_echeme ?? "–") + " pulses/echeme, echeme period " + (fp.echeme_period_ms ?? "–") + " ms. " +
+    "Exported in the STR_fingerprint sheet, which Summarize reads as the STR table.";
 }
 function strCopyVector() {
   const r = strResults[strSel];
@@ -482,15 +794,26 @@ async function strExport() {
   if (!strResults.length) return;
   const summary = [],
     pulses = [],
-    vectors = [];
+    vectors = [],
+    prints = [];
   strResults.forEach((r) => {
+    const fp = strFingerprint(r);
+    if (fp)
+      prints.push({
+        source_file: r.name,
+        specimen_id: (r.meta && r.meta.specimen_id) || "",
+        species: (r.meta && r.meta.species) || "",
+        temp_c: (r.meta && r.meta.temp_c) ?? "",
+        ...fp,
+      });
     summary.push({
       source_file: r.name,
+      built_from: r.source === "table" ? "Temporal Analysis table" : "audio",
       dominant_khz: r.dom ? Math.round(r.dom.f0 * 1000) / 1000 : "",
       n_pulses: r.pulses.length,
       n_echemes: r.echemes.length,
       duration_s: Math.round(r.dur * 1000) / 1000,
-      sample_rate_hz: r.sr,
+      sample_rate_hz: r.sr ?? "",
     });
     r.pulses.forEach((p, i) =>
       pulses.push({
@@ -521,7 +844,10 @@ async function strExport() {
       ...P,
       echeme_gap_ms: parseFloat(document.getElementById("strEGap").value) || 100,
       normalised_per: document.getElementById("strNorm").value,
-      vector_layout: "dominant_khz;duration_ms;amplitude_norm;duration_ms;amplitude_norm;...",
+      vector_layout: "dominant_khz;duration_ms;amplitude_norm;gap_ms;duration_ms;amplitude_norm;gap_ms;...;duration_ms;amplitude_norm",
+      fingerprint_version: 1,
+      fingerprint_layout:
+        "scalars; pdur_* = share of pulses per duration bin (8, log 0.5-500 ms); ioi_* = share of onset-to-onset intervals per bin (12, log 1-2000 ms); amp_p01-16 = mean amplitude along the echeme (each scaled to its loudest pulse); dur_p01-08 = pulse duration along the echeme / echeme mean",
       generated: new Date().toISOString(),
     },
   ];
@@ -529,7 +855,9 @@ async function strExport() {
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
     await dlFile(
       "Rthoptera_STR_" + stamp + ".xlsx",
-      _buildXlsx([["STR_summary", summary], ["Pulses", pulses], ["STR_vectors", vectors], ["Info", info]]),
+      // STR_pulses, not Pulses: Summarize would otherwise take these rows for
+      // a Temporal Analysis pulse table.
+      _buildXlsx([["STR_fingerprint", prints], ["STR_summary", summary], ["STR_pulses", pulses], ["STR_vectors", vectors], ["Info", info]]),
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       { exactName: true },
     );

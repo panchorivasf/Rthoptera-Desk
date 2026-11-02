@@ -26,6 +26,7 @@
     ["envPeaks", "EnvPeaks"],
     ["spectral", "Spectral"],
     ["motseq", "MotifSeqs"],
+    ["str", "STR"],
   ];
   // Columns that identify or locate a row rather than describe the sound.
   const EXCL_START = /^(source|specimen|species|country|locality|selection|view|channel|annotation|label|unit|type|temp)/i;
