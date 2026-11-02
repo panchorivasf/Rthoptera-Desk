@@ -169,8 +169,8 @@
       "On the figure:": "En la figura:",
       "drag to zoom to a range, click to place the playhead, wheel to zoom, Shift+wheel to pan, double-click for the whole recording. Space plays or pauses.":
         "arrastre para hacer zoom a un rango, haga clic para colocar el cabezal de reproducción, use la rueda para hacer zoom, Shift+rueda para desplazar, doble clic para toda la grabación. Espacio reproduce o pausa.",
-      "Check the recordings to average in the Loaded Audio panel at the bottom of the window — no separate add step, whatever's checked there is what gets drawn.":
-        "Marque las grabaciones a promediar en el panel de Audio Cargado en la parte inferior de la ventana — no hay un paso de añadir aparte, lo que esté marcado allí es lo que se dibuja.",
+      "Check the recordings to average in the Loaded Audio panel on the left of the window — no separate add step, whatever's checked there is what gets drawn.":
+        "Marque las grabaciones a promediar en el panel de Audio Cargado a la izquierda de la ventana — no hay un paso de añadir aparte, lo que esté marcado allí es lo que se dibuja.",
       "All recordings must share the same sample rate — they're averaged bin-for-bin into the mean/median contour and SD band. The photo is optional; without one, only the spectrum panel is drawn. Drag the photo to pan it within the frame; drag the A/B letters to reposition them.":
         "Todas las grabaciones deben compartir la misma tasa de muestreo — se promedian bin por bin en el contorno de media/mediana y la banda de DE. La foto es opcional; sin ella, solo se dibuja el panel del espectro. Arrastre la foto para desplazarla dentro del marco; arrastre las letras A/B para reposicionarlas.",
       "Add the Temporal Analysis and/or Spectral Analysis .xlsx exports for each recording. The Specimen ID tagged when exporting (top toolbar) is read automatically; if it's missing or wrong, fix it below — that's what groups recordings by animal in the summary.":
@@ -638,8 +638,8 @@
       "On the figure:": "Nella figura:",
       "drag to zoom to a range, click to place the playhead, wheel to zoom, Shift+wheel to pan, double-click for the whole recording. Space plays or pauses.":
         "trascina per ingrandire un intervallo, fai clic per posizionare il cursore di riproduzione, usa la rotella per lo zoom, Shift+rotella per scorrere, doppio clic per l'intera registrazione. Barra spaziatrice per riprodurre o mettere in pausa.",
-      "Check the recordings to average in the Loaded Audio panel at the bottom of the window — no separate add step, whatever's checked there is what gets drawn.":
-        "Seleziona le registrazioni da mediare nel pannello Audio Caricato in fondo alla finestra — nessun passaggio di aggiunta separato, ciò che è selezionato lì è ciò che viene disegnato.",
+      "Check the recordings to average in the Loaded Audio panel on the left of the window — no separate add step, whatever's checked there is what gets drawn.":
+        "Seleziona le registrazioni da mediare nel pannello Audio Caricato a sinistra nella finestra — nessun passaggio di aggiunta separato, ciò che è selezionato lì è ciò che viene disegnato.",
       "All recordings must share the same sample rate — they're averaged bin-for-bin into the mean/median contour and SD band. The photo is optional; without one, only the spectrum panel is drawn. Drag the photo to pan it within the frame; drag the A/B letters to reposition them.":
         "Tutte le registrazioni devono condividere la stessa frequenza di campionamento — vengono mediate bin per bin nel contorno di media/mediana e nella banda di DS. La foto è opzionale; senza di essa, viene disegnato solo il pannello dello spettro. Trascina la foto per spostarla nel riquadro; trascina le lettere A/B per riposizionarle.",
       "Add the Temporal Analysis and/or Spectral Analysis .xlsx exports for each recording. The Specimen ID tagged when exporting (top toolbar) is read automatically; if it's missing or wrong, fix it below — that's what groups recordings by animal in the summary.":
@@ -1107,8 +1107,8 @@
       "On the figure:": "Na figura:",
       "drag to zoom to a range, click to place the playhead, wheel to zoom, Shift+wheel to pan, double-click for the whole recording. Space plays or pauses.":
         "arraste para dar zoom em um intervalo, clique para posicionar o cursor de reprodução, use a roda para dar zoom, Shift+roda para deslocar, duplo clique para a gravação inteira. Espaço reproduz ou pausa.",
-      "Check the recordings to average in the Loaded Audio panel at the bottom of the window — no separate add step, whatever's checked there is what gets drawn.":
-        "Marque as gravações a serem promediadas no painel Áudio Carregado na parte inferior da janela — não há uma etapa separada de adicionar, o que estiver marcado ali é o que é desenhado.",
+      "Check the recordings to average in the Loaded Audio panel on the left of the window — no separate add step, whatever's checked there is what gets drawn.":
+        "Marque as gravações a serem promediadas no painel Áudio Carregado à esquerda da janela — não há uma etapa separada de adicionar, o que estiver marcado ali é o que é desenhado.",
       "All recordings must share the same sample rate — they're averaged bin-for-bin into the mean/median contour and SD band. The photo is optional; without one, only the spectrum panel is drawn. Drag the photo to pan it within the frame; drag the A/B letters to reposition them.":
         "Todas as gravações devem compartilhar a mesma taxa de amostragem — são promediadas bin a bin no contorno de média/mediana e na faixa de DP. A foto é opcional; sem ela, apenas o painel do espectro é desenhado. Arraste a foto para deslocá-la dentro do quadro; arraste as letras A/B para reposicioná-las.",
       "Add the Temporal Analysis and/or Spectral Analysis .xlsx exports for each recording. The Specimen ID tagged when exporting (top toolbar) is read automatically; if it's missing or wrong, fix it below — that's what groups recordings by animal in the summary.":

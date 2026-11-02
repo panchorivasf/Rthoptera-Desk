@@ -413,17 +413,16 @@
                 : !!row.closest("#mainview-envpeaks"),
             );
           });
-        setupLibraryCollapse();
         setupPreprocessCollapse();
       }
 
-      // Preprocessing: every sidebar panel (Audio Info, Edit Audio, Batch Edit)
-      // and every Edit Audio sub-menu (Time selection, Trim, Bandpass, …) gets
-      // a ▾/▸ button in its header.
+      // Preprocessing: each pane (Edit Audio, Batch Edit) gets one ▾/▸ button in
+      // its header. The tools inside a pane are not collapsible on their own.
+      // A pane marked data-collapse-default="closed" starts folded.
       function setupPreprocessCollapse() {
         const root = $("mainview-preprocess");
         if (!root) return;
-        const makeBtn = (head, bodyNodes, extra) => {
+        const makeBtn = (head, bodyNodes, extra, startCollapsed) => {
           const btn = document.createElement("button");
           btn.type = "button";
           btn.className = "panel-toggle";
@@ -442,7 +441,7 @@
             e.stopPropagation();
             set(btn.textContent === "▾");
           });
-          set(false);
+          set(!!startCollapsed);
         };
         root.querySelectorAll(".panel").forEach((panel) => {
           if (panel.dataset.collapseReady === "true") return;
@@ -453,57 +452,92 @@
           head.className = "panel-head";
           panel.insertBefore(head, h2);
           head.appendChild(h2);
-          makeBtn(head, () =>
-            Array.from(panel.children).filter((n) => n !== head),
+          // Anything marked data-pp-head (Batch Edit's selection controls) goes
+          // into the title bar after the title; data-pp-head-right (the Undo
+          // and Save buttons) goes to its right-hand end. Both stay visible
+          // when the pane is folded.
+          panel
+            .querySelectorAll(":scope > [data-pp-head], :scope > [data-pp-head-right]")
+            .forEach((el) => head.appendChild(el));
+          makeBtn(
+            head,
+            () => Array.from(panel.children).filter((n) => n !== head),
+            null,
+            panel.dataset.collapseDefault === "closed",
           );
-          // Sub-menus inside Edit Audio: a bordered block whose first child is
-          // its bold title.
-          panel.querySelectorAll(":scope > div > div").forEach((sub) => {
-            const title = sub.firstElementChild;
-            if (!title || title.style.fontWeight !== "600") return;
-            if (sub.dataset.collapseReady === "true") return;
-            sub.dataset.collapseReady = "true";
-            title.style.display = "flex";
-            title.style.alignItems = "center";
-            title.style.gap = "6px";
-            makeBtn(title, () =>
-              Array.from(sub.children).filter((n) => n !== title),
-            );
-          });
         });
       }
 
-      // Loaded Audio panel (bottom of the window): ▾/▸ folds the grid away.
-      function setupLibraryCollapse() {
-        const panel = $("audioLibPanel");
-        if (!panel || panel.dataset.collapseReady === "true") return;
-        const head = panel.firstElementChild;
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "panel-toggle";
-        head.insertBefore(btn, head.firstChild);
-        const set = (collapsed) => {
-          btn.textContent = collapsed ? "▸" : "▾";
-          btn.title = collapsed ? "Expand Loaded Audio" : "Collapse Loaded Audio";
-          Array.from(panel.children).forEach((n) => {
-            if (n === head) return;
-            // Keep each child's own inline display (the grid is display:grid).
-            if (n.dataset.libDisplay === undefined)
-              n.dataset.libDisplay = n.style.display || "";
-            n.style.display = collapsed ? "none" : n.dataset.libDisplay;
+      // ── Loaded Audio side pane ────────────────────────────────────────────
+      // Hidden (width 0) until its right edge is dragged out; a click on the
+      // edge shows or hides it at the last width. Releasing a drag narrower
+      // than LIB_SNAP closes it, narrower than LIB_MIN but past that snaps
+      // to LIB_MIN. The width is remembered between sessions.
+      const LIB_MIN = 170,
+        LIB_SNAP = 90,
+        LIB_DEFAULT = 260;
+      let libW = 0,
+        libLast = LIB_DEFAULT,
+        _libResizeQueued = false;
+      function applyLibWidth(w) {
+        libW = Math.max(0, Math.round(w));
+        $("libPane").style.width = libW + "px";
+        $("libSide").classList.toggle("open", libW > 0);
+        // The viewers size themselves to their column; tell them it changed.
+        if (!_libResizeQueued) {
+          _libResizeQueued = true;
+          requestAnimationFrame(() => {
+            _libResizeQueued = false;
+            window.dispatchEvent(new Event("resize"));
           });
-          try {
-            localStorage.setItem("rt_audiolib_collapsed", collapsed ? "1" : "0");
-          } catch (e) {}
-          if (typeof render === "function" && rawSamples) render();
-        };
-        btn.addEventListener("click", () => set(btn.textContent === "▾"));
-        panel.dataset.collapseReady = "true";
-        let was = false;
+        }
+      }
+      function saveLibWidth() {
         try {
-          was = localStorage.getItem("rt_audiolib_collapsed") === "1";
+          localStorage.setItem("rt_lib_w", String(libW));
+          localStorage.setItem("rt_lib_last", String(libLast));
         } catch (e) {}
-        set(was);
+      }
+      function setupLibSide() {
+        const edge = $("libEdge");
+        if (!edge || edge.dataset.ready === "true") return;
+        edge.dataset.ready = "true";
+        try {
+          const last = parseInt(localStorage.getItem("rt_lib_last"), 10);
+          if (last >= LIB_MIN) libLast = last;
+        } catch (e) {}
+        applyLibWidth(0); // hidden by default, every session
+        let drag = null;
+        edge.addEventListener("pointerdown", (e) => {
+          edge.setPointerCapture(e.pointerId);
+          drag = { x: e.clientX, w: libW, moved: false };
+          e.preventDefault();
+        });
+        edge.addEventListener("pointermove", (e) => {
+          if (!drag) return;
+          const dx = e.clientX - drag.x;
+          if (Math.abs(dx) > 3) drag.moved = true;
+          if (!drag.moved) return;
+          applyLibWidth(Math.min(window.innerWidth * 0.6, drag.w + dx));
+        });
+        edge.addEventListener("pointerup", () => {
+          if (!drag) return;
+          const d = drag;
+          drag = null;
+          if (!d.moved) {
+            // plain click: toggle
+            if (libW > 0) {
+              libLast = Math.max(LIB_MIN, libW);
+              applyLibWidth(0);
+            } else applyLibWidth(libLast);
+          } else if (libW < LIB_SNAP) {
+            applyLibWidth(0);
+          } else {
+            if (libW < LIB_MIN) applyLibWidth(LIB_MIN);
+            libLast = libW;
+          }
+          saveLibWidth();
+        });
       }
 
       function pkTogglePresetMenu(force) {
@@ -1757,8 +1791,21 @@
         let sr = origSampleRate;
         // Apply edits in order. Trim slices on the current timeline; bandpass
         // filters in place. Order matters and is preserved by the chain.
-        for (const ed of audioEdits) {
-          if (ed.type === "trim") {
+        for (const [ei, ed] of audioEdits.entries()) {
+          if (ed.type === "dcoffset") {
+            sig = applyDcFix(sig);
+          } else if (ed.type === "vanish") {
+            sig = applyVanish(sig, sr, ed, ei);
+          } else if (ed.type === "delete") {
+            const i0 = Math.max(0, Math.round(ed.t0 * sr));
+            const i1 = Math.min(sig.length, Math.round(ed.t1 * sr));
+            if (i1 > i0 && i1 - i0 < sig.length) {
+              const cut = new Float32Array(sig.length - (i1 - i0));
+              cut.set(sig.subarray(0, i0), 0);
+              cut.set(sig.subarray(i1), i0);
+              sig = cut;
+            }
+          } else if (ed.type === "trim") {
             const i0 = Math.max(0, Math.floor(ed.t0 * sr));
             const i1 = Math.min(sig.length, Math.ceil(ed.t1 * sr));
             if (i1 > i0) sig = sig.slice(i0, i1);
@@ -1776,6 +1823,11 @@
         // original audio.
         const fd = audioEdits.find((e) => e.type === "freqdrop");
         if (fd && fd.pct > 0) sig = applyFreqDrop(sig, fd.pct);
+        // Normalize sets the final level of what is left, so it runs after the
+        // filters and cuts and before the padding and fades, which are noise
+        // and ramps that should not decide the peak.
+        const nm = audioEdits.find((e) => e.type === "normalize");
+        if (nm) sig = applyNormalize(sig, Math.pow(10, nm.db / 20));
         // Noise padding grows the signal, so it goes after every filter but
         // before the fades, which then shape the padded edges.
         const np = audioEdits.find((e) => e.type === "noisepad");
@@ -2388,6 +2440,12 @@
           _noisePadInfo = { ok: false };
           return sig;
         }
+        return _padCore(sig, sr, sec, seed, prof);
+      }
+      // The padding itself, given a profile. Shared by the edit chain
+      // (applyNoisePad, which caches the profile) and by batch apply, which
+      // learns one per file.
+      function _padCore(sig, sr, sec, seed, prof) {
         const P = Math.round(sec * sr),
           n = sig.length;
         const X = Math.max(
@@ -2419,6 +2477,248 @@
           rmsDb: P ? 10 * Math.log10(e / P + 1e-20) : -Infinity,
         };
         return out;
+      }
+      // ── DC offset ────────────────────────────────────────────────────────
+      // Subtracts the recording's mean. Returns a NEW array when it changes
+      // anything, never mutates the input.
+      function dcMean(sig) {
+        let s = 0;
+        for (let i = 0; i < sig.length; i++) s += sig[i];
+        return sig.length ? s / sig.length : 0;
+      }
+      function applyDcFix(sig) {
+        const m = dcMean(sig);
+        if (Math.abs(m) < 1e-9) return sig;
+        const out = new Float32Array(sig.length);
+        for (let i = 0; i < sig.length; i++) out[i] = sig[i] - m;
+        return out;
+      }
+      function applyNormalizeEdit() {
+        if (!origSamples) {
+          log("Load audio first", "warn");
+          return;
+        }
+        let db = parseFloat($("editNormDb").value);
+        if (!isFinite(db)) db = 0;
+        db = Math.min(0, db); // above full scale would only clip
+        $("editNormDb").value = db;
+        audioEdits = audioEdits.filter((e) => e.type !== "normalize");
+        audioEdits.push({ type: "normalize", db });
+        rebuildAudioFromEdits({ resetView: false });
+        log("Normalized to " + db + " dBFS.", "ok");
+      }
+      function clearNormalize() {
+        if (!audioHasEdit("normalize")) return;
+        audioEdits = audioEdits.filter((e) => e.type !== "normalize");
+        rebuildAudioFromEdits({ resetView: false });
+        log("Normalization removed", "ok");
+      }
+      function fixDcOffset() {
+        if (!origSamples || !rawSamples) {
+          log("Load audio first", "warn");
+          return;
+        }
+        // Measure on what is on screen; with a correction already applied this
+        // reads the leftover, which is how a stale one gets refreshed.
+        const m = dcMean(rawSamples),
+          pct = (100 * Math.abs(m)) / (peakAmp || 1);
+        if (Math.abs(m) < 1e-5) {
+          log("No DC offset to remove (mean " + m.toExponential(1) + ").", "info");
+          return;
+        }
+        // Done last among the in-order edits so it also takes out any offset
+        // introduced by an earlier one. Re-pressing moves it to the end.
+        audioEdits = audioEdits.filter((e) => e.type !== "dcoffset");
+        audioEdits.push({ type: "dcoffset" });
+        rebuildAudioFromEdits({ resetView: false });
+        log(
+          "DC offset removed: it was " + m.toFixed(5) + " (" + pct.toFixed(1) + "% of the peak, " +
+            (20 * Math.log10(Math.abs(m) + 1e-12)).toFixed(1) + " dBFS).",
+          "ok",
+        );
+      }
+      function clearDcOffset() {
+        if (!audioHasEdit("dcoffset")) return;
+        audioEdits = audioEdits.filter((e) => e.type !== "dcoffset");
+        rebuildAudioFromEdits({ resetView: false });
+        log("DC offset correction removed", "ok");
+      }
+
+      // ── Vanish / Delete (time selection edits) ───────────────────────────
+      // Both sit in the edit chain at the point they were made, with times
+      // relative to the signal at that point, so they replay in order with the
+      // other edits and survive later filters. Trim replaces the start of the
+      // chain, which would move their timeline; see ppConfirmDropCuts.
+      //
+      // Vanish: the selection becomes noise synthesised from the recording's own
+      // background profile, so the sound goes but the length and timing stay.
+      // The noise is faded in and out over the neighbouring samples, so no seam
+      // is left in the background.
+      let _vanishFailed = false;
+      let _vanishProfCache = { src: null, map: {} };
+      function applyVanish(sig, sr, ed, ei) {
+        if (_vanishProfCache.src !== origSamples)
+          _vanishProfCache = { src: origSamples, map: {} };
+        const key =
+          sr + "|" + sig.length + "|" + JSON.stringify(audioEdits.slice(0, ei));
+        let prof = _vanishProfCache.map[key];
+        if (prof === undefined) {
+          prof = estimateNoiseProfile(sig, sr);
+          _vanishProfCache.map[key] = prof;
+        }
+        if (!prof) {
+          _vanishFailed = true;
+          return sig;
+        }
+        const n = sig.length,
+          i0 = Math.max(0, Math.round(ed.t0 * sr)),
+          i1 = Math.min(n, Math.round(ed.t1 * sr));
+        if (i1 <= i0) return sig;
+        const X = Math.max(0, Math.min(Math.round(0.01 * sr), i0, n - i1)),
+          len = i1 - i0 + 2 * X,
+          noise = synthNoise(prof, len, ed.seed),
+          out = Float32Array.from(sig);
+        for (let j = 0; j < len; j++) {
+          // Equal-power crossfade over the X samples on either side; full
+          // noise across the selection itself.
+          let wn = 1;
+          if (j < X) wn = Math.sin(((j + 0.5) / X) * (Math.PI / 2));
+          else if (j >= len - X) wn = Math.sin(((len - j - 0.5) / X) * (Math.PI / 2));
+          const ws = Math.sqrt(Math.max(0, 1 - wn * wn)),
+            pos = i0 - X + j;
+          out[pos] = noise[j] * wn + sig[pos] * ws;
+        }
+        return out;
+      }
+      function ppCutEdits() {
+        return audioEdits.filter((e) => e.type === "vanish" || e.type === "delete");
+      }
+      // The Preprocessing time selection is on the finished timeline; an edit in
+      // the chain sits BEFORE the noise padding, so take the pad off the front.
+      // These refusals go to the toast as well: the log is usually collapsed,
+      // and a Delete that silently does nothing looks broken.
+      function ppWarn(msg) {
+        log(msg, "warn");
+        showToast(msg);
+      }
+      function ppSelOnChainTimeline() {
+        if (trimMode) {
+          ppWarn("Confirm or cancel the trim first (Trim mode is open).");
+          return null;
+        }
+        if (!rawSamples || !ppSel || !(ppSel.t1 > ppSel.t0)) {
+          ppWarn("Drag out a time selection on the waveform first.");
+          return null;
+        }
+        const np = audioEdits.find((e) => e.type === "noisepad"),
+          pad = np && np.sec > 0 ? np.sec : 0,
+          stageDur = duration - 2 * pad,
+          t0 = Math.max(0, ppSel.t0 - pad),
+          t1 = Math.min(stageDur, ppSel.t1 - pad);
+        if (t1 - t0 < 1 / sampleRate) {
+          ppWarn("The selection lies in the added noise padding, not in the recording.");
+          return null;
+        }
+        return { t0, t1, pad, stageDur };
+      }
+      function ppVanishSelection() {
+        const s = ppSelOnChainTimeline();
+        if (!s) return;
+        // clearTimeDependentWork() drops ppSel, so keep the start for the log.
+        const a = ppSel.t0;
+        audioEdits.push({
+          type: "vanish",
+          t0: s.t0,
+          t1: s.t1,
+          seed: Math.floor(Math.random() * 2147483647),
+        });
+        _vanishFailed = false;
+        clearTimeDependentWork();
+        rebuildAudioFromEdits({ resetView: false });
+        if (_vanishFailed) {
+          audioEdits.pop();
+          rebuildAudioFromEdits({ resetView: false });
+          ppWarn(
+            "Not enough quiet material to learn the background noise from (needs a few hundred ms without the target sound).",
+          );
+          return;
+        }
+        log(
+          "Replaced " + (s.t1 - s.t0).toFixed(3) + " s at " + a.toFixed(3) + " s with matched background noise.",
+          "ok",
+        );
+      }
+      // Cut the selection out and join what was before and after it. The
+      // recording gets shorter, so later selections move up by the cut length.
+      function ppDeleteSelection() {
+        const s = ppSelOnChainTimeline();
+        if (!s) return;
+        if (s.t1 - s.t0 >= s.stageDur - 1e-6) {
+          ppWarn("The selection covers the whole recording; nothing would be left.");
+          return;
+        }
+        const a = ppSel.t0,
+          b = ppSel.t1,
+          d = b - a;
+        audioEdits.push({ type: "delete", t0: s.t0, t1: s.t1 });
+        clearTimeDependentWork();
+        ppSel = null;
+        rebuildAudioFromEdits({ resetView: false });
+        const shift = (t) => (t <= a ? t : t >= b ? t - d : a);
+        annotations = annotations
+          .map((x) => ({ ...x, start: shift(x.start), end: shift(x.end) }))
+          .filter((x) => x.end - x.start > 1e-6);
+        if (selAid !== null && !annotations.some((x) => x.id === selAid)) selAid = null;
+        if (typeof annotResetUndo === "function") annotResetUndo();
+        if (typeof anInvalidate === "function") anInvalidate();
+        if (typeof refreshAnnotList === "function") refreshAnnotList();
+        updatePpSelReadout();
+        seekTo(Math.min(a, duration));
+        render();
+        log("Deleted " + d.toFixed(3) + " s at " + a.toFixed(3) + " s; the two sides are joined.", "ok");
+      }
+      function ppUndoCut() {
+        let idx = -1;
+        audioEdits.forEach((e, i) => {
+          if (e.type === "vanish" || e.type === "delete") idx = i;
+        });
+        if (idx < 0) return;
+        const [ed] = audioEdits.splice(idx, 1);
+        clearTimeDependentWork();
+        rebuildAudioFromEdits({ resetView: false });
+        if (ed.type === "delete") {
+          const np = audioEdits.find((e) => e.type === "noisepad"),
+            pad = np && np.sec > 0 ? np.sec : 0,
+            a = ed.t0 + pad,
+            d = ed.t1 - ed.t0;
+          annotations = annotations.map((x) => ({
+            ...x,
+            start: x.start >= a ? x.start + d : x.start,
+            end: x.end > a ? x.end + d : x.end,
+          }));
+          if (typeof annotResetUndo === "function") annotResetUndo();
+          if (typeof anInvalidate === "function") anInvalidate();
+          if (typeof refreshAnnotList === "function") refreshAnnotList();
+        }
+        ppSel = null;
+        updatePpSelReadout();
+        render();
+        log("Undid the last " + ed.type + ".", "ok");
+      }
+      // Trim sits at the front of the chain, so setting or removing one moves
+      // the timeline every Vanish/Delete was measured on. Offer to drop them.
+      function ppConfirmDropCuts() {
+        const n = ppCutEdits().length;
+        if (!n) return true;
+        if (
+          !confirm(
+            "Changing the trim shifts the timeline, so the " + n + " Vanish/Delete edit" + (n > 1 ? "s" : "") +
+              " made so far will be removed. Continue?",
+          )
+        )
+          return false;
+        audioEdits = audioEdits.filter((e) => e.type !== "vanish" && e.type !== "delete");
+        return true;
       }
       function audioHasEdit(type) {
         return audioEdits.some((e) => e.type === type);
@@ -2568,6 +2868,7 @@
           return;
         }
         if (trimMode) return;
+        if (!ppConfirmDropCuts()) return;
         const prev = audioEdits.find((e) => e.type === "trim");
         const origDur = origSamples.length / origSampleRate;
         trimHadPrior = !!prev;
@@ -2640,12 +2941,14 @@
         if (tc) tc.style.display = "none";
         const be = $("btnEnterTrim");
         if (be) be.style.display = "";
-        $("waveI").style.cursor = "default";
-        $("specI").style.cursor = "default";
+        const idle = viewerMode === "preprocess" ? "text" : "default";
+        $("waveI").style.cursor = idle;
+        $("specI").style.cursor = idle;
       }
 
       function clearTrim() {
         if (!audioHasEdit("trim")) return;
+        if (!ppConfirmDropCuts()) return;
         if (trimMode) exitTrimUi();
         audioEdits = audioEdits.filter((e) => e.type !== "trim");
         clearTimeDependentWork();
@@ -2717,6 +3020,16 @@
         log("Frequency drop removed", "ok");
       }
 
+      function applyFadeSelected() {
+        const inOn = $("editFadeIn").checked,
+          outOn = $("editFadeOut").checked;
+        if (!inOn && !outOn) {
+          log("Tick Fade in and/or Fade out.", "warn");
+          return;
+        }
+        if (inOn) applyFadeEdit("fadein");
+        if (outOn) applyFadeEdit("fadeout");
+      }
       function applyFadeEdit(type) {
         if (!origSamples) {
           log("Load audio first", "warn");
@@ -2749,6 +3062,7 @@
       // The timeline shifts by the pad length, so time-dependent work
       // (detections, envelope peaks, annotations) is cleared, as for a trim.
       function applyNoisePadEdit(withFades) {
+        if (withFades === undefined) withFades = !!($("editPadFade") && $("editPadFade").checked);
         if (!origSamples) {
           log("Load audio first", "warn");
           return;
@@ -2841,17 +3155,31 @@
       // its ORIGINAL rate — not whatever the chain currently produces — so
       // the list of choices doesn't shrink out from under a user re-opening
       // a Downsample they already applied.
+      // Rate in kHz without trailing zeros (44100 -> "44.1"); Nyquist rounded to
+      // whole kHz. Short on purpose: the dropdown sits in a narrow column.
+      function fmtKhz(hz) {
+        return String(Math.round(hz) / 1000);
+      }
+      function downsampleLabel(sr) {
+        return `${fmtKhz(sr)} kHz · Nyq ${Math.round(sr / 2000)}`;
+      }
       function populateDownsampleOptions() {
         const sel = $("editDownsampleSr");
         if (!sel) return;
         const cur = sel.value;
-        sel.innerHTML = '<option value="">— choose a rate —</option>';
-        DOWNSAMPLE_RATES.filter((sr) => sr < origSampleRate)
+        sel.innerHTML = '<option value="">— rate —</option>';
+        // With several files checked, offer every rate below the highest of
+        // them, since "Apply to selected files" skips the ones already lower.
+        const top = Math.max(
+          origSampleRate || 0,
+          ...audioLibrary.filter((e) => audioLibBatchSelected.has(e.id)).map((e) => e.rate),
+        );
+        DOWNSAMPLE_RATES.filter((sr) => sr < top)
           .sort((a, b) => b - a)
           .forEach((sr) => {
             const opt = document.createElement("option");
             opt.value = sr;
-            opt.textContent = `${sr.toLocaleString()} Hz (Nyquist: ${fmtHz(sr / 2)})`;
+            opt.textContent = downsampleLabel(sr);
             sel.appendChild(opt);
           });
         // Keep the active downsample's target selected across a repopulate
@@ -2874,7 +3202,7 @@
         setDownsampleEdit(targetSr);
         rebuildAudioFromEdits({ resetView: false });
         log(
-          `Downsampled to ${targetSr.toLocaleString()} Hz (Nyquist ${fmtHz(targetSr / 2)}).`,
+          `Downsampled to ${fmtKhz(targetSr)} kHz (Nyquist ${Math.round(targetSr / 2000)} kHz).`,
           "ok",
         );
       }
@@ -3055,12 +3383,16 @@
           "btnApplyDownsample",
           "btnClearDownsample",
           "editPadSec",
-          "btnNoisePad",
-          "btnNoisePadFade",
+          "btnApplyNoisePad",
+          "editPadFade",
           "editFadeSec",
-          "btnFadeIn",
-          "btnFadeOut",
+          "btnApplyFade",
+          "editFadeIn",
+          "editFadeOut",
           "btnSaveEditedAudio",
+          "btnFixDc",
+          "editNormDb",
+          "btnApplyNormalize",
         ].forEach((id) => {
           const el = $(id);
           if (el) el.disabled = !has;
@@ -3068,6 +3400,10 @@
         // Trim Reset only meaningful when a trim is applied.
         const ct = $("btnClearTrim");
         if (ct) ct.disabled = !has || !audioHasEdit("trim");
+        const cnm = $("btnClearNormalize");
+        if (cnm) cnm.disabled = !has || !audioHasEdit("normalize");
+        const cdc = $("btnClearDc");
+        if (cdc) cdc.disabled = !has || !audioHasEdit("dcoffset");
         // Same for the frequency-drop Reset.
         const cf = $("btnClearFreqDrop");
         if (cf) cf.disabled = !has || !audioHasEdit("freqdrop");
@@ -3109,6 +3445,13 @@
               parts.push(
                 "downsampled to " + rs.targetSr.toLocaleString() + " Hz",
               );
+            if (audioEdits.some((e) => e.type === "dcoffset")) parts.push("DC offset removed");
+            const nmEd = audioEdits.find((e) => e.type === "normalize");
+            if (nmEd) parts.push("normalized to " + nmEd.db + " dBFS");
+            const nVan = audioEdits.filter((e) => e.type === "vanish").length;
+            if (nVan) parts.push(nVan + " vanished");
+            const nDel = audioEdits.filter((e) => e.type === "delete").length;
+            if (nDel) parts.push(nDel + " deleted");
             const npEd = audioEdits.find((e) => e.type === "noisepad");
             if (npEd) parts.push("noise pad " + npEd.sec + " s each end");
             const fiEd = audioEdits.find((e) => e.type === "fadein");
@@ -3128,6 +3471,14 @@
             ? "Undo " +
               (last.type === "trim"
                 ? "trim"
+                : last.type === "normalize"
+                  ? "normalization"
+                  : last.type === "dcoffset"
+                  ? "DC offset fix"
+                  : last.type === "vanish"
+                    ? "vanish"
+                    : last.type === "delete"
+                      ? "delete"
                 : last.type === "noisepad"
                   ? "noise padding"
                   : last.type === "resample"
@@ -3159,6 +3510,9 @@
         else if (last.type === "resample") clearDownsample();
         else if (last.type === "freqdrop") clearFreqDrop();
         else if (last.type === "noisepad") clearNoisePad();
+        else if (last.type === "dcoffset") clearDcOffset();
+        else if (last.type === "normalize") clearNormalize();
+        else if (last.type === "vanish" || last.type === "delete") ppUndoCut();
         else if (last.type === "fadein" || last.type === "fadeout")
           clearFade(last.type);
       }
@@ -3174,8 +3528,6 @@
       let audioLibrary = []; // { id, name, folder, samples, rate, dur, addedAt }
       let audioLibNextId = 1;
       let audioLibActiveId = null;
-      let audioLibCols = parseInt(localStorage.getItem("rt_audiolib_cols"), 10) || 5;
-      let audioLibRows = parseInt(localStorage.getItem("rt_audiolib_rows"), 10) || 2;
       let audioLibBatchSelected = new Set(); // entry ids checked for batch edit
 
       function addAudioToLibrary(name, folder, samples, rate) {
@@ -3480,46 +3832,21 @@
         log('Switched to "' + entry.name + '"', "ok");
       }
 
-      function toggleAudioLibSettings() {
-        const row = $("audioLibSettingsRow");
-        row.style.display = row.style.display === "none" ? "flex" : "none";
-      }
-
-      function setAudioLibGrid() {
-        const c = Math.max(
-          1,
-          Math.min(10, parseInt($("audioLibColsInput").value, 10) || 5),
-        );
-        const r = Math.max(
-          1,
-          Math.min(6, parseInt($("audioLibRowsInput").value, 10) || 2),
-        );
-        audioLibCols = c;
-        audioLibRows = r;
-        localStorage.setItem("rt_audiolib_cols", c);
-        localStorage.setItem("rt_audiolib_rows", r);
-        renderAudioLibraryPanel();
-      }
-
       function renderAudioLibraryPanel() {
-        $("audioLibColsInput").value = audioLibCols;
-        $("audioLibRowsInput").value = audioLibRows;
         $("audioLibCount").textContent = audioLibrary.length
           ? "(" + audioLibrary.length + ")"
           : "";
+        const edge = $("libEdgeLabel");
+        if (edge)
+          edge.textContent =
+            "Loaded audio" + (audioLibrary.length ? " (" + audioLibrary.length + ")" : "");
 
         const grid = $("audioLibGrid");
-        const cellH = 42;
-        grid.style.gridTemplateColumns =
-          "repeat(" + audioLibCols + ", minmax(90px, 1fr))";
-        grid.style.gridAutoRows = cellH + "px";
-        grid.style.maxHeight = audioLibRows * (cellH + 4) + "px";
         grid.innerHTML = "";
 
         if (!audioLibrary.length) {
           const d = document.createElement("div");
-          d.style.cssText =
-            "grid-column:1/-1;color:var(--txt2);font-size:11px;padding:4px 0";
+          d.style.cssText = "color:var(--txt2);font-size:11px;padding:4px 0";
           d.textContent = "Import an audio file to see it here.";
           grid.appendChild(d);
           audioLibBatchSelected.clear();
@@ -3528,16 +3855,16 @@
         }
 
         audioLibrary.forEach((entry) => {
-          const cell = document.createElement("div");
-          cell.className =
-            "alib-cell" + (entry.id === audioLibActiveId ? " active" : "");
-          cell.title =
+          const row = document.createElement("div");
+          row.className =
+            "alib-row" + (entry.id === audioLibActiveId ? " active" : "");
+          row.title =
             entry.name +
             " — " +
             entry.dur.toFixed(2) +
-            "s @ " +
-            entry.rate +
-            " Hz";
+            " s @ " +
+            (entry.rate / 1000).toFixed(1) +
+            " kHz";
 
           const chk = document.createElement("input");
           chk.type = "checkbox";
@@ -3551,14 +3878,9 @@
             updateBatchEditStatus();
           };
 
-          const xBtn = document.createElement("button");
-          xBtn.className = "alib-x";
-          xBtn.textContent = "×";
-          xBtn.title = "Remove from Loaded Audio";
-          xBtn.onclick = (ev) => {
-            ev.stopPropagation();
-            removeAudioFromLibrary(entry.id);
-          };
+          const nameEl = document.createElement("div");
+          nameEl.className = "alib-name";
+          nameEl.textContent = entry.name;
 
           const dlBtn = document.createElement("button");
           dlBtn.className = "alib-dl";
@@ -3569,22 +3891,21 @@
             exportLibraryEntry(entry.id);
           };
 
-          const nameEl = document.createElement("div");
-          nameEl.className = "alib-name";
-          nameEl.textContent = entry.name;
+          const xBtn = document.createElement("button");
+          xBtn.className = "alib-x";
+          xBtn.textContent = "×";
+          xBtn.title = "Remove from Loaded Audio";
+          xBtn.onclick = (ev) => {
+            ev.stopPropagation();
+            removeAudioFromLibrary(entry.id);
+          };
 
-          const metaEl = document.createElement("div");
-          metaEl.className = "alib-meta";
-          metaEl.textContent =
-            entry.dur.toFixed(2) + "s · " + (entry.rate / 1000).toFixed(1) + "kHz";
-
-          cell.appendChild(chk);
-          cell.appendChild(xBtn);
-          cell.appendChild(dlBtn);
-          cell.appendChild(nameEl);
-          cell.appendChild(metaEl);
-          cell.onclick = () => selectLibraryAudio(entry.id);
-          grid.appendChild(cell);
+          row.appendChild(chk);
+          row.appendChild(nameEl);
+          row.appendChild(dlBtn);
+          row.appendChild(xBtn);
+          row.onclick = () => selectLibraryAudio(entry.id);
+          grid.appendChild(row);
         });
         // Drop batch selections for entries that no longer exist (removed).
         const liveIds = new Set(audioLibrary.map((e) => e.id));
@@ -3603,64 +3924,78 @@
         if (typeof mwRenderLibPicker === "function") mwRenderLibPicker();
       }
 
-      // (Re)builds the batch Downsample dropdown against whatever's
-      // currently checked (or the whole library, if nothing is) — options
-      // are offered below the highest rate among them, since a rate that
-      // isn't below at least one checked recording's own rate would be a
-      // no-op for all of them. A recording already at or below the chosen
-      // rate is simply skipped at apply time (see applyBatchDownsample).
-      function populateBatchDownsampleOptions() {
-        const sel = $("batchDownsampleSr");
-        if (!sel) return;
-        const cur = sel.value;
-        const pool = audioLibBatchSelected.size
-          ? audioLibrary.filter((e) => audioLibBatchSelected.has(e.id))
-          : audioLibrary;
-        const maxRate = pool.reduce((m, e) => Math.max(m, e.rate), 0);
-        sel.innerHTML = '<option value="">— choose a rate —</option>';
-        DOWNSAMPLE_RATES.filter((sr) => sr < maxRate)
-          .sort((a, b) => b - a)
-          .forEach((sr) => {
-            const opt = document.createElement("option");
-            opt.value = sr;
-            opt.textContent = `${sr.toLocaleString()} Hz (Nyquist: ${fmtHz(sr / 2)})`;
-            sel.appendChild(opt);
-          });
-        sel.value = cur; // keep the choice across a repopulate
-      }
-
       // ── Batch edit: apply one filter to every checked Loaded Audio entry ──
       function updateBatchEditStatus() {
         const n = audioLibBatchSelected.size;
-        const btn = $("btnBatchBandpass");
-        const nBtn = $("btnBatchNormalize");
-        const fBtn = $("btnBatchFreqDrop");
-        const dBtn = $("btnBatchDownsample");
+        // "Apply to selected files" is for two or more checked recordings; a
+        // single one is what "Apply to current file" is for.
+        document
+          .querySelectorAll("[data-apply-selected]")
+          .forEach((b) => (b.disabled = n < 2));
         const sBtn = $("btnBatchSave");
-        const label = $("batchSelCount");
-        if (btn) btn.disabled = n === 0;
-        if (nBtn) nBtn.disabled = n === 0;
-        if (fBtn) fBtn.disabled = n === 0;
-        if (dBtn) dBtn.disabled = n === 0;
         if (sBtn) sBtn.disabled = n === 0;
-        if (label) label.textContent = n ? n + " selected" : "";
-        populateBatchDownsampleOptions();
+        populateDownsampleOptions();
         // The Loaded Audio panel carries its own copy of the Select
         // all/Clear selection pair, since that panel is where the
-        // checkboxes actually are and it stays visible on every tab (the
-        // Batch Edit pair above only shows in Preprocessing). Both drive
-        // batchSelectAllLibrary, so the two stay in step by construction.
+        // checkboxes actually are and it stays visible on every tab.
         const libN = audioLibrary.length;
         const selAll = $("btnAudioLibSelAll");
         const selNone = $("btnAudioLibSelNone");
         const libLabel = $("audioLibSelCount");
         if (selAll) selAll.disabled = !libN || n === libN;
         if (selNone) selNone.disabled = n === 0;
+        const closeChk = $("btnAudioLibCloseChecked");
+        if (closeChk) closeChk.disabled = n === 0;
         if (libLabel) libLabel.textContent = n ? n + " checked" : "";
         // Habitus draws straight from this same selection, so its own
         // "what's checked" readout + Draw-button state must track every
         // individual checkbox click too, not just full library re-renders.
         if (typeof habRenderLibPicker === "function") habRenderLibPicker();
+      }
+
+      // A batch edit rewrites each checked entry's stored samples and then
+      // reloads the active one, which resets its edit chain. So if the active
+      // file is among them, first store what is on screen (its chain applied)
+      // as its samples, so nothing already done to it is lost.
+      function bakeActiveEditsForBatch() {
+        if (
+          audioLibActiveId === null ||
+          !audioLibBatchSelected.has(audioLibActiveId) ||
+          !audioEdits.length ||
+          !rawSamples
+        )
+          return;
+        const entry = audioLibrary.find((e) => e.id === audioLibActiveId);
+        if (!entry) return;
+        const suffix = defaultEditSuffix();
+        entry.samples = rawSamples;
+        entry.rate = sampleRate;
+        entry.dur = rawSamples.length / sampleRate;
+        if (suffix !== "_copy")
+          suffix
+            .slice(1)
+            .split("_")
+            .forEach((t) => {
+              if (!entry.editTags.includes(t)) entry.editTags.push(t);
+            });
+      }
+
+      // Removes every checked recording from Loaded Audio. Edits that were not
+      // exported go with them, so it asks first.
+      function closeCheckedAudio() {
+        const ids = [...audioLibBatchSelected].filter((id) =>
+          audioLibrary.some((e) => e.id === id),
+        );
+        if (!ids.length) return;
+        if (
+          !confirm(
+            "Close " + ids.length + " checked recording" + (ids.length > 1 ? "s" : "") +
+              "? Unsaved edits and analysis for them will be lost.",
+          )
+        )
+          return;
+        ids.forEach((id) => removeAudioFromLibrary(id));
+        log("Closed " + ids.length + " recording(s).", "ok");
       }
 
       function batchSelectAllLibrary(on) {
@@ -3677,12 +4012,13 @@
       // several long recordings.
       function applyBatchBandpass() {
         if (!audioLibBatchSelected.size) return;
+        bakeActiveEditsForBatch();
         withBusy("Batch bandpass…", () => _applyBatchBandpassInner());
       }
 
       function _applyBatchBandpassInner() {
-        let hp = parseFloat($("batchHp").value);
-        let lp = parseFloat($("batchLp").value);
+        let hp = parseFloat($("editHp").value);
+        let lp = parseFloat($("editLp").value);
         if (!isFinite(hp) || hp < 0) hp = 0;
         if (!isFinite(lp) || lp <= 0) lp = 0; // 0 -> per-entry Nyquist, resolved below
 
@@ -3728,7 +4064,8 @@
       // directly" model as applyBatchBandpass.
       function applyBatchNormalize() {
         if (!audioLibBatchSelected.size) return;
-        let targetDb = parseFloat($("batchNormDb").value);
+        bakeActiveEditsForBatch();
+        let targetDb = parseFloat($("editNormDb").value);
         if (!isFinite(targetDb)) targetDb = 0;
         targetDb = Math.min(0, targetDb); // normalizing above full scale would just clip
         const target = Math.pow(10, targetDb / 20);
@@ -3760,9 +4097,43 @@
         log(`Batch envelope peak-normalize applied to ${count} recording(s), each to ${targetDb} dBFS.`, "ok");
       }
 
+      // Removes the DC offset (the average value) from every checked recording,
+      // writing straight into the library like the other batch edits. A
+      // recording with no measurable offset is left alone and gets no tag.
+      function applyBatchDcFix() {
+        if (!audioLibBatchSelected.size) return;
+        bakeActiveEditsForBatch();
+        let touchedActive = false;
+        let fixed = 0,
+          clean = 0;
+        audioLibrary.forEach((entry) => {
+          if (!audioLibBatchSelected.has(entry.id)) return;
+          if (Math.abs(dcMean(entry.samples)) < 1e-5) {
+            clean++;
+            return;
+          }
+          entry.samples = applyDcFix(entry.samples);
+          if (!entry.editTags.includes("dcfix")) entry.editTags.push("dcfix");
+          fixed++;
+          if (entry.id === audioLibActiveId) touchedActive = true;
+        });
+        if (!fixed) {
+          log("Batch DC offset: none of the " + clean + " checked recording(s) has a measurable offset.", "info");
+          return;
+        }
+        if (touchedActive) selectLibraryAudio(audioLibActiveId);
+        renderAudioLibraryPanel();
+        log(
+          "DC offset removed from " + fixed + " recording(s)" +
+            (clean ? "; " + clean + " had none." : "."),
+          "ok",
+        );
+      }
+
       async function applyBatchFreqDrop() {
         if (!audioLibBatchSelected.size) return;
-        const pct = parseFloat($("batchFreqDrop").value);
+        bakeActiveEditsForBatch();
+        const pct = parseFloat($("editFreqDrop").value);
         if (!isFinite(pct) || pct <= 0 || pct >= 100) {
           log("Frequency drop must be between 0 and 100%.", "warn");
           return;
@@ -3804,6 +4175,114 @@
         );
       }
 
+      // Pads every checked entry with background noise learned from that entry,
+      // using the Noise padding length and Fade in/out toggle.
+      async function applyBatchNoisePad() {
+        if (!audioLibBatchSelected.size) return;
+        const sec = parseFloat($("editPadSec").value);
+        if (!isFinite(sec) || sec <= 0 || sec > 60) {
+          log("Noise pad length must be between 0 and 60 s.", "warn");
+          return;
+        }
+        const withFades = !!$("editPadFade").checked;
+        const fadeSec = parseFloat($("editFadeSec").value);
+        if (withFades && (!isFinite(fadeSec) || fadeSec <= 0)) {
+          log("Fade length must be greater than 0 s.", "warn");
+          return;
+        }
+        bakeActiveEditsForBatch();
+        const targets = audioLibrary.filter((e) => audioLibBatchSelected.has(e.id));
+        let count = 0,
+          skipped = 0,
+          touchedActive = false;
+        await withBusy("Padding with noise…", async (progress) => {
+          for (let i = 0; i < targets.length; i++) {
+            const entry = targets[i];
+            progress(`${entry.name} (${i + 1}/${targets.length})…`, i / targets.length);
+            await busyTick();
+            const prof = estimateNoiseProfile(entry.samples, entry.rate);
+            if (!prof) {
+              skipped++;
+              log(`Skipped "${entry.name}": not enough quiet material to learn its background noise from.`, "warn");
+              continue;
+            }
+            let out = _padCore(entry.samples, entry.rate, sec, Math.floor(Math.random() * 2147483647), prof);
+            if (withFades) out = applyFades(out, entry.rate, fadeSec, fadeSec);
+            entry.samples = out;
+            entry.dur = out.length / entry.rate;
+            entry.editTags = entry.editTags.filter((t) => t !== "noisepad");
+            entry.editTags.push("noisepad");
+            if (withFades)
+              ["fadein", "fadeout"].forEach((t) => {
+                if (!entry.editTags.includes(t)) entry.editTags.push(t);
+              });
+            count++;
+            if (entry.id === audioLibActiveId) touchedActive = true;
+          }
+        });
+        if (!count) {
+          log("Batch noise padding: nothing to apply.", "warn");
+          return;
+        }
+        if (touchedActive) selectLibraryAudio(audioLibActiveId);
+        renderAudioLibraryPanel();
+        log(
+          `Added ${sec} s of matched noise at each end of ${count} recording(s)` +
+            (withFades ? ` with ${fadeSec} s fades` : "") +
+            (skipped ? ` (${skipped} skipped)` : "") + ".",
+          "ok",
+        );
+      }
+
+      // Fades every checked entry, using the ticked boxes and the Fade length.
+      async function applyBatchFade() {
+        if (!audioLibBatchSelected.size) return;
+        const inOn = $("editFadeIn").checked,
+          outOn = $("editFadeOut").checked,
+          sec = parseFloat($("editFadeSec").value);
+        if (!inOn && !outOn) {
+          log("Tick Fade in and/or Fade out.", "warn");
+          return;
+        }
+        if (!isFinite(sec) || sec <= 0) {
+          log("Fade length must be greater than 0 s.", "warn");
+          return;
+        }
+        bakeActiveEditsForBatch();
+        const targets = audioLibrary.filter((e) => audioLibBatchSelected.has(e.id));
+        let count = 0,
+          skipped = 0,
+          touchedActive = false;
+        await withBusy("Fading…", async (progress) => {
+          for (let i = 0; i < targets.length; i++) {
+            const entry = targets[i];
+            progress(`${entry.name} (${i + 1}/${targets.length})…`, i / targets.length);
+            await busyTick();
+            if (sec > entry.samples.length / entry.rate) {
+              skipped++;
+              log(`Skipped "${entry.name}": the fade is longer than the recording.`, "warn");
+              continue;
+            }
+            entry.samples = applyFades(entry.samples, entry.rate, inOn ? sec : 0, outOn ? sec : 0);
+            if (inOn && !entry.editTags.includes("fadein")) entry.editTags.push("fadein");
+            if (outOn && !entry.editTags.includes("fadeout")) entry.editTags.push("fadeout");
+            count++;
+            if (entry.id === audioLibActiveId) touchedActive = true;
+          }
+        });
+        if (!count) {
+          log("Batch fade: nothing to apply.", "warn");
+          return;
+        }
+        if (touchedActive) selectLibraryAudio(audioLibActiveId);
+        renderAudioLibraryPanel();
+        log(
+          `${[inOn ? "Fade in" : "", outOn ? "Fade out" : ""].filter(Boolean).join(" + ")} (${sec} s) applied to ${count} recording(s)` +
+            (skipped ? ` (${skipped} skipped)` : "") + ".",
+          "ok",
+        );
+      }
+
       // Lowers the rate of every checked entry independently, in place —
       // same "batch touches the library directly" model as the other batch
       // edits. A recording already at or below the chosen rate is left
@@ -3811,7 +4290,8 @@
       // spans recordings from more than one recorder/rate.
       async function applyBatchDownsample() {
         if (!audioLibBatchSelected.size) return;
-        const targetSr = parseInt($("batchDownsampleSr").value, 10);
+        bakeActiveEditsForBatch();
+        const targetSr = parseInt($("editDownsampleSr").value, 10);
         if (!targetSr) {
           log("Choose a target sample rate.", "warn");
           return;
@@ -3859,7 +4339,7 @@
         if (touchedActive) selectLibraryAudio(audioLibActiveId);
         renderAudioLibraryPanel();
         log(
-          `Downsampled ${count} recording(s) to ${targetSr.toLocaleString()} Hz` +
+          `Downsampled ${count} recording(s) to ${fmtKhz(targetSr)} kHz` +
             (skipped ? ` (${skipped} already at or below that rate, left alone)` : "") +
             ".",
           "ok",
@@ -3896,6 +4376,11 @@
             if (ed.lp < nyq - 1) parts.push(freqSuffixLabel(ed.lp) + "lpf");
           }
         }
+        if (audioEdits.some((e) => e.type === "dcoffset")) parts.push("dcfix");
+        const nmTag = audioEdits.find((e) => e.type === "normalize");
+        if (nmTag) parts.push("n" + nmTag.db);
+        if (audioEdits.some((e) => e.type === "vanish")) parts.push("vanished");
+        if (audioEdits.some((e) => e.type === "delete")) parts.push("cut");
         if (audioEdits.some((e) => e.type === "trim")) parts.push("trimmed");
         if (audioEdits.some((e) => e.type === "noisepad")) parts.push("noisepad");
         if (audioEdits.some((e) => e.type === "fadein")) parts.push("fadein");
@@ -4411,6 +4896,35 @@
         renderMinimap();
       }
 
+      // DC offset check for the waveform. The mean is measured once per signal
+      // (cached on the array), not on every redraw. It counts as noticeable
+      // when it is at least 0.5% of the peak AND at least 0.001 of full scale
+      // (about -60 dBFS): below that it neither shows on the plot nor changes
+      // a measurement.
+      let _dcFor = null,
+        dcValue = 0;
+      function dcNoticeable() {
+        return (
+          Math.abs(dcValue) >= 0.001 &&
+          Math.abs(dcValue) >= 0.005 * (peakAmp || 1)
+        );
+      }
+      function updateDcHint() {
+        const b = $("dcHint");
+        if (!b) return;
+        if (!rawSamples || !dcNoticeable()) {
+          b.style.display = "none";
+          return;
+        }
+        const pct = (100 * Math.abs(dcValue)) / (peakAmp || 1);
+        b.textContent = "⚠ DC offset " + (pct < 10 ? pct.toFixed(1) : Math.round(pct)) + "% of peak · Fix";
+        b.title =
+          "The waveform's average sits " + Math.abs(dcValue).toFixed(4) +
+          (dcValue > 0 ? " above" : " below") +
+          " zero (the dashed line; the solid line is zero). That is a DC offset. It skews amplitude and envelope measures. Click to remove it.";
+        b.style.display = "";
+      }
+
       function renderWave() {
         const wrap = $("wWrap");
         const W = wrap.clientWidth,
@@ -4431,7 +4945,17 @@
           ctx.font = "12px Consolas,monospace";
           ctx.textAlign = "center";
           ctx.fillText("Open audio — up to 250kHz Nyquist", W / 2, H / 2);
+          if (_dcFor !== null) {
+            _dcFor = null;
+            dcValue = 0;
+            updateDcHint();
+          }
           return;
+        }
+        if (_dcFor !== rawSamples) {
+          _dcFor = rawSamples;
+          dcValue = dcMean(rawSamples);
+          updateDcHint();
         }
         const si = Math.floor(viewStart * sampleRate);
         const ei = Math.min(
@@ -4492,6 +5016,36 @@
           ctx.strokeStyle = "rgba(137,87,229,.85)";
           ctx.lineWidth = 1.5;
           ctx.stroke();
+        }
+        // Centre line = zero. A waveform with no offset is balanced around it;
+        // one with an offset is visibly pushed to one side. Drawn AFTER the
+        // trace and envelope: every column of the trace spans zero, so
+        // anything under it is painted over and never seen.
+        ctx.strokeStyle = "rgba(230,237,243,.6)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(0, Math.round(mid) + 0.5);
+        ctx.lineTo(W, Math.round(mid) + 0.5);
+        ctx.stroke();
+        // When there is a noticeable offset, also mark where the average
+        // really is, so the gap between the two lines is the offset.
+        if (dcNoticeable() && peakAmp > 0) {
+          const dy = mid * (1 - dcValue / peakAmp);
+          ctx.strokeStyle = "rgba(210,153,34,.9)";
+          ctx.setLineDash([5, 3]);
+          ctx.beginPath();
+          ctx.moveTo(0, dy);
+          ctx.lineTo(W, dy);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = "rgba(210,153,34,.95)";
+          ctx.font = "10px Consolas,monospace";
+          ctx.textAlign = "left";
+          ctx.fillText(
+            "mean " + (dcValue > 0 ? "+" : "") + dcValue.toFixed(4),
+            4,
+            dcValue > 0 ? Math.max(10, dy - 3) : Math.min(H - 3, dy + 11),
+          );
         }
         const ic2 = ic.getContext("2d");
         ic2.clearRect(0, 0, W, H);
@@ -4963,6 +5517,33 @@
         return !!(el && el.checked);
       }
 
+      // Preprocessing cursors. Both canvases get the same one, so moving from
+      // the waveform to the spectrogram never shows a stale cursor.
+      //   I-beam  anywhere else: click places the playhead, drag selects
+      //   <->     near a selection edge (drag resizes) and while dragging out
+      //   hand    inside a selection (drag moves it); closed hand while moving
+      const PP_EDGE_PX = 6;
+      function setPpCursor(cur) {
+        $("waveI").style.cursor = cur;
+        $("specI").style.cursor = cur;
+      }
+      function ppEdgeHit(x) {
+        if (!ppSel || !(ppSel.t1 > ppSel.t0)) return null;
+        const W = getVizWidth();
+        const xa = ((ppSel.t0 - viewStart) / viewDur) * W,
+          xb = ((ppSel.t1 - viewStart) / viewDur) * W;
+        const da = Math.abs(x - xa),
+          db = Math.abs(x - xb);
+        if (da <= PP_EDGE_PX && da <= db) return "t0";
+        if (db <= PP_EDGE_PX) return "t1";
+        return null;
+      }
+      function ppHoverCursor(x, t) {
+        if (ppEdgeHit(x)) return "ew-resize";
+        if (ppSel && ppSel.t1 > ppSel.t0 && t > ppSel.t0 && t < ppSel.t1) return "grab";
+        return "text";
+      }
+
       function setTool(t) {
         activeTool = t;
         $("toolSelect").classList.toggle("atool", t === "select");
@@ -4993,6 +5574,27 @@
         ) {
           undoAnnot();
           e.preventDefault();
+          return;
+        }
+        // Delete cuts the Preprocessing time selection out (same as the Delete
+        // button). stopImmediatePropagation keeps Temporal Analysis's own Delete
+        // handler, registered later, from also acting on a stale selection.
+        if (
+          e.key === "Delete" &&
+          !e.ctrlKey && !e.metaKey && !e.altKey &&
+          e.target.tagName !== "TEXTAREA" &&
+          !e.target.isContentEditable &&
+          e.target.tagName !== "INPUT" &&
+          e.target.tagName !== "SELECT" &&
+          viewerMode === "preprocess" &&
+          $("maintab-preprocess").classList.contains("active") &&
+          rawSamples &&
+          (trimMode || (ppSel && ppSel.t1 > ppSel.t0))
+        ) {
+          // In Trim mode this only explains why nothing is cut.
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          ppDeleteSelection();
           return;
         }
         // Space is a transport key and works wherever the viewer is; the
@@ -5079,10 +5681,8 @@
             }
             return; // trim mode suppresses other tools
           }
-          // Hovering over the selection offers to move it.
-          if (viewerMode === "preprocess" && !ppDrag && ppSel && ppSel.t1 > ppSel.t0) {
-            c.style.cursor = t > ppSel.t0 && t < ppSel.t1 ? "grab" : "text";
-          }
+          // Hover: I-beam, <-> on an edge, hand inside the selection.
+          if (viewerMode === "preprocess" && !ppDrag) setPpCursor(ppHoverCursor(e.offsetX, t));
           if (ppDrag) {
             // Button released off-canvas: mouseup never reached us, so the
             // drag would otherwise keep tracking the pointer unpressed.
@@ -5099,7 +5699,7 @@
                   Math.min(duration - ppDrag.dur, t - ppDrag.grab),
                 );
                 ppSel = { t0: nt0, t1: nt0 + ppDrag.dur };
-                c.style.cursor = "grabbing";
+                setPpCursor("grabbing");
                 updatePpSelReadout();
                 render();
               }
@@ -5111,6 +5711,7 @@
                 t0: Math.min(ppDrag.anchor, nt),
                 t1: Math.max(ppDrag.anchor, nt),
               };
+              setPpCursor("ew-resize");
               updatePpSelReadout();
               render();
             }
@@ -5175,9 +5776,23 @@
           // is off, since that branch returns above.
           if (viewerMode === "preprocess") {
             const { t } = pixToTF(e.offsetX, e.offsetY, src);
+            // Pressing on an edge resizes the selection: the opposite edge
+            // becomes the anchor of an ordinary drag-out.
+            const edge = ppEdgeHit(e.offsetX);
+            if (edge) {
+              ppDrag = {
+                anchor: edge === "t0" ? ppSel.t1 : ppSel.t0,
+                startX: e.offsetX,
+                moved: false,
+                resize: true,
+              };
+              setPpCursor("ew-resize");
+              return;
+            }
             // Pressing inside the selection grabs it to move it; pressing
             // anywhere else pulls out a new one, as before.
             if (ppSel && ppSel.t1 > ppSel.t0 && t > ppSel.t0 && t < ppSel.t1) {
+              setPpCursor("grabbing");
               ppDrag = {
                 move: true,
                 grab: t - ppSel.t0,
@@ -5254,14 +5869,17 @@
               if (ppDrag.move) {
                 // A click inside the selection keeps it and sets the playhead.
                 seekTo(ppDrag.t);
+              } else if (ppDrag.resize) {
+                // A click on an edge without dragging changes nothing.
               } else {
                 ppSel = null;
                 updatePpSelReadout();
                 render();
               }
             }
-            if (ppDrag && ppDrag.move) c.style.cursor = "grab";
             ppDrag = null;
+            const { t: tUp } = pixToTF(e.offsetX, e.offsetY, src);
+            setPpCursor(ppHoverCursor(e.offsetX, tUp));
             return;
           }
           if (activeTool === "pan") {
@@ -6169,7 +6787,7 @@
       // runs — negligible for a handful of calls, but noticeable once there
       // are dozens.
       function computeUnifiedSpectralMetrics() {
-        withBusy("Computing spectral metrics…", () =>
+        return withBusy("Computing spectral metrics…", () =>
           _computeUnifiedSpectralMetricsInner(),
         );
       }
@@ -7274,6 +7892,10 @@
         if (btn) btn.disabled = !has;
         const sv = $("btnSavePpSel");
         if (sv) sv.disabled = !has;
+        const pv = $("btnPpVanish"),
+          pd = $("btnPpDelete");
+        if (pv) pv.disabled = !has;
+        if (pd) pd.disabled = !has;
         // Mirror the length into the Duration box, unless it is being typed in.
         const di = $("ppSelDur");
         if (di) {
@@ -8312,7 +8934,7 @@
         // for good.
         const landing = $("mainview-landing");
         if (landing) landing.style.display = "none";
-        ["preprocess", "envpeaks", "analyzer", "annotate", "plotting", "summarize"].forEach(
+        ["preprocess", "envpeaks", "analyzer", "annotate", "plotting", "summarize", "workflow", "cluster", "str"].forEach(
           (n) => {
             const t = $("maintab-" + n);
             if (t) t.classList.toggle("active", n === name);
@@ -8325,6 +8947,13 @@
         const plotBar = $("plotSubtabBar");
         const sb = $("sidebar");
         const sm = $("mainview-summarize");
+        const wf = $("mainview-workflow");
+        if (wf) wf.style.display = name === "workflow" ? "flex" : "none";
+        const cl = $("mainview-cluster");
+        if (cl) cl.style.display = name === "cluster" ? "flex" : "none";
+        const st = $("mainview-str");
+        if (st) st.style.display = name === "str" ? "flex" : "none";
+        if (name === "workflow" && typeof wfRenderList === "function") wfRenderList();
         if (pp) pp.style.display = name === "preprocess" ? "flex" : "none";
         if (a) a.style.display = name === "analyzer" ? "flex" : "none";
         if (k) k.style.display = name === "envpeaks" ? "flex" : "none";
@@ -8412,7 +9041,7 @@
       function goHome() {
         const landing = $("mainview-landing");
         if (landing) landing.style.display = "flex";
-        ["preprocess", "envpeaks", "analyzer", "plotting", "summarize"].forEach(
+        ["preprocess", "envpeaks", "analyzer", "plotting", "summarize", "workflow", "cluster", "str"].forEach(
           (n) => {
             const t = $("maintab-" + n);
             if (t) t.classList.remove("active");
@@ -8424,6 +9053,12 @@
         const plotBar = $("plotSubtabBar");
         const sb = $("sidebar");
         const sm = $("mainview-summarize");
+        const wf = $("mainview-workflow");
+        if (wf) wf.style.display = "none";
+        const cl = $("mainview-cluster");
+        if (cl) cl.style.display = "none";
+        const st = $("mainview-str");
+        if (st) st.style.display = "none";
         if (pp) pp.style.display = "none";
         if (a) a.style.display = "none";
         if (k) k.style.display = "none";
@@ -8794,6 +9429,7 @@
         // the markup carries the highlight, but only setTool sets the cursor.
         setTool(activeTool);
         setupGridHosts();
+        setupLibSide();
         setupCollapsiblePanels();
         initDragHandles();
         initMinimap();

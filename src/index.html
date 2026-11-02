@@ -105,6 +105,83 @@
     <!-- MAIN LAYOUT -->
     <div style="display: flex; flex: 1; overflow: hidden; min-height: 0">
 
+      <!-- ═══ LOADED AUDIO (left) ═══════════════════════════════════════════════
+           Hidden until dragged open by its right edge (or clicked). The width
+           is remembered. See setupLibSide in main.js. ═══ -->
+      <div id="libSide" style="display: flex; flex-shrink: 0; min-height: 0">
+        <div
+          id="libPane"
+          style="width: 0; overflow: hidden; background: var(--bg2); display: flex; flex-direction: column; min-height: 0"
+        >
+          <div
+            id="audioLibPanel"
+            style="flex: 1; min-width: 170px; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px; box-sizing: border-box"
+          >
+            <div style="display: flex; align-items: baseline; gap: 6px; flex-shrink: 0">
+              <span style="font-size: 10px; color: var(--txt2); text-transform: uppercase; letter-spacing: 0.06em">Loaded Audio</span>
+              <span id="audioLibCount" style="font-size: 10px; color: var(--txt3)"></span>
+              <span style="flex: 1"></span>
+              <span id="audioLibSelCount" style="font-size: 10px; color: var(--txt3)"></span>
+            </div>
+            <div style="display: flex; flex-wrap: wrap; gap: 4px; flex-shrink: 0">
+              <button
+                onclick="batchSelectAllLibrary(true)"
+                id="btnAudioLibSelAll"
+                style="font-size: 10px; padding: 2px 7px"
+                data-i18n-title
+                title="Check every loaded recording"
+                disabled
+              >
+                Select all
+              </button>
+              <button
+                onclick="batchSelectAllLibrary(false)"
+                id="btnAudioLibSelNone"
+                style="font-size: 10px; padding: 2px 7px"
+                data-i18n-title
+                title="Uncheck every loaded recording"
+                disabled
+              >
+                Clear selection
+              </button>
+              <button
+                onclick="closeCheckedAudio()"
+                id="btnAudioLibCloseChecked"
+                style="font-size: 10px; padding: 2px 7px"
+                data-i18n-title
+                title="Remove every checked recording from Loaded Audio (unsaved edits are lost)"
+                disabled
+              >
+                &#10005; Close checked
+              </button>
+              <button
+                onclick="saveSelectedLibraryFiles()"
+                id="btnBatchSave"
+                style="font-size: 10px; padding: 2px 7px"
+                data-i18n-title
+                title="Write every checked recording to a folder you pick, as <original name>_<edit suffix>.wav"
+                disabled
+              >
+                &#128190; Save edited files&hellip;
+              </button>
+            </div>
+            <div id="audioLibGrid" style="flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 1px">
+              <div style="color: var(--txt2); font-size: 11px; padding: 4px 0">Import an audio file to see it here.</div>
+            </div>
+            <div
+              data-i18n
+              style="font-size: 10px; color: var(--txt2); line-height: 1.3; flex-shrink: 0"
+            >
+              Check entries here to select which ones the Habitus/Osc. panes work on,
+              and to batch-edit them from the Preprocessing tab.
+            </div>
+          </div>
+        </div>
+        <div id="libEdge" title="Loaded audio: drag to open or resize, click to show or hide">
+          <span id="libEdgeLabel" class="lbl">Loaded audio</span>
+        </div>
+      </div>
+
       <!-- VIZ + BOTTOM PANEL -->
       <div
         style="
@@ -182,6 +259,41 @@
           >
             Summarize
           </div>
+          <div
+            class="tab"
+            id="maintab-workflow"
+            onclick="switchMainTab('workflow', this)"
+            style="font-size: 12px; padding: 4px 14px"
+          >
+            Custom Workflow
+          </div>
+          <div
+            class="tab"
+            id="maintab-cluster"
+            onclick="switchMainTab('cluster', this)"
+            style="font-size: 12px; padding: 4px 14px"
+          >
+            Clustering
+          </div>
+          <div
+            class="tab"
+            id="maintab-str"
+            onclick="switchMainTab('str', this)"
+            style="font-size: 12px; padding: 4px 14px"
+          >
+            STR
+          </div>
+          <div style="flex: 1"></div>
+          <!-- Outside every module: records the steps taken in any tab. -->
+          <button
+            id="btnWfRecord"
+            type="button"
+            onclick="wfToggleRecord()"
+            style="font-size: 11px; padding: 2px 10px; margin-bottom: 3px"
+            title="Record the steps you take, then save them as a Custom Workflow with the metrics you choose."
+          >
+            &#9210; Record Workflow
+          </button>
         </div>
 
         <!-- ═══ LANDING VIEW ═══════════════════════════════════════════════════════
@@ -492,42 +604,35 @@
               id="ppPanels"
               style="
                 display: flex;
-                flex-wrap: wrap;
-                align-items: flex-start;
+                flex-direction: column;
+                align-items: stretch;
                 gap: 8px;
               "
             >
               <div class="panel">
-                <h2 data-i18n>Audio Info</h2>
-                <div
-                  style="
-                    font-size: 12px;
-                    display: flex;
-                    flex-direction: column;
-                    gap: 2px;
-                  "
-                >
-                  <div class="row">
-                    <span style="color: var(--txt2); width: 68px">Duration</span
-                    ><span id="infoDur">—</span>
-                  </div>
-                  <div class="row">
-                    <span style="color: var(--txt2); width: 68px"
-                      >Sample rate</span
-                    ><span id="infoSr">—</span>
-                  </div>
-                  <div class="row">
-                    <span style="color: var(--txt2); width: 68px">Nyquist</span
-                    ><span id="infoNyq" style="color: var(--txt3)">—</span>
-                  </div>
-                  <div class="row">
-                    <span style="color: var(--txt2); width: 68px">Channels</span
-                    ><span id="infoCh">—</span>
-                  </div>
-                </div>
-              </div>
-              <div class="panel">
                 <h2 data-i18n>Edit Audio <span class="info-icon" data-i18n-title title="Edits apply to the active recording for both Temporal and Spectral analysis. Click &quot;Trim…&quot; then drag the two handles on the waveform/spectrogram below to choose the region to keep.">&#9432;</span> <span class="info-icon" data-i18n-title title="Drag out a region on the waveform/spectrogram below to select it, drag the middle of a selection to move it, or drag either edge to resize.">&#9432;</span></h2>
+                <div data-pp-head-right style="display: flex; align-items: center; gap: 6px; margin-left: auto">
+                  <button
+                    id="btnUndoEdit"
+                    onclick="undoLastAudioEdit()"
+                    disabled
+                    style="font-size: 11px"
+                    data-i18n-title
+                    title="Nothing to undo."
+                  >
+                    ↶ Undo Edit
+                  </button>
+                  <button
+                    id="btnSaveEditedAudio"
+                    onclick="openSaveEditedAudioModal()"
+                    disabled
+                    style="font-size: 11px"
+                    data-i18n-title
+                    title="Save the current (edited) audio as a new entry in the Loaded Audio panel, without touching the original file."
+                  >
+                    💾 Save Edited Audio As…
+                  </button>
+                </div>
                 <div id="ppEditAudioBody" style="display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px">
                   
 
@@ -599,6 +704,26 @@
                         💾 Save selection
                       </button>
                     </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <button
+                        id="btnPpVanish"
+                        onclick="ppVanishSelection()"
+                        disabled
+                        style="font-size: 11px; flex: 1"
+                        title="Replace the selection with noise matched to this recording's own background. The sound disappears but the length and timing stay the same."
+                      >
+                        🌫 Vanish
+                      </button>
+                      <button
+                        id="btnPpDelete"
+                        onclick="ppDeleteSelection()"
+                        disabled
+                        style="font-size: 11px; flex: 1"
+                        title="Cut the selection out and join what came before and after it. The recording gets shorter. Keyboard: Delete."
+                      >
+                        ✂ Delete
+                      </button>
+                    </div>
                   </div>
 
                   <!-- Trim -->
@@ -629,6 +754,8 @@
                       >
                         ✂ Trim…
                       </button>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
                       <button
                         id="btnClearTrim"
                         onclick="clearTrim()"
@@ -759,12 +886,28 @@
                     <div class="row" style="gap: 4px; margin-top: 4px">
                       <button
                         id="btnApplyBandpass"
+                        class="ppApply"
                         onclick="applyBandpassEdit()"
                         disabled
-                        style="font-size: 11px; flex: 1"
+                        style="font-size: 11px"
                       >
-                        ⌁ Filter
+                        Apply to current file
                       </button>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <button
+                        id="btnApplyBandpassSel"
+                        class="ppApply"
+                        data-apply-selected
+                        onclick="applyBatchBandpass()"
+                        disabled
+                        style="font-size: 11px"
+                        title="Applies this to every file checked in Loaded Audio, permanently (re-import a file to undo). Available when two or more files are checked."
+                      >
+                        Apply to selected files
+                      </button>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
                       <button
                         id="btnClearBandpass"
                         onclick="clearBandpass()"
@@ -772,6 +915,130 @@
                         style="font-size: 11px"
                         data-i18n-title
                         title="Remove the bandpass filter."
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- DC offset -->
+                  <div
+                    style="
+                      border-top: 1px solid var(--border);
+                      padding-top: 5px;
+                    "
+                  >
+                    <div
+                      style="
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: var(--txt3);
+                        margin-bottom: 3px;
+                      "
+                    >
+                      DC offset
+                      <span class="info-icon" data-i18n-title title="A constant shift of the whole waveform away from zero, often added by the recorder or sound card. It does no harm to the sound but skews amplitude measures and wastes headroom. This subtracts the recording's average value.">&#9432;</span>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <button
+                        id="btnFixDc"
+                        class="ppApply"
+                        onclick="fixDcOffset()"
+                        disabled
+                        style="font-size: 11px" title="Measure the recording's DC offset and remove it by subtracting the average value."
+                      >
+                        &#8767; Fix DC Offset
+                      </button>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <button
+                        id="btnFixDcSel"
+                        class="ppApply"
+                        data-apply-selected
+                        onclick="applyBatchDcFix()"
+                        disabled
+                        style="font-size: 11px"
+                        title="Applies this to every file checked in Loaded Audio, permanently (re-import a file to undo). Available when two or more files are checked."
+                      >
+                        Apply to selected files
+                      </button>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <button
+                        id="btnClearDc"
+                        onclick="clearDcOffset()"
+                        disabled
+                        style="font-size: 11px"
+                        title="Remove the DC offset correction."
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Normalize -->
+                  <div
+                    style="
+                      border-top: 1px solid var(--border);
+                      padding-top: 5px;
+                    "
+                  >
+                    <div
+                      style="
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: var(--txt3);
+                        margin-bottom: 3px;
+                      "
+                    >
+                      Normalize
+                      <span class="info-icon" data-i18n-title title="Scale the recording so its loudest sample sits at this level (0 dBFS = full scale). Applied after the other edits, so it sets the level of what is left.">&#9432;</span>
+                    </div>
+                    <div class="row" style="gap: 4px">
+                      <span style="color: var(--txt2); font-size: 11px">Target</span>
+                      <input
+                        type="number"
+                        id="editNormDb"
+                        value="0"
+                        max="0"
+                        step="0.5"
+                        disabled
+                        style="width: 56px; font-size: 11px"
+                        title="Target peak level in dBFS (0 = full scale)."
+                      />
+                      <span style="color: var(--txt2); font-size: 11px">dBFS</span>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <button
+                        id="btnApplyNormalize"
+                        class="ppApply"
+                        onclick="applyNormalizeEdit()"
+                        disabled
+                        style="font-size: 11px"
+                      >
+                        Apply to current file
+                      </button>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <button
+                        id="btnApplyNormalizeSel"
+                        class="ppApply"
+                        data-apply-selected
+                        onclick="applyBatchNormalize()"
+                        disabled
+                        style="font-size: 11px"
+                        title="Applies this to every file checked in Loaded Audio, permanently (re-import a file to undo). Available when two or more files are checked."
+                      >
+                        Apply to selected files
+                      </button>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <button
+                        id="btnClearNormalize"
+                        onclick="clearNormalize()"
+                        disabled
+                        style="font-size: 11px"
+                        title="Remove the normalization."
                       >
                         Reset
                       </button>
@@ -818,12 +1085,28 @@
                     <div class="row" style="gap: 4px; margin-top: 4px">
                       <button
                         id="btnApplyFreqDrop"
+                        class="ppApply"
                         onclick="applyFreqDropEdit()"
                         disabled
-                        style="font-size: 11px; flex: 1"
+                        style="font-size: 11px"
                       >
-                        ↓ Drop
+                        Apply to current file
                       </button>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <button
+                        id="btnApplyFreqDropSel"
+                        class="ppApply"
+                        data-apply-selected
+                        onclick="applyBatchFreqDrop()"
+                        disabled
+                        style="font-size: 11px"
+                        title="Applies this to every file checked in Loaded Audio, permanently (re-import a file to undo). Available when two or more files are checked."
+                      >
+                        Apply to selected files
+                      </button>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
                       <button
                         id="btnClearFreqDrop"
                         onclick="clearFreqDrop()"
@@ -859,22 +1142,38 @@
                       <select
                         id="editDownsampleSr"
                         disabled
-                        style="flex: 1; font-size: 11px"
+                        style="flex: 0 0 auto; width: auto; font-size: 11px"
                         data-i18n-title
                         title="Only rates below the current sample rate are offered — this reduces resolution, it never increases it."
                       >
-                        <option value="">— choose a rate —</option>
+                        <option value="">— rate —</option>
                       </select>
                     </div>
                     <div class="row" style="gap: 4px; margin-top: 4px">
                       <button
                         id="btnApplyDownsample"
+                        class="ppApply"
                         onclick="applyDownsampleEdit()"
                         disabled
-                        style="font-size: 11px; flex: 1"
+                        style="font-size: 11px"
                       >
-                        ↓⟳ Downsample
+                        Apply to current file
                       </button>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <button
+                        id="btnApplyDownsampleSel"
+                        class="ppApply"
+                        data-apply-selected
+                        onclick="applyBatchDownsample()"
+                        disabled
+                        style="font-size: 11px"
+                        title="Applies this to every file checked in Loaded Audio, permanently (re-import a file to undo). Available when two or more files are checked."
+                      >
+                        Apply to selected files
+                      </button>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
                       <button
                         id="btnClearDownsample"
                         onclick="clearDownsample()"
@@ -888,6 +1187,8 @@
                     </div>
                   </div>
 
+                  <!-- Noise padding and Fade sit side by side -->
+                  <div style="display: flex; align-items: flex-start; gap: 10px">
                   <!-- Noise padding -->
                   <div
                     style="
@@ -904,7 +1205,7 @@
                       "
                     >
                       Noise padding
-                     <span class="info-icon" data-i18n-title title="Adds synthetic background noise before and after the recording, matched bin by bin to the most common amplitude in the recording's own quiet (target-free) parts. The quiet parts are found automatically, so make sure no call is cut off at the very start or end. 'Pad + fade' also fades in and out over the Fade length below.">&#9432;</span></div>
+                     <span class="info-icon" data-i18n-title title="Adds synthetic background noise before and after the recording, matched bin by bin to the most common amplitude in the recording's own quiet (target-free) parts. The quiet parts are found automatically, so make sure no call is cut off at the very start or end. 'Pad + fade' also fades in and out over the Fade length beside it.">&#9432;</span></div>
                     <div class="row" style="gap: 4px">
                       <span
                         style="color: var(--txt2); font-size: 11px; width: 56px"
@@ -924,26 +1225,35 @@
                       <span style="color: var(--txt2); font-size: 11px">s</span>
                     </div>
                     <div class="row" style="gap: 4px; margin-top: 4px">
+                      <label class="chk" style="font-size: 11px; color: var(--txt2)" title="Also fade in and out over the Fade length beside it, so the recording rises out of the added noise and back into it.">
+                        <input type="checkbox" id="editPadFade" disabled /> Fade in/out
+                      </label>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
                       <button
-                        id="btnNoisePad"
-                        onclick="applyNoisePadEdit(false)"
+                        id="btnApplyNoisePad"
+                        class="ppApply"
+                        onclick="applyNoisePadEdit()"
                         disabled
-                        style="font-size: 11px; flex: 1"
-                        data-i18n-title
-                        title="Add matched background noise at the start and end."
+                        style="font-size: 11px" title="Add matched background noise at the start and end."
                       >
-                        Pad with noise
+                        Apply to current file
                       </button>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
                       <button
-                        id="btnNoisePadFade"
-                        onclick="applyNoisePadEdit(true)"
+                        id="btnApplyNoisePadSel"
+                        class="ppApply"
+                        data-apply-selected
+                        onclick="applyBatchNoisePad()"
                         disabled
-                        style="font-size: 11px; flex: 1"
-                        data-i18n-title
-                        title="Add the noise padding, then fade in and out (Fade length below)."
+                        style="font-size: 11px"
+                        title="Applies this to every file checked in Loaded Audio, permanently (re-import a file to undo). Available when two or more files are checked."
                       >
-                        Pad + fade
+                        Apply to selected files
                       </button>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
                       <button
                         id="btnClearNoisePad"
                         onclick="clearNoisePad()"
@@ -992,27 +1302,35 @@
                       />
                       <span style="color: var(--txt2); font-size: 11px">s</span>
                     </div>
+                    <div class="row" style="gap: 10px; margin-top: 4px">
+                      <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="editFadeIn" checked disabled /> Fade in</label>
+                      <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="editFadeOut" checked disabled /> Fade out</label>
+                    </div>
                     <div class="row" style="gap: 4px; margin-top: 4px">
                       <button
-                        id="btnFadeIn"
-                        onclick="applyFadeEdit('fadein')"
+                        id="btnApplyFade"
+                        class="ppApply"
+                        onclick="applyFadeSelected()"
                         disabled
-                        style="font-size: 11px; flex: 1"
-                        data-i18n-title
-                        title="Fade in from silence at the start of the recording."
+                        style="font-size: 11px" title="Apply the ticked fades (in at the start, out at the end) over the length above."
                       >
-                        ◢ Fade in
+                        Apply to current file
                       </button>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
                       <button
-                        id="btnFadeOut"
-                        onclick="applyFadeEdit('fadeout')"
+                        id="btnApplyFadeSel"
+                        class="ppApply"
+                        data-apply-selected
+                        onclick="applyBatchFade()"
                         disabled
-                        style="font-size: 11px; flex: 1"
-                        data-i18n-title
-                        title="Fade out to silence at the end of the recording."
+                        style="font-size: 11px"
+                        title="Applies this to every file checked in Loaded Audio, permanently (re-import a file to undo). Available when two or more files are checked."
                       >
-                        ◣ Fade out
+                        Apply to selected files
                       </button>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
                       <button
                         id="btnClearFades"
                         onclick="clearFades()"
@@ -1024,6 +1342,7 @@
                         Reset
                       </button>
                     </div>
+                  </div>
                   </div>
 
                   <div
@@ -1038,213 +1357,7 @@
                   >
                     Load audio to enable editing.
                   </div>
-                  <button
-                    id="btnUndoEdit"
-                    onclick="undoLastAudioEdit()"
-                    disabled
-                    style="font-size: 11px"
-                    data-i18n-title
-                    title="Nothing to undo."
-                  >
-                    ↶ Undo Edit
-                  </button>
-                  <button
-                    id="btnSaveEditedAudio"
-                    onclick="openSaveEditedAudioModal()"
-                    disabled
-                    style="font-size: 11px"
-                    data-i18n-title
-                    title="Save the current (edited) audio as a new entry in the Loaded Audio panel, without touching the original file."
-                  >
-                    💾 Save Edited Audio As…
-                  </button>
                 </div>
-              </div>
-              <div class="panel">
-                <h2 data-i18n>Batch Edit <span class="info-icon" data-i18n-title title="Check the recordings to edit in the Loaded Audio panel at the bottom of the window, then apply here. These act on the checked entries directly and in place (irreversible — re-import to undo); separate from the single-file edit chain on the left, which only ever touches the active recording.">&#9432;</span> <span class="info-icon" data-i18n-title title="&quot;Save edited files&quot; writes each checked entry to a folder you pick (defaults to wherever the last import came from) as &lt;original name&gt;_&lt;edit suffix&gt;.wav — e.g. a 1kHz high-pass + normalize becomes &quot;call_1hpf_n0.wav&quot;.">&#9432;</span></h2>
-                
-                <div
-                  style="
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    flex-wrap: wrap;
-                    margin-top: 8px;
-                  "
-                >
-                  <span style="font-size: 10px; color: var(--txt2)"
-                    >Batch:</span
-                  >
-                  <button
-                    onclick="batchSelectAllLibrary(true)"
-                    style="font-size: 10px; padding: 2px 6px"
-                  >
-                    All
-                  </button>
-                  <button
-                    onclick="batchSelectAllLibrary(false)"
-                    style="font-size: 10px; padding: 2px 6px"
-                  >
-                    None
-                  </button>
-                  <span
-                    id="batchSelCount"
-                    style="font-size: 10px; color: var(--txt3)"
-                  ></span>
-                </div>
-                <div
-                  style="
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    flex-wrap: wrap;
-                    margin-top: 8px;
-                  "
-                >
-                  <span style="color: var(--txt2); font-size: 10px">HP</span>
-                  <input
-                    type="number"
-                    id="batchHp"
-                    value="0"
-                    min="0"
-                    step="100"
-                    style="width: 56px; font-size: 10px"
-                    data-i18n-title
-                    title="High-pass cutoff in Hz. 0 = off."
-                  />
-                  <span style="color: var(--txt2); font-size: 10px">LP</span>
-                  <input
-                    type="number"
-                    id="batchLp"
-                    value="0"
-                    min="0"
-                    step="100"
-                    style="width: 56px; font-size: 10px"
-                    data-i18n-title
-                    title="Low-pass cutoff in Hz. 0 = Nyquist (off)."
-                  />
-                  <button
-                    onclick="applyBatchBandpass()"
-                    id="btnBatchBandpass"
-                    class="pri"
-                    data-i18n
-                    style="font-size: 10px; padding: 2px 8px"
-                    disabled
-                  >
-                    ⌁ Filter selected
-                  </button>
-                </div>
-                <div
-                  style="
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    flex-wrap: wrap;
-                    margin-top: 8px;
-                  "
-                >
-                  <span style="color: var(--txt2); font-size: 10px"
-                    >Target</span
-                  >
-                  <input
-                    type="number"
-                    id="batchNormDb"
-                    value="0"
-                    max="0"
-                    step="0.5"
-                    style="width: 56px; font-size: 10px"
-                    data-i18n-title
-                    title="Target envelope peak level in dBFS (0 = full scale)."
-                  />
-                  <span style="color: var(--txt2); font-size: 10px">dBFS</span>
-                  <button
-                    onclick="applyBatchNormalize()"
-                    id="btnBatchNormalize"
-                    class="pri"
-                    data-i18n
-                    style="font-size: 10px; padding: 2px 8px"
-                    disabled
-                  >
-                    📶 Normalize selected
-                  </button>
-                </div>
-                <div
-                  style="
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    flex-wrap: wrap;
-                    margin-top: 8px;
-                  "
-                >
-                  <span style="color: var(--txt2); font-size: 10px"
-                    >Freq. drop</span
-                  >
-                  <input
-                    type="number"
-                    id="batchFreqDrop"
-                    value="50"
-                    min="1"
-                    max="99"
-                    step="1"
-                    style="width: 56px; font-size: 10px"
-                    data-i18n-title
-                    title="Scale every frequency down by this percentage, keeping each recording's duration unchanged."
-                  />
-                  <span style="color: var(--txt2); font-size: 10px">%</span>
-                  <button
-                    onclick="applyBatchFreqDrop()"
-                    id="btnBatchFreqDrop"
-                    class="pri"
-                    data-i18n
-                    style="font-size: 10px; padding: 2px 8px"
-                    disabled
-                  >
-                    ↓ Drop selected
-                  </button>
-                </div>
-                <div
-                  style="
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    flex-wrap: wrap;
-                    margin-top: 8px;
-                  "
-                >
-                  <span style="color: var(--txt2); font-size: 10px"
-                    >Downsample to</span
-                  >
-                  <select
-                    id="batchDownsampleSr"
-                    style="font-size: 10px; width: 168px"
-                    data-i18n-title
-                    title="Rates are offered below the highest-rate checked recording. A checked recording already at or below the chosen rate is left untouched. An anti-aliasing filter runs before each one is decimated."
-                  >
-                    <option value="">— choose a rate —</option>
-                  </select>
-                  <button
-                    onclick="applyBatchDownsample()"
-                    id="btnBatchDownsample"
-                    class="pri"
-                    data-i18n
-                    style="font-size: 10px; padding: 2px 8px"
-                    disabled
-                  >
-                    ↓⟳ Downsample selected
-                  </button>
-                </div>
-                <div style="margin-top: 8px">
-                  <button
-                    onclick="saveSelectedLibraryFiles()"
-                    id="btnBatchSave"
-                    style="font-size: 11px"
-                    disabled
-                  >
-                    💾 Save edited files…
-                  </button>
-                </div>
-                
               </div>
             </div>
           </div>
@@ -1706,20 +1819,20 @@
                     id="waveHeightSlider"
                     min="40"
                     max="300"
-                    value="80"
+                    value="140"
                     style="width: 80px"
                     oninput="setWaveHeight(this.value)"
                   />
                   <span
                     id="waveHeightLbl"
                     style="font-size: 10px; color: var(--txt3); min-width: 26px"
-                    >80px</span
+                    >140px</span
                   >
                 </div>
                 <div
                   class="vizwrap"
                   id="wWrap"
-                  style="height: 80px; margin: 0 7px"
+                  style="height: 140px; margin: 0 7px"
                 >
                   <canvas id="waveC"></canvas>
                   <canvas
@@ -2055,6 +2168,25 @@
                       <label class="chk"><input type="checkbox" id="showDets" checked onchange="render()" /> Detections</label>
                     </div>
                   </div>
+                </div>
+                <!-- Audio info: always visible, right-aligned. -->
+                <div style="flex: 1"></div>
+                <div
+                  id="audioInfoBar"
+                  style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 11px; color: var(--txt2)"
+                >
+                  <!-- Shown only when the recording has a noticeable DC offset
+                       (see updateDcHint); one click removes it. -->
+                  <button
+                    id="dcHint"
+                    type="button"
+                    onclick="fixDcOffset()"
+                    style="display: none; font-size: 10px; padding: 1px 8px; color: #d29922; border-color: #d29922"
+                  ></button>
+                  <span>Duration <span id="infoDur" style="color: var(--txt)">—</span></span>
+                  <span>Sample rate <span id="infoSr" style="color: var(--txt)">—</span></span>
+                  <span>Nyquist <span id="infoNyq" style="color: var(--txt3)">—</span></span>
+                  <span>Channels <span id="infoCh" style="color: var(--txt)">—</span></span>
                 </div>
               </div>
             </div>
@@ -6729,8 +6861,8 @@
                       line-height: 1.3;
                     "
                   >
-                    Check the recordings to average in the Loaded Audio panel at
-                    the bottom of the window — no separate add step, whatever's
+                    Check the recordings to average in the Loaded Audio panel on
+                    the left of the window — no separate add step, whatever's
                     checked there is what gets drawn.
                   </div>
                   <div
@@ -7874,119 +8006,47 @@
           </div>
         </div>
         <!-- /mainview-summarize -->
+
+        <!-- ═══ STR VIEW (built by str_tool.js) ═══════════════════════════════ -->
+        <div
+          id="mainview-str"
+          style="flex: 1; display: none; flex-direction: column; overflow: hidden; min-height: 0"
+        >
+          <div
+            id="strRoot"
+            style="flex: 1; overflow-y: auto; min-height: 0; padding: 12px; display: flex; flex-direction: column; gap: 10px"
+          ></div>
+        </div>
+
+        <!-- ═══ CLUSTERING VIEW (built by perch_cluster.js) ═══════════════════ -->
+        <div
+          id="mainview-cluster"
+          style="flex: 1; display: none; flex-direction: column; overflow: hidden; min-height: 0"
+        >
+          <div
+            id="pcRoot"
+            style="flex: 1; overflow-y: auto; min-height: 0; padding: 12px; display: flex; flex-direction: column; gap: 10px"
+          ></div>
+        </div>
+        <!-- ═══ CUSTOM WORKFLOW VIEW ═══════════════════════════════════════════════
+             Saved workflows (recorded with the Record Workflow button in the
+             tab bar). Each keeps its steps and ONLY the metrics ticked when
+             it was saved. ═══ -->
+        <div
+          id="mainview-workflow"
+          style="flex: 1; display: none; flex-direction: column; overflow: hidden; min-height: 0"
+        >
+          <div style="flex: 1; overflow-y: auto; min-height: 0; padding: 12px; display: flex; flex-direction: column; gap: 10px">
+            <div style="font-size: 11px; color: var(--txt2); line-height: 1.6; max-width: 900px">
+              Press <b>&#9210; Record Workflow</b> in the tab bar, work as usual in Preprocessing, Temporal Analysis and Spectral Analysis, then press <b>Stop Workflow</b> to name the workflow and tick the metrics it should calculate. Only ticked metrics are kept. Run it here on the active recording, or on every recording checked in the Loaded Audio list. Steps that depend on drawing or dragging on a plot (trim, hand-edited peaks or selections) are not replayed.
+            </div>
+            <div id="wfList" style="display: flex; flex-direction: column; gap: 8px"></div>
+          </div>
+        </div>
       </div>
       <!-- /mainCol -->
     </div>
     <!-- /layout -->
-
-    <!-- ═══ AUDIO LIBRARY PANEL ═══════════════════════════════════════════════ -->
-    <div
-      id="audioLibPanel"
-      style="
-        flex-shrink: 0;
-        border-top: 1px solid var(--border);
-        background: var(--bg2);
-        padding: 6px 8px;
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-      "
-    >
-      <div style="display: flex; align-items: center; gap: 8px">
-        <span
-          style="
-            font-size: 10px;
-            color: var(--txt2);
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-          "
-          >Loaded Audio</span
-        >
-        <span
-          id="audioLibCount"
-          style="font-size: 10px; color: var(--txt3)"
-        ></span>
-        <button
-          onclick="batchSelectAllLibrary(true)"
-          id="btnAudioLibSelAll"
-          style="font-size: 10px; padding: 2px 7px"
-          data-i18n-title
-          title="Check every loaded recording"
-          disabled
-        >
-          Select all
-        </button>
-        <button
-          onclick="batchSelectAllLibrary(false)"
-          id="btnAudioLibSelNone"
-          style="font-size: 10px; padding: 2px 7px"
-          data-i18n-title
-          title="Uncheck every loaded recording"
-          disabled
-        >
-          Clear selection
-        </button>
-        <span
-          id="audioLibSelCount"
-          style="font-size: 10px; color: var(--txt3)"
-        ></span>
-        <div style="flex: 1"></div>
-        <div
-          id="audioLibSettingsRow"
-          style="display: none; align-items: center; gap: 6px"
-        >
-          <span style="font-size: 10px; color: var(--txt2)">Cols</span>
-          <input
-            type="number"
-            id="audioLibColsInput"
-            min="1"
-            max="10"
-            value="5"
-            style="width: 40px; font-size: 10px"
-            onchange="setAudioLibGrid()"
-          />
-          <span style="font-size: 10px; color: var(--txt2)">Rows</span>
-          <input
-            type="number"
-            id="audioLibRowsInput"
-            min="1"
-            max="6"
-            value="2"
-            style="width: 40px; font-size: 10px"
-            onchange="setAudioLibGrid()"
-          />
-        </div>
-        <button
-          onclick="toggleAudioLibSettings()"
-          id="btnAudioLibSettings"
-          style="font-size: 10px; padding: 2px 7px"
-          data-i18n-title
-          title="Grid size settings"
-        >
-          ⚙
-        </button>
-      </div>
-      <div id="audioLibGrid" style="display: grid; gap: 4px; overflow-y: auto">
-        <div
-          style="
-            grid-column: 1 / -1;
-            color: var(--txt2);
-            font-size: 11px;
-            padding: 4px 0;
-          "
-        >
-          Import an audio file to see it here.
-        </div>
-      </div>
-
-      <div
-        data-i18n
-        style="font-size: 10px; color: var(--txt2); line-height: 1.3"
-      >
-        Check entries here to select which ones the Habitus/Osc. panes work on,
-        and to batch-edit them from the Preprocessing tab.
-      </div>
-    </div>
 
     <!-- ═══ SAVE EDITED AUDIO MODAL ═══════════════════════════════════════════ -->
     <div
@@ -8312,6 +8372,29 @@
       </div>
     </div>
 
+    <!-- ═══ SAVE WORKFLOW ═════════════════════════════════════════════════════ -->
+    <div id="wfSaveOverlay" class="modal-overlay" style="z-index: 1100">
+      <div class="modal-box" style="width: min(620px, 94vw)">
+        <div class="modal-header">
+          <h2>Save workflow</h2>
+          <button onclick="wfCancelSave()" style="font-size: 11px; padding: 2px 8px">&#10005;</button>
+        </div>
+        <div class="modal-body" style="overflow-y: auto; display: flex; flex-direction: column; gap: 10px">
+          <label style="display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--txt2)">
+            Workflow name
+            <input type="text" id="wfName" style="font-size: 12px; width: 100%" />
+          </label>
+          <div id="wfStepsSummary" style="font-size: 11px; color: var(--txt2)"></div>
+          <div style="font-size: 11px; color: var(--txt2)">Metrics to calculate (only ticked ones are saved):</div>
+          <div id="wfMetricBody" style="display: flex; flex-direction: column; gap: 8px"></div>
+        </div>
+        <div class="modal-footer">
+          <button onclick="wfCancelSave()" style="font-size: 11px; margin-right: auto">Discard recording</button>
+          <button onclick="wfCommitSave()" class="suc" style="font-size: 11px">&#128190; Save workflow</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Busy overlay — shown while a long operation blocks the UI thread. -->
     <div id="busyOverlay" class="busy-overlay">
       <div class="busy-box">
@@ -8341,6 +8424,11 @@
     <script src="summary_analysis.js"></script>
     <script src="summary_analysis_kb.js"></script>
     <script src="merge_waves.js"></script>
+    <script src="custom_workflow.js"></script>
+    <script src="vendor/ort/ort.wasm.min.js"></script>
+    <script src="vendor/umap/umap-js.min.js"></script>
+    <script src="perch_cluster.js"></script>
+    <script src="str_tool.js"></script>
     <script src="i18n.js"></script>
   </body>
 </html>
