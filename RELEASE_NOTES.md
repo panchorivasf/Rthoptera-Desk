@@ -164,6 +164,11 @@ Preprocessing, and a Loaded Audio list on the left of the window.
 
 - Sharper, consistently sized info icons (ⓘ).
 
+## 📖 Documentation
+
+Read the [User Manual (PDF)](https://github.com/panchorivasf/Rthoptera-Desk/blob/main/Rthoptera_Desk_User_Manual_v0.9.0.pdf).
+It is also attached to this release as `Rthoptera_Desk_User_Manual_v0.9.0.pdf`.
+
 ## 📥 Which file do I download?
 
 Pick the file that matches your operating system and processor.

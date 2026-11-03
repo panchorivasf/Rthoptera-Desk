@@ -19,6 +19,10 @@ Go to the [Releases](https://github.com/panchorivasf/Rthoptera-Desk/releases) pa
 
 If you're unsure, click the Apple menu → **About This Mac**. If it says "Apple M..." you have Apple Silicon; if it lists an Intel processor, download the `x86_64` version.
 
+## Documentation
+
+Read the [User Manual (PDF)](Rthoptera_Desk_User_Manual_v0.9.0.pdf). It is also attached to each release.
+
 ## About
 
 Rthoptera Desk is a cross-platform desktop application for analyzing insect sounds. It is built with [Tauri](https://tauri.app).
