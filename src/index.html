@@ -2371,7 +2371,10 @@
                    the Parameter Presets menu. -->
             <div id="pkDetectBarWrap" style="display: none; align-items: center; gap: 6px; flex-wrap: wrap; text-transform: none; letter-spacing: 0; font-weight: normal" onclick="event.stopPropagation()">
               <button onclick="pkDetect()" id="btnPkDetect" disabled class="pri" data-i18n style="font-size: 10px; padding: 1px 8px">
-                &#128269; Detect Envelope peaks
+                &#128269; Detect envelope peaks
+              </button>
+              <button onclick="pkRunAmpDetector()" id="btnPkAmpDetect" disabled class="pri" style="font-size: 10px; padding: 1px 8px" data-i18n-title title="Threshold the envelope directly, independent of envelope peak detection, with the settings in the Amplitude Detector box. Results are editable by dragging their edges.">
+                &#9889; Amplitude Detector
               </button>
               <label style="display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--txt2)" data-i18n-title title="Choose whether the detected units are sent as pulse or as motif selections.">
                 Apply as:
@@ -2508,7 +2511,7 @@
                       min="0.5"
                       max="50"
                       step="0.5"
-                      style="width: 78px"
+                      style="width: 52px"
                       onchange="pkRefreshEnvelope()"
                     />
                   </div>
@@ -2524,7 +2527,7 @@
                       min="0.1"
                       max="200"
                       step="0.1"
-                      style="width: 78px"
+                      style="width: 52px"
                     />
                   </div>
                   <div class="row">
@@ -2539,7 +2542,7 @@
                       min="0"
                       max="20"
                       step="0.1"
-                      style="width: 78px"
+                      style="width: 52px"
                     />
                   </div>
                   <div class="row">
@@ -2554,7 +2557,7 @@
                       min="0"
                       max="90"
                       step="0.1"
-                      style="width: 78px"
+                      style="width: 52px"
                     />
                     <label
                       class="chk"
@@ -2564,25 +2567,6 @@
                     >
                       <input type="checkbox" id="pkDetThrAuto" checked /> Auto
                     </label>
-                  </div>
-                  <div
-                    class="row"
-                    data-i18n-title title="Optional lower floor: weak envelope peaks above this value are kept ONLY when they sit within one Max-envelope peak-gap of an accepted (strong) envelope peak. Catches the quiet onset/offset envelope peaks of a pulse without picking up isolated inter-pulse noise. Leave blank to disable."
-                  >
-                    <span
-                      style="color: var(--txt2); font-size: 11px; width: 110px"
-                      >Onset thr. (%)</span
-                    >
-                    <input
-                      type="number"
-                      id="pkLinkThr"
-                      value=""
-                      min="0"
-                      max="90"
-                      step="0.1"
-                      placeholder="off"
-                      style="width: 78px"
-                    />
                   </div>
                 </div>
               </div>
@@ -2621,7 +2605,7 @@
                       min="1"
                       max="500"
                       step="1"
-                      style="width: 54px"
+                      style="width: 50px"
                     />
                   </div>
                   <div class="row">
@@ -2637,7 +2621,7 @@
                       max="100"
                       step="0.1"
                       placeholder="off"
-                      style="width: 54px"
+                      style="width: 50px"
                     />
                   </div>
                   <div class="row">
@@ -2652,7 +2636,7 @@
                       min="1"
                       max="20"
                       step="1"
-                      style="width: 54px"
+                      style="width: 50px"
                     />
                   </div>
                   <div class="row">
@@ -2668,7 +2652,7 @@
                       min="0"
                       max="50"
                       step="0.1"
-                      style="width: 54px"
+                      style="width: 50px"
                       onchange="
                         if (typeof pkDrawEnvelope === 'function')
                           pkDrawEnvelope();
@@ -2702,7 +2686,7 @@
                       min="10"
                       max="5000"
                       step="10"
-                      style="width: 54px"
+                      style="width: 50px"
                     />
                   </div>
                   <label class="chk" style="font-size: 11px">
@@ -2720,7 +2704,7 @@
                       min="50"
                       max="10000"
                       step="50"
-                      style="width: 54px"
+                      style="width: 50px"
                     />
                   </div>
                 </div>
@@ -2753,7 +2737,7 @@
                       min="5"
                       max="95"
                       step="1"
-                      style="width: 54px"
+                      style="width: 50px"
                     />
                   </div>
                   <div
@@ -2772,7 +2756,7 @@
                       max="5000"
                       step="1"
                       placeholder="auto"
-                      style="width: 54px"
+                      style="width: 50px"
                     />
                   </div>
                 </div>
@@ -2798,7 +2782,7 @@
                       min="1"
                       max="20000"
                       step="1"
-                      style="width: 78px"
+                      style="width: 56px"
                     />
                   </div>
                   <div
@@ -2816,7 +2800,7 @@
                       min="1"
                       max="20000"
                       step="1"
-                      style="width: 78px"
+                      style="width: 56px"
                     />
                   </div>
                   <div
@@ -2834,7 +2818,7 @@
                       min="1"
                       max="20000"
                       step="1"
-                      style="width: 78px"
+                      style="width: 56px"
                     />
                   </div>
                 </div>
@@ -2857,7 +2841,7 @@
                   <label
                     class="chk"
                     style="font-size: 10px; color: var(--txt2)"
-                    data-i18n-title title="Also fit the envelope peak-detection parameters (envelope peak window, envelope peak/detection/onset thresholds, false envelope peak delta) to the envelope peaks you kept, added and deleted by hand. Smoothing is never fitted. Slower, and Apply then re-runs detection over the whole recording, which replaces manual envelope peak edits as well as boundary edits."
+                    data-i18n-title title="Also fit the envelope peak-detection parameters (envelope peak window, envelope peak and detection thresholds) to the envelope peaks you kept, added and deleted by hand. Smoothing is never fitted. Slower, and Apply then re-runs detection over the whole recording, which replaces manual envelope peak edits as well as boundary edits."
                   >
                     <input type="checkbox" id="pkFitDetect" /> incl. envelope peak
                     detection
@@ -2951,9 +2935,6 @@
                     </button>
                     <button onclick="pkClearFloor()" style="font-size: 10px; padding: 2px 8px" title="Clear the noise-floor curve; the Amplitude Detector goes back to a fixed Floor % level.">&#10005;</button>
                   </div>
-                  <button onclick="pkRunAmpDetector()" id="btnPkAmpDetect" disabled class="pri" style="font-size: 10px; padding: 2px 8px; width: 100%" data-i18n-title title="Threshold the envelope directly, independent of envelope peak detection. Results are editable by dragging their edges.">
-                    &#9889; Amplitude Detector
-                  </button>
                   <div
                     id="pkAmpDetCount"
                     style="font-size: 10px; color: var(--txt2)"
@@ -3003,333 +2984,19 @@
               <button onclick="pkClear()" style="font-size: 11px">
                 &#128465; Clear peaks
               </button>
+              <button
+                onclick="pkClearPulses()"
+                id="btnPkClearPulses"
+                disabled
+                style="font-size: 11px"
+                data-i18n-title
+                title="Delete every pulse that Compute Metrics from Pulses would use: the amplitude detections and the drawn or imported selections of type Pulse. Other selections and envelope peaks are kept. Metrics computed from those pulses are cleared too. Can be undone (Ctrl+Z)."
+              >
+                &#128465; Clear pulses
+              </button>
               <span id="pkStatus" style="font-size: 12px; color: var(--txt2)"
                 >Load audio first</span
               >
-            </div>
-
-            <!-- ── Editing tools, grouped into boxes ── -->
-            <div
-              data-collapse-row="Editing tools"
-              style="
-                display: flex;
-                flex-wrap: wrap;
-                gap: 6px;
-                padding: 0 0 6px 0;
-                border-bottom: 1px solid var(--border);
-                margin-bottom: 6px;
-              "
-            >
-              <div class="panel" style="min-width: 260px">
-                <h2 data-i18n>Edit Mode</h2>
-                <div class="row" style="gap: 4px; flex-wrap: wrap">
-                  <button
-                    id="btnPkModeSelect"
-                    onclick="pkSetMode('select')"
-                    class="pri"
-                    data-i18n
-                    style="font-size: 10px; padding: 2px 8px"
-                    data-i18n-title
-                    title="Left-click a marker to select it."
-                  >
-                    ↖ Select
-                  </button>
-                  <button
-                    id="btnPkModeAdd"
-                    onclick="pkSetMode('add')"
-                    style="font-size: 10px; padding: 2px 8px"
-                    data-i18n-title
-                    title="Click anywhere on the plot to add a envelope peak, snapped to the envelope at that time."
-                  >
-                    ➕ Add Envelope peak
-                  </button>
-                  <button
-                    id="btnPkModeAnnotate"
-                    onclick="pkSetMode('annotate')"
-                    style="font-size: 10px; padding: 2px 8px"
-                    data-i18n-title
-                    title="Drag out your own selection on the plot — a manual temporal selection, independent of envelope peak detection. Edit its length afterwards by dragging its edges in Select mode."
-                  >
-                    ✏ Draw Selections
-                  </button>
-                  <select
-                    id="pkAnnotUnit"
-                    style="font-size: 10px; padding: 1px 2px"
-                    data-i18n-title
-                    title="Which unit of the song hierarchy this annotation represents. Pulse (train) selections capture their max amplitude from the envelope and feed the Manual Echemes table below."
-                  >
-                    <option value="env_peak">Envelope peak</option>
-                    <option value="pulse" selected>Pulse (train)</option>
-                    <option value="echeme">Echeme (motif)</option>
-                    <option value="motseq">Motif sequence</option>
-                    <option value="other">Other</option>
-                  </select>
-                  <input
-                    type="text"
-                    id="pkAnnotLabel"
-                    placeholder="label (optional)"
-                    style="font-size: 10px; padding: 1px 4px; width: 110px"
-                  />
-                  <button
-                    id="btnPkClearDraws"
-                    onclick="pkClearDraws()"
-                    disabled
-                    style="font-size: 10px; padding: 2px 8px"
-                    data-i18n-title
-                    title="Delete every selection you drew with Draw Selections. Amplitude detections and envelope peaks are not touched. Can be undone."
-                  >
-                    🗑 Clear draws
-                  </button>
-                  <button
-                    id="btnPkUndo"
-                    onclick="pkUndo()"
-                    disabled
-                    style="font-size: 10px; padding: 2px 8px"
-                    data-i18n-title
-                    title="Nothing to undo (Ctrl+Z)"
-                  >
-                    ↶ Undo
-                  </button>
-                  <button
-                    onclick="pkClearOverrides()"
-                    style="font-size: 10px; padding: 2px 8px"
-                    data-i18n-title
-                    title="Re-run the detected segmentation, discarding manual boundary edits (added/removed envelope peaks are kept)."
-                  >
-                    ↩ Reset boundaries
-                  </button>
-                  <button
-                    id="btnPkDropUnassigned"
-                    onclick="pkDropUnassigned()"
-                    disabled
-                    style="font-size: 10px; padding: 2px 8px"
-                    data-i18n-title
-                    title="Delete the envelope peaks that belong to no pulse worth keeping, that is, pulses with fewer peaks than 'Min envelope peaks/pulse'. These are the peaks the exported tables already leave out (they are not assigned to any pulse). Can be undone."
-                  >
-                    🗑 Drop unassigned peaks
-                  </button>
-                  <span
-                    id="pkEditHint"
-                    class="info-icon"
-                    title="Select mode"
-                    >&#9432;</span
-                  >
-                </div>
-              </div>
-
-              <div class="panel" style="flex: 1; min-width: 320px">
-                <h2 data-i18n>Envelope peak Actions</h2>
-                <div class="row" style="gap: 4px; flex-wrap: wrap">
-                  <button
-                    id="btnPkAssignLeft"
-                    onclick="pkAssignSelection('left')"
-                    disabled
-                    style="font-size: 10px; padding: 2px 8px"
-                    data-i18n-title
-                    title="Assign the selected envelope peak(s) to the left pulse."
-                  >
-                    ◀ Assign left
-                  </button>
-                  <button
-                    id="btnPkAssignRight"
-                    onclick="pkAssignSelection('right')"
-                    disabled
-                    style="font-size: 10px; padding: 2px 8px"
-                    data-i18n-title
-                    title="Assign the selected envelope peak(s) to the right pulse."
-                  >
-                    ▶ Assign right
-                  </button>
-                  <button
-                    id="btnPkMergeLeft"
-                    onclick="pkMergeSelection('left')"
-                    disabled
-                    style="font-size: 10px; padding: 2px 8px"
-                    data-i18n-title
-                    title="Merge the left gap for the selected envelope peak."
-                  >
-                    ⇤ Merge left
-                  </button>
-                  <button
-                    id="btnPkMergeRight"
-                    onclick="pkMergeSelection('right')"
-                    disabled
-                    style="font-size: 10px; padding: 2px 8px"
-                    data-i18n-title
-                    title="Merge the right gap for the selected envelope peak."
-                  >
-                    ⇥ Merge right
-                  </button>
-                  <button
-                    id="btnPkSplitLeft"
-                    onclick="pkSplitSelection('left')"
-                    disabled
-                    style="font-size: 10px; padding: 2px 8px"
-                    data-i18n-title
-                    title="Split the left gap for the selected envelope peak."
-                  >
-                    ✂ Split left
-                  </button>
-                  <button
-                    id="btnPkSplitRight"
-                    onclick="pkSplitSelection('right')"
-                    disabled
-                    style="font-size: 10px; padding: 2px 8px"
-                    data-i18n-title
-                    title="Split the right gap for the selected envelope peak."
-                  >
-                    ✂ Split right
-                  </button>
-                  <button
-                    id="btnPkBulkIsolate"
-                    onclick="pkBulkIsolate()"
-                    disabled
-                    style="font-size: 10px; padding: 2px 8px"
-                    data-i18n-title
-                    title="Make the selected envelope peaks into a single pulse."
-                  >
-                    ▭ Isolate
-                  </button>
-                  <button
-                    id="btnPkBulkJoin"
-                    onclick="pkBulkJoin()"
-                    disabled
-                    style="font-size: 10px; padding: 2px 8px"
-                    data-i18n-title
-                    title="Join internal gaps within the selected envelope peaks."
-                  >
-                    ⇎ Join
-                  </button>
-                  <button
-                    id="btnPkRemoveSel"
-                    onclick="pkRemoveSelected()"
-                    disabled
-                    class="warn"
-                    style="font-size: 10px; padding: 2px 8px"
-                    data-i18n-title
-                    title="Remove the selected envelope peak(s)."
-                  >
-                    ✕ Remove
-                  </button>
-                  <button
-                    id="btnPkClearSelection"
-                    onclick="pkClearSelectionAction()"
-                    disabled
-                    style="font-size: 10px; padding: 2px 8px"
-                    data-i18n-title
-                    title="Clear the current envelope peak selection."
-                  >
-                    ○ Clear selection
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <!-- ── Selections: amplitude detections + manual temporal
-                 annotations. Independent of the envelope peak/pulse/motif
-                 layer above — see Amplitude Detector panel and the
-                 ✏ Draw Selections edit mode. ── -->
-            <div
-              data-collapse-row="Selections"
-              style="
-                display: flex;
-                flex-wrap: wrap;
-                gap: 6px;
-                padding: 0 0 6px 0;
-                border-bottom: 1px solid var(--border);
-                margin-bottom: 6px;
-              "
-            >
-              <div class="panel" style="min-width: 260px; max-width: 360px">
-                <div
-                  style="
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 4px;
-                  "
-                >
-                  <h2 data-i18n style="margin: 0">
-                    Selections
-                    <span id="pkSelBadge" style="color: var(--txt3)"></span>
-                  </h2>
-                  <button
-                    id="btnPkMergeSel"
-                    onclick="pkMergeSelections()"
-                    disabled
-                    style="font-size: 10px; padding: 1px 7px"
-                    title="Merge the selected detections into one (Ctrl/Shift-click rows, or Ctrl-click on the plot, to select several; Ctrl+M)."
-                  >
-                    &#8660; Merge
-                  </button>
-                </div>
-                <div
-                  id="pkSelList"
-                  style="
-                    overflow-y: auto;
-                    max-height: 150px;
-                    min-height: 24px;
-                    display: flex;
-                    flex-direction: column;
-                    gap: 0;
-                  "
-                >
-                  <div
-                    style="color: var(--txt2); font-size: 11px; padding: 3px 0"
-                  >
-                    None. Run the Amplitude Detector or use ✏ Draw Selections.
-                  </div>
-                </div>
-              </div>
-
-              <div class="panel" style="flex: 1; min-width: 320px">
-                <div
-                  style="
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 4px;
-                    flex-wrap: wrap;
-                    gap: 6px;
-                  "
-                >
-                  <h2 data-i18n style="margin: 0">Manual Echemes</h2>
-                  <button
-                    onclick="pkExportSelections()"
-                    id="btnPkExportSel"
-                    disabled
-                    class="suc"
-                    style="font-size: 11px; padding: 3px 10px"
-                    data-i18n-title
-                    title="Export the amplitude detections and manual annotations together as one chronologically-numbered list, plus echeme statistics (TE/DE/PCI) derived from any Pulse (train) annotations."
-                  >
-                    &#11015; Export Temporal Selections
-                  </button>
-                </div>
-                <div
-                  id="pkEchemeTableWrap"
-                  style="
-                    overflow: auto;
-                    border: 1px solid var(--border);
-                    border-radius: var(--rad);
-                    max-height: 150px;
-                    display: none;
-                  "
-                >
-                  <table class="dtable" id="pkEchemeTable">
-                    <thead>
-                      <tr id="pkEchemeHead"></tr>
-                    </thead>
-                    <tbody id="pkEchemeBody"></tbody>
-                  </table>
-                </div>
-                <div
-                  id="pkEchemeEmpty"
-                  style="color: var(--txt2); font-size: 11px; padding: 3px 0"
-                >
-                  No Pulse (train) annotations yet.
-                </div>
-              </div>
             </div>
 
             <!-- ── Zoom controls ── -->
@@ -3437,6 +3104,193 @@
                   id="pkCanvas"
                   style="display: block; width: 100%; height: 100%"
                 ></canvas>
+              </div>
+              <!-- Editing tools: one narrow, untitled strip between envelope and spectrogram -->
+              <div id="pkEditStrip" style="display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:4px;padding:2px 0;flex:0 0 auto">
+                  <button
+                    id="btnPkModeSelect"
+                    onclick="pkSetMode('select')"
+                    class="pri"
+                    data-i18n
+                    style="font-size: 10px; padding: 2px 8px"
+                    data-i18n-title
+                    title="Left-click a marker to select it."
+                  >
+                    ↖ Select
+                  </button>
+                  <button
+                    id="btnPkMergeSel"
+                    onclick="pkMergeAny()"
+                    disabled
+                    style="font-size: 10px; padding: 2px 8px"
+                    title="Merge the selection: joins the selected envelope peaks into one pulse, and merges the selected detections or drawn selections into one (Ctrl/Shift-click rows, or Ctrl-click on the plot, to select several; Ctrl+M for detections)."
+                  >
+                    &#8660; Merge
+                  </button>
+                  <button
+                    id="btnPkModeAdd"
+                    onclick="pkSetMode('add')"
+                    style="font-size: 10px; padding: 2px 8px"
+                    data-i18n-title
+                    title="Click anywhere on the plot to add a envelope peak, snapped to the envelope at that time."
+                  >
+                    ➕ Add Envelope peak
+                  </button>
+                  <button
+                    id="btnPkModeAnnotate"
+                    onclick="pkSetMode('annotate')"
+                    style="font-size: 10px; padding: 2px 8px"
+                    data-i18n-title
+                    title="Drag out your own selection on the plot — a manual temporal selection, independent of envelope peak detection. Edit its length afterwards by dragging its edges in Select mode."
+                  >
+                    ✏ Draw Selections
+                  </button>
+                  <select
+                    id="pkAnnotUnit"
+                    style="font-size: 10px; padding: 1px 2px"
+                    data-i18n-title
+                    title="Which unit of the song hierarchy this annotation represents. Pulse (train) selections capture their max amplitude from the envelope and feed the Manual Echemes table below."
+                  >
+                    <option value="env_peak">Envelope peak</option>
+                    <option value="pulse" selected>Pulse (train)</option>
+                    <option value="echeme">Echeme (motif)</option>
+                    <option value="motseq">Motif sequence</option>
+                    <option value="other">Other</option>
+                  </select>
+                  <input
+                    type="text"
+                    id="pkAnnotLabel"
+                    placeholder="label (optional)"
+                    style="font-size: 10px; padding: 1px 4px; width: 110px"
+                  />
+                  <button
+                    id="btnPkClearDraws"
+                    onclick="pkClearDraws()"
+                    disabled
+                    style="font-size: 10px; padding: 2px 8px"
+                    data-i18n-title
+                    title="Delete every selection you drew with Draw Selections. Amplitude detections and envelope peaks are not touched. Can be undone."
+                  >
+                    🗑 Clear draws
+                  </button>
+                  <button
+                    id="btnPkUndo"
+                    onclick="pkUndo()"
+                    disabled
+                    style="font-size: 10px; padding: 2px 8px"
+                    data-i18n-title
+                    title="Nothing to undo (Ctrl+Z)"
+                  >
+                    ↶ Undo
+                  </button>
+                  <button
+                    id="btnPkDropUnassigned"
+                    onclick="pkDropUnassigned()"
+                    disabled
+                    style="font-size: 10px; padding: 2px 8px"
+                    data-i18n-title
+                    title="Delete the envelope peaks that belong to no pulse worth keeping, that is, pulses with fewer peaks than 'Min envelope peaks/pulse'. These are the peaks the exported tables already leave out (they are not assigned to any pulse). Can be undone."
+                  >
+                    🗑 Drop unassigned peaks
+                  </button>
+                  <span
+                    id="pkEditHint"
+                    class="info-icon"
+                    title="Select mode"
+                    >&#9432;</span
+                  >
+                <span style="width:1px;height:16px;background:var(--border);margin:0 4px"></span>
+                  <button
+                    id="btnPkAssignLeft"
+                    onclick="pkAssignSelection('left')"
+                    disabled
+                    style="font-size: 10px; padding: 2px 8px"
+                    data-i18n-title
+                    title="Assign the selected envelope peak(s) to the left pulse."
+                  >
+                    ◀ Assign left
+                  </button>
+                  <button
+                    id="btnPkAssignRight"
+                    onclick="pkAssignSelection('right')"
+                    disabled
+                    style="font-size: 10px; padding: 2px 8px"
+                    data-i18n-title
+                    title="Assign the selected envelope peak(s) to the right pulse."
+                  >
+                    ▶ Assign right
+                  </button>
+                  <button
+                    id="btnPkMergeLeft"
+                    onclick="pkMergeSelection('left')"
+                    disabled
+                    style="font-size: 10px; padding: 2px 8px"
+                    data-i18n-title
+                    title="Merge the left gap for the selected envelope peak."
+                  >
+                    ⇤ Merge left
+                  </button>
+                  <button
+                    id="btnPkMergeRight"
+                    onclick="pkMergeSelection('right')"
+                    disabled
+                    style="font-size: 10px; padding: 2px 8px"
+                    data-i18n-title
+                    title="Merge the right gap for the selected envelope peak."
+                  >
+                    ⇥ Merge right
+                  </button>
+                  <button
+                    id="btnPkSplitLeft"
+                    onclick="pkSplitSelection('left')"
+                    disabled
+                    style="font-size: 10px; padding: 2px 8px"
+                    data-i18n-title
+                    title="Split the left gap for the selected envelope peak."
+                  >
+                    ✂ Split left
+                  </button>
+                  <button
+                    id="btnPkSplitRight"
+                    onclick="pkSplitSelection('right')"
+                    disabled
+                    style="font-size: 10px; padding: 2px 8px"
+                    data-i18n-title
+                    title="Split the right gap for the selected envelope peak."
+                  >
+                    ✂ Split right
+                  </button>
+                  <button
+                    id="btnPkBulkIsolate"
+                    onclick="pkBulkIsolate()"
+                    disabled
+                    style="font-size: 10px; padding: 2px 8px"
+                    data-i18n-title
+                    title="Make the selected envelope peaks into a single pulse."
+                  >
+                    ▭ Isolate
+                  </button>
+                  <button
+                    id="btnPkRemoveSel"
+                    onclick="pkRemoveSelected()"
+                    disabled
+                    class="warn"
+                    style="font-size: 10px; padding: 2px 8px"
+                    data-i18n-title
+                    title="Remove the selected envelope peak(s)."
+                  >
+                    ✕ Remove
+                  </button>
+                  <button
+                    id="btnPkClearSelection"
+                    onclick="pkClearSelectionAction()"
+                    disabled
+                    style="font-size: 10px; padding: 2px 8px"
+                    data-i18n-title
+                    title="Clear the current envelope peak selection."
+                  >
+                    ○ Deselect
+                  </button>
               </div>
               <div
                 id="pkSpecWrap"
@@ -3586,6 +3440,104 @@
                   </thead>
                   <tbody id="pkTableBody"></tbody>
                 </table>
+              </div>
+            </div>
+
+            <!-- ── Selections: amplitude detections + manual temporal
+                 annotations. Independent of the envelope peak/pulse/motif
+                 layer above — see Amplitude Detector panel and the
+                 ✏ Draw Selections edit mode. ── -->
+            <div
+              data-collapse-row="Selections"
+              style="
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+                padding: 0 0 6px 0;
+                border-bottom: 1px solid var(--border);
+                margin-bottom: 6px;
+              "
+            >
+              <div class="panel" style="min-width: 260px; max-width: 360px">
+                <div
+                  style="
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 4px;
+                  "
+                >
+                  <h2 data-i18n style="margin: 0">
+                    Selections
+                    <span id="pkSelBadge" style="color: var(--txt3)"></span>
+                  </h2>
+                </div>
+                <div
+                  id="pkSelList"
+                  style="
+                    overflow-y: auto;
+                    max-height: 150px;
+                    min-height: 24px;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 0;
+                  "
+                >
+                  <div
+                    style="color: var(--txt2); font-size: 11px; padding: 3px 0"
+                  >
+                    None. Run the Amplitude Detector or use ✏ Draw Selections.
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel" style="flex: 1; min-width: 320px">
+                <div
+                  style="
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 4px;
+                    flex-wrap: wrap;
+                    gap: 6px;
+                  "
+                >
+                  <h2 data-i18n style="margin: 0">Manual Echemes</h2>
+                  <button
+                    onclick="pkExportSelections()"
+                    id="btnPkExportSel"
+                    disabled
+                    class="suc"
+                    style="font-size: 11px; padding: 3px 10px"
+                    data-i18n-title
+                    title="Export the amplitude detections and manual annotations together as one chronologically-numbered list, plus echeme statistics (TE/DE/PCI) derived from any Pulse (train) annotations."
+                  >
+                    &#11015; Export Temporal Selections
+                  </button>
+                </div>
+                <div
+                  id="pkEchemeTableWrap"
+                  style="
+                    overflow: auto;
+                    border: 1px solid var(--border);
+                    border-radius: var(--rad);
+                    max-height: 150px;
+                    display: none;
+                  "
+                >
+                  <table class="dtable" id="pkEchemeTable">
+                    <thead>
+                      <tr id="pkEchemeHead"></tr>
+                    </thead>
+                    <tbody id="pkEchemeBody"></tbody>
+                  </table>
+                </div>
+                <div
+                  id="pkEchemeEmpty"
+                  style="color: var(--txt2); font-size: 11px; padding: 3px 0"
+                >
+                  No Pulse (train) annotations yet.
+                </div>
               </div>
             </div>
           </div>
@@ -7391,7 +7343,7 @@
                     recordings by animal in the summary.
                   </div>
                   <button
-                    onclick="document.getElementById('summFiles').click()"
+                    onclick="pickXlsxFiles('summFiles', summAddFiles)"
                     class="pri"
                     data-i18n
                     style="font-size: 12px"
@@ -7442,6 +7394,7 @@
                     class="suc"
                     disabled
                     style="font-size: 12px"
+                    title="Runs by itself whenever files are added or removed or their tags are edited. Press to re-run by hand."
                   >
                     🧬 Merge &amp; Summarize
                   </button>
@@ -7632,8 +7585,8 @@
                   "
                 >
                   <div style="color: var(--txt2); font-size: 11px">
-                    Add files and click Merge &amp; Summarize to see pooled
-                    counts and per-metric mean ± SD here.
+                    Add Excel files to see pooled counts and per-metric
+                    mean ± SD here.
                   </div>
                 </div>
               </div>
@@ -7641,21 +7594,51 @@
               <div
                 class="panel"
                 style="
-                  flex: 1;
+                  flex: 0 0 auto;
                   display: flex;
                   flex-direction: column;
-                  min-height: 0;
                 "
               >
-                <h2 data-i18n>Summary table (by specimen)</h2>
-                <div style="overflow: auto; flex: 1; min-height: 0">
-                  <table class="dtable" id="summTable">
-                    <thead>
-                      <tr id="summTableHead"></tr>
-                    </thead>
-                    <tbody id="summTableBody"></tbody>
-                  </table>
+                <h2 data-i18n>Summary plots</h2>
+                <!-- One small bar chart per metric: mean ± SD of the chosen
+                     groups. See summRenderBars. -->
+                <div class="row" style="gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 6px; font-size: 11px; color: var(--txt2)">
+                  <span>Table</span>
+                  <select id="summBarCat" onchange="summBarsChanged()" style="font-size: 11px"></select>
+                  <span id="summBarSelWrap">Selection
+                    <select id="summBarSel" onchange="summBarsChanged()" style="font-size: 11px"></select>
+                  </span>
+                  <span>Bars per</span>
+                  <select id="summBarBy" onchange="summBarsChanged()" style="font-size: 11px">
+                    <option value="all">All (pooled)</option>
+                    <option value="specimen_id" selected>individual</option>
+                    <option value="species">species</option>
+                  </select>
+                  <label class="chk" id="summBarAdjWrap" style="display: none"><input type="checkbox" id="summBarAdj" onchange="summBarsChanged()" /> <span id="summBarAdjLbl">corrected to the reference temperature</span></label>
+                  <input type="text" id="summBarFilter" placeholder="filter metrics…" oninput="summBarsChanged()" style="font-size: 11px; width: 140px" />
                 </div>
+                <div id="summBarGroupsWrap" class="row" style="gap: 4px 10px; flex-wrap: wrap; align-items: center; margin-bottom: 6px; font-size: 11px; color: var(--txt2)">
+                  <button type="button" onclick="summBarPick(true)" style="font-size: 10px; padding: 0 6px">all</button>
+                  <button type="button" onclick="summBarPick(false)" style="font-size: 10px; padding: 0 6px">none</button>
+                  <span id="summBarGroups" class="row" style="gap: 2px 10px; flex-wrap: wrap"></span>
+                </div>
+                <div
+                  id="summBars"
+                  style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; max-height: 70vh; overflow-y: auto"
+                >
+                  <div style="color: var(--txt2); font-size: 11px">Add Excel files to see the summaries here.</div>
+                </div>
+                <details style="margin-top: 6px">
+                  <summary style="font-size: 11px; color: var(--txt2); cursor: pointer">Numbers as a table</summary>
+                  <div style="overflow: auto; max-height: 50vh; margin-top: 4px">
+                    <table class="dtable" id="summTable">
+                      <thead>
+                        <tr id="summTableHead"></tr>
+                      </thead>
+                      <tbody id="summTableBody"></tbody>
+                    </table>
+                  </div>
+                </details>
               </div>
 
               <!-- ═══ TEMPERATURE RESPONSE ═══════════════════════════════════
@@ -7668,7 +7651,16 @@
                   class="row"
                   style="justify-content: space-between; align-items: baseline"
                 >
-                  <h2 data-i18n style="margin: 0">Temperature response</h2>
+                  <div class="row" style="gap: 6px; align-items: center">
+                    <button
+                      type="button"
+                      id="summTempToggle"
+                      class="panel-toggle"
+                      onclick="summToggleTempFigure()"
+                      title="Expand"
+                    >▸</button>
+                    <h2 data-i18n style="margin: 0">Temperature response</h2>
+                  </div>
                   <div class="row" style="gap: 5px; align-items: center">
                     <span
                       id="summTempPlotsNote"
@@ -7695,11 +7687,11 @@
                 <div
                   id="summTempFigure"
                   style="
+                    display: none;
                     margin-top: 6px;
                     background: #ffffff;
                     padding: 10px;
                     border-radius: 4px;
-                    display: flex;
                     justify-content: center;
                   "
                 ></div>
@@ -7751,7 +7743,7 @@
                     <span
                       class="info-icon"
                       data-i18n-title
-                      title="Each observation is described by the mean of every chosen variable over its rows (the Motifs, Pulses, EnvPeaks and Spectral tables merged on the Summary tab). Species comes from the species tag. Run Merge & Summarize on the Summary tab first."
+                      title="Each observation is described by the mean of every chosen variable over its rows (the Motifs, Pulses, EnvPeaks and Spectral tables merged on the Summary tab). Species comes from the species tag. Add the Excel files on the Summary tab first."
                       >&#9432;</span
                     >
                     <button onclick="saScan()" style="font-size: 10px; padding: 1px 8px">↻ Reload from merged data</button>
@@ -7789,6 +7781,7 @@
                       <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="saLvl_spectral" onchange="saLevelChanged()" /> Spectral</label>
                       <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="saLvl_motseq" onchange="saLevelChanged()" /> MotifSeqs</label>
                       <label class="chk" style="font-size: 11px; color: var(--txt2)" title="The fixed-length song fingerprint from the STR module (STR_fingerprint sheet of an STR export): rhythm histograms, echeme shape and the dominant frequency, one row per recording."><input type="checkbox" id="saLvl_str" onchange="saLevelChanged()" /> STR</label>
+                      <label class="chk" style="font-size: 11px; color: var(--txt2)" title="Species representatives (STR_rep_fingerprint sheets from the STR module): one row per SPECIES. Ticking it makes the species themselves the observations and unticks the other tables. For describing and comparing species (radar, Compare, PCA with enough species, Compare with knowledge base); the leave-one-out test and species profiles need several recordings per species and are off in this mode."><input type="checkbox" id="saLvl_strRep" onchange="saLevelChanged()" /> STR rep.</label>
                       <span
                         class="info-icon"
                         data-i18n-title
@@ -7806,6 +7799,8 @@
                       <button onclick="saSelectFeatures('suggested')" style="font-size: 10px; padding: 1px 8px">Suggested set</button>
                       <button onclick="saSelectFeatures('all')" style="font-size: 10px; padding: 1px 8px">All</button>
                       <button onclick="saSelectFeatures('none')" style="font-size: 10px; padding: 1px 8px">None</button>
+                      <label class="chk" style="font-size: 11px; color: var(--txt2); margin-left: 8px" title="Tick or untick every spectral variable at once (frequencies, bandwidths, Q, spec_* spectrum shape), from whichever table it comes. Independent of the Spectral table box above."><input type="checkbox" id="saKind_spectral" onchange="saSelectKind('spectral', this.checked)" /> all spectral</label>
+                      <label class="chk" style="font-size: 11px; color: var(--txt2)" title="Tick or untick every temporal variable at once (durations, gaps, periods, rates, counts, amplitudes, rhythm), from whichever table it comes."><input type="checkbox" id="saKind_temporal" onchange="saSelectKind('temporal', this.checked)" /> all temporal</label>
                     </div>
                     <div
                       id="saFeatList"
@@ -7849,7 +7844,10 @@
               </div>
 
               <div class="panel">
-                <h2 data-i18n>PCA biplot</h2>
+                <h2 data-i18n>PCA (biplot and 3D)</h2>
+                <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start">
+                <div style="flex: 1 1 480px; min-width: 0">
+                <h3 style="font-size: 11px; margin: 0 0 4px; color: var(--txt2)" data-i18n>PCA biplot</h3>
                 <div class="row" style="gap: 8px; flex-wrap: wrap; margin-bottom: 6px">
                   <span style="font-size: 11px; color: var(--txt2)">X</span>
                   <select id="saPcX" onchange="saRedraw()" style="font-size: 11px"></select>
@@ -7862,15 +7860,21 @@
                     <option value="2" selected>2σ</option>
                   </select>
                   <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="saLoadings" checked onchange="saRedraw()" /> loadings</label>
+                  <select id="saLoadTop" onchange="saRedraw()" style="font-size: 11px" title="Draw only the longest arrows in this plane: a short arrow means the variable hardly changes along these two PCs">
+                    <option value="" selected>all</option>
+                    <option value="5">top 5</option>
+                    <option value="10">top 10</option>
+                    <option value="15">top 15</option>
+                    <option value="20">top 20</option>
+                  </select>
                   <button onclick="saSavePcaPng()" style="font-size: 10px; padding: 1px 8px">PNG</button>
                   <button onclick="saSavePcaSvg()" style="font-size: 10px; padding: 1px 8px">SVG</button>
                 </div>
                 <div id="saPcaFig" style="overflow: auto; background: #fff; border-radius: 4px"></div>
-              </div>
-
-              <div class="panel">
-                <h2 data-i18n>3D PCA</h2>
-                <div class="row" style="gap: 8px; margin-bottom: 6px">
+                </div>
+                <div style="flex: 1 1 480px; min-width: 0">
+                <h3 style="font-size: 11px; margin: 0 0 4px; color: var(--txt2)" data-i18n>3D PCA</h3>
+                <div class="row" style="gap: 8px; margin-bottom: 6px; flex-wrap: wrap">
                   <button onclick="saReset3d()" style="font-size: 10px; padding: 1px 8px">Reset view</button>
                   <button onclick="saSave3dPng()" style="font-size: 10px; padding: 1px 8px">PNG</button>
                   <button onclick="saSave3dHtml()" style="font-size: 10px; padding: 1px 8px" title="Save an interactive copy of this plot as one HTML page (rotate, zoom, hover and click for recording IDs; no internet needed)">HTML</button>
@@ -7879,20 +7883,24 @@
                   <span style="font-size: 10px; color: var(--txt3)">hover or click a point for its recording ID; PC1–PC3 with 1.5σ ellipsoid outlines; needs 3 or more variables</span>
                 </div>
                 <canvas id="saPca3d" style="width: 100%; height: 520px; background: #fff; border-radius: 4px; display: block"></canvas>
+                </div>
+                </div>
               </div>
 
               <div class="panel">
-                <h2 data-i18n>Radar profiles</h2>
-                <div class="row" style="gap: 8px; margin-bottom: 6px">
+                <h2 data-i18n>Radar profiles and variable importance</h2>
+                <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start">
+                <div style="flex: 1 1 560px; min-width: 0">
+                <div class="row" style="gap: 8px; margin-bottom: 6px; flex-wrap: wrap">
                   <button onclick="saSaveRadarPng()" style="font-size: 10px; padding: 1px 8px">PNG</button>
                   <button onclick="saSaveRadarSvg()" style="font-size: 10px; padding: 1px 8px">SVG</button>
+                  <label class="chk" style="font-size: 11px; color: var(--txt2)" title="Turn each variable name along its spoke, so many labels no longer overlap"><input type="checkbox" id="saRadarRadial" onchange="saRedraw()" /> radial labels</label>
                   <span style="font-size: 10px; color: var(--txt3)">each variable scaled 0–1 across all observations; line = species mean, band = ±1 SD</span>
                 </div>
                 <div id="saRadarFig" style="overflow: auto; background: #fff; border-radius: 4px"></div>
-              </div>
-
-              <div class="panel">
-                <h2 data-i18n>
+                </div>
+                <div style="flex: 1 1 380px; min-width: 0">
+                <h3 style="font-size: 11px; margin: 0 0 6px; color: var(--txt2)" data-i18n>
                   Which variables separate the species?
                   <span
                     class="info-icon"
@@ -7900,8 +7908,12 @@
                     title="η² is the share of a variable's variance explained by species (one-way ANOVA): 0 = no separation, 1 = species fully determine it. F is the usual ANOVA ratio. These look at one variable at a time, so two correlated variables rank similarly; the loadings in the CSV show which ones move together."
                     >&#9432;</span
                   >
-                </h2>
-                <div id="saRelFig"></div>
+                  <button onclick="saSaveRelPng()" style="font-size: 10px; padding: 1px 8px; margin-left: 6px" title="Save the ranking as a bar-chart figure (PNG at 3× size)">PNG</button>
+                  <button onclick="saSaveRelSvg()" style="font-size: 10px; padding: 1px 8px" title="Save the ranking as a vector bar-chart figure, editable in Illustrator or Inkscape">SVG</button>
+                </h3>
+                <div id="saRelFig" style="overflow: auto"></div>
+                </div>
+                </div>
               </div>
 
               <div class="panel">
@@ -7928,9 +7940,13 @@
                   <button class="pri" onclick="saRecCompare()">▶ Compare</button>
                   <button onclick="saSaveRecPng()" style="font-size: 10px; padding: 1px 8px">PNG</button>
                   <button onclick="saSaveRecSvg()" style="font-size: 10px; padding: 1px 8px">SVG</button>
+                  <button onclick="saSaveRecXlsx()" style="font-size: 10px; padding: 1px 8px" title="Save the comparison table as an Excel file: for each variable, every item's mean, SD and number of recordings, plus the ratio column. Values are at full precision, not rounded as on screen.">&#11015; Table (Excel)</button>
+                  <label class="chk" style="font-size: 11px; color: var(--txt2)" title="Turn each variable name along its spoke, so many labels no longer overlap"><input type="checkbox" id="saRecRadial" onchange="if (document.getElementById('saRecFig').firstChild) saRecCompare()" /> radial labels</label>
                 </div>
-                <div id="saRecTable" style="overflow: auto; margin-bottom: 6px"></div>
-                <div id="saRecFig" style="overflow: auto; background: #fff; border-radius: 4px"></div>
+                <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start">
+                  <div id="saRecFig" style="flex: 1 1 560px; min-width: 0; overflow: auto; background: #fff; border-radius: 4px"></div>
+                  <div id="saRecTable" style="flex: 1 1 380px; min-width: 0; overflow: auto"></div>
+                </div>
               </div>
 
               <div class="panel">

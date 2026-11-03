@@ -153,7 +153,15 @@
   const byL = (res) => res.slice().sort((a, b) => a.d2L - b.d2L);
 
   // ── 1. Leave-one-out test ─────────────────────────────────────────
+  // With species representatives as the observations there is one per
+  // species: nothing to leave out, no spread to build a profile from.
+  const repRefused = (what) => {
+    if (!sa.repMode) return false;
+    I.say(what + " needs several recordings per species, but the STR rep. table gives one row per species. Untick STR rep. and use the STR table (per-recording fingerprints).", true);
+    return true;
+  };
   async function saCvRun() {
+    if (repRefused("The leave-one-out test")) return;
     const { feats, X } = buildMatrix();
     const status = (t, bad) => I.say(t, bad);
     if (feats.length < 2 || X.length < 4) {
@@ -259,6 +267,7 @@
   let kb = null; // loaded or last-saved knowledge base
 
   function saProfilesExtract() {
+    if (repRefused("Extracting species profiles")) return;
     const { feats, X } = buildMatrix();
     if (feats.length < 2) {
       I.say("Select at least 2 variables first.", true);

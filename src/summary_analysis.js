@@ -27,10 +27,20 @@
     ["spectral", "Spectral"],
     ["motseq", "MotifSeqs"],
     ["str", "STR"],
+    // One row per SPECIES (STR_rep_fingerprint), not per recording. Exclusive:
+    // ticking it makes the species representatives the observations and
+    // unticks everything else; tests and profiles that need several
+    // observations per species refuse in that mode (see repMode).
+    ["strRep", "STR rep."],
   ];
   // Columns that identify or locate a row rather than describe the sound.
   const EXCL_START = /^(source|specimen|species|country|locality|selection|view|channel|annotation|label|unit|type|temp)/i;
   const EXCL_END = /(_id|_start|_end|_time)$|^(id|n|nrow)$/i;
+  // The recording metadata (where, when and with what it was recorded) is
+  // carried on every row but is not a property of the song; nor are the
+  // spectrum's measurement settings (spec_signal_*, spec_res_*, spec_bin_*),
+  // nor the absolute pulse level peak_dbfs (gain and distance).
+  const EXCL_META = /^(latitude|longitude|elevation_m|rec_date|rec_time|recorder|microphone|accessories|peak_dbfs)$|^spec_(signal|res|bin)_/i;
   // A first, reasonable set of "indicators" (Cesare's list): rates, counts,
   // duty cycle, complexity and excursion indices, frequency.
   const SUGGESTED = [
@@ -42,6 +52,9 @@
     "motifs::pci_agn",
     "motifs::tem_exc_mean",
     "motifs::dyn_exc_mean",
+    // how unevenly loud the pulses of an echeme are, in dB re the median
+    // pulse (measured in the audio; see pkAddLevelCols in main.js)
+    "motifs::level_sd_db",
     "motifs::peak_freq_khz",
     "motifs::bw_20db_khz",
   ];
@@ -145,7 +158,7 @@
       renderLists();
       renderNames();
       renderCmpList();
-      say("Add files and press Merge & Summarize on the Summary tab first.", true);
+      say("Add Excel files on the Summary tab first.", true);
       return;
     }
     const unit = $("saUnit") ? $("saUnit").value : "recording";
@@ -153,6 +166,14 @@
       unit === "specimen"
         ? String(r.specimen_id || "(no specimen)")
         : String(r.source_file || r.source_workbook || r.specimen_id || "(unknown)");
+    // Which tables have rows at all (for enabling their checkboxes), and
+    // whether the species representatives are the observations this time.
+    sa.availCats = new Set(CATS.map((c) => c[0]).filter((c) => merged[c] && merged[c].length));
+    if (sa.levels.has("strRep") && !sa.availCats.has("strRep")) sa.levels.delete("strRep");
+    // Only representatives merged: they are the only possible observations.
+    if (sa.availCats.has("strRep") && sa.availCats.size === 1) sa.levels = new Set(["strRep"]);
+    const repMode = sa.levels.has("strRep");
+    sa.repMode = repMode;
 
     const bySample = new Map(); // key -> { acc: Map(featId -> [sum,count]), sp: Map, n }
     const featMeta = new Map();
@@ -175,8 +196,10 @@
     };
 
     CATS.forEach(([cat, label]) => {
+      if ((cat === "strRep") !== repMode) return;
       (merged[cat] || []).forEach((r) => {
-        const s = touch(keyOf(r));
+        // A representative is one species: keyed by it, whatever the unit.
+        const s = touch(cat === "strRep" ? "representative: " + (r.species || "?") : keyOf(r));
         s.n++;
         const sp = String(r.species || "").trim();
         if (sp) s.sp.set(sp, (s.sp.get(sp) || 0) + 1);
@@ -189,7 +212,9 @@
           s.tn++;
         }
         for (const col in r) {
-          if (EXCL_START.test(col) || EXCL_END.test(col)) continue;
+          if (EXCL_START.test(col) || EXCL_END.test(col) || EXCL_META.test(col)) continue;
+          // A representative's quartiles describe its spread, not the song.
+          if (cat === "strRep" && (/_q[13]$/.test(col) || col === "n_recordings")) continue;
           const v = num(r[col]);
           if (v == null) continue;
           const id = cat + "::" + col;
@@ -285,7 +310,9 @@
     CATS.forEach(([cat]) => {
       const cb = $("saLvl_" + cat);
       if (!cb) return;
-      const has = sa.features.some((f) => f.cat === cat);
+      // In representative mode the other tables' variables are not scanned,
+      // so availability comes from the merged rows, not the features.
+      const has = sa.features.some((f) => f.cat === cat) || (sa.availCats && sa.availCats.has(cat));
       cb.checked = sa.levels.has(cat);
       cb.disabled = !has;
       if (cb.parentElement) cb.parentElement.style.opacity = has ? "1" : "0.4";
@@ -344,6 +371,37 @@
   function updateFeatCount() {
     const c = $("saFeatCount");
     if (c) c.textContent = sa.selFeat.size + " of " + visibleFeatures().length;
+    syncKindBoxes();
+  }
+
+  // Spectral vs temporal by what a variable measures, whichever table it
+  // came from (Pulses and Motifs carry frequency columns too): frequencies,
+  // bandwidths, Q and the spectrum-shape statistics are spectral, the rest
+  // (durations, gaps, rates, counts, amplitudes, rhythm) temporal.
+  const SPECTRAL_COL = /^(spec_|bw_|q_\d|peak_freq|freq_|centroid|dominant)|khz|_hz$/i;
+  const kindOf = (f) => (SPECTRAL_COL.test(f.col) ? "spectral" : "temporal");
+
+  // "all spectral" / "all temporal": ticked when every such variable is,
+  // half-ticked when some are, disabled when there are none.
+  function syncKindBoxes() {
+    ["spectral", "temporal"].forEach((k) => {
+      const cb = $("saKind_" + k);
+      if (!cb) return;
+      const fs = visibleFeatures().filter((f) => kindOf(f) === k);
+      const on = fs.filter((f) => sa.selFeat.has(f.id)).length;
+      cb.disabled = !fs.length;
+      cb.checked = fs.length > 0 && on === fs.length;
+      cb.indeterminate = on > 0 && on < fs.length;
+      if (cb.parentElement) cb.parentElement.style.opacity = fs.length ? "1" : "0.4";
+    });
+  }
+  function saSelectKind(kind, on) {
+    visibleFeatures().forEach((f) => {
+      if (kindOf(f) !== kind) return;
+      if (on) sa.selFeat.add(f.id);
+      else sa.selFeat.delete(f.id);
+    });
+    renderLists();
   }
   function saSelectFeatures(mode) {
     sa.selFeat = new Set();
@@ -358,8 +416,24 @@
   // Tables to draw variables from. Unticking one removes its variables from
   // the selection; ticking one only makes them available.
   function saLevelChanged() {
-    const next = new Set(CATS.map(([c]) => c).filter((c) => $("saLvl_" + c) && $("saLvl_" + c).checked && !$("saLvl_" + c).disabled));
+    let next = new Set(CATS.map(([c]) => c).filter((c) => $("saLvl_" + c) && $("saLvl_" + c).checked && !$("saLvl_" + c).disabled));
+    // STR rep. is exclusive: switching it on drops the per-recording tables,
+    // switching any of those on drops it. Either way the observations change,
+    // so the data are rescanned.
+    const wasRep = sa.levels.has("strRep");
+    if (next.has("strRep") && next.size > 1) next = wasRep ? new Set([...next].filter((c) => c !== "strRep")) : new Set(["strRep"]);
     if (!next.size) next.add(sa.levels.size ? [...sa.levels][0] : "motifs");
+    if (next.has("strRep") !== wasRep) {
+      sa.levels = next;
+      sa.selFeat = new Set();
+      saScan();
+      say(
+        next.has("strRep")
+          ? "Observations are now the species representatives (one per species). Plots and Compare work; the leave-one-out test and species profiles need several recordings per species, so they are off in this mode."
+          : "Observations are recordings again.",
+      );
+      return;
+    }
     sa.levels = next;
     const ids = new Set(visibleFeatures().map((f) => f.id));
     sa.selFeat = new Set([...sa.selFeat].filter((i) => ids.has(i)));
@@ -825,6 +899,37 @@
     return Math.ceil(names.length / perCol) * colW;
   }
 
+  // Move label boxes {left, top, w} (height h) apart until none overlap,
+  // keeping each inside the box x0..x1, y0..y1 (the plot frame, so a label
+  // never reaches the tick or axis labels outside it). Overlapping pairs are
+  // pushed apart vertically, half the overlap each.
+  function placeLabels(L, x0, y0, x1, y1, h) {
+    const clamp = (b) => {
+      b.left = Math.min(Math.max(b.left, x0), Math.max(x0, x1 - b.w));
+      b.top = Math.min(Math.max(b.top, y0), y1 - h);
+    };
+    L.forEach(clamp);
+    for (let it = 0; it < 300; it++) {
+      let moved = false;
+      for (let i = 0; i < L.length; i++)
+        for (let j = i + 1; j < L.length; j++) {
+          const a = L[i],
+            b = L[j];
+          const ox = Math.min(a.left + a.w, b.left + b.w) - Math.max(a.left, b.left);
+          const oy = Math.min(a.top + h, b.top + h) - Math.max(a.top, b.top) + 1;
+          if (ox <= 0 || oy <= 0) continue;
+          const d = oy / 2 + 0.2;
+          const [up, dn] = a.top < b.top || (a.top === b.top && i < j) ? [a, b] : [b, a];
+          up.top -= d;
+          dn.top += d;
+          clamp(up);
+          clamp(dn);
+          moved = true;
+        }
+      if (!moved) break;
+    }
+  }
+
   function drawPca2d() {
     const host = $("saPcaFig");
     if (!host) return;
@@ -936,16 +1041,36 @@
       svg.appendChild(svgEl("path", { d: `M${x - 6},${y - 6}L${x + 6},${y + 6}M${x - 6},${y + 6}L${x + 6},${y - 6}`, stroke: col, "stroke-width": 1.8 }));
     });
     if (showLoad) {
-      P.loadings.forEach((l, j) => {
+      // Only the longest arrows in this plane when a limit is chosen: a short
+      // arrow says the variable barely moves along these two PCs.
+      const top = parseInt($("saLoadTop")?.value, 10) || 0;
+      let idx = P.loadings.map((_, j) => j);
+      if (top) idx = idx.sort((a, b) => Math.hypot(P.loadings[b][cx], P.loadings[b][cy]) - Math.hypot(P.loadings[a][cx], P.loadings[a][cy])).slice(0, top);
+      const labels = [];
+      idx.forEach((j) => {
+        const l = P.loadings[j];
         const x2 = X(l[cx] * loadScale),
           y2 = Y(l[cy] * loadScale);
         svg.appendChild(svgEl("line", { x1: X(0), y1: Y(0), x2, y2, stroke: "#222", "stroke-width": 1.2, "stroke-opacity": 0.7 }));
         const ang = Math.atan2(y2 - Y(0), x2 - X(0));
         svg.appendChild(svgEl("path", { d: `M${x2},${y2}L${x2 - 7 * Math.cos(ang - 0.4)},${y2 - 7 * Math.sin(ang - 0.4)}L${x2 - 7 * Math.cos(ang + 0.4)},${y2 - 7 * Math.sin(ang + 0.4)}Z`, fill: "#222", "fill-opacity": 0.7 }));
-        const lbl = P.cols[j].f.col;
+        const text = String(P.cols[j].f.col);
+        const w = 5.9 * text.length + 2;
         const tx = X(l[cx] * loadScale * 1.12),
           ty = Y(l[cy] * loadScale * 1.12);
-        svg.appendChild(svgEl("text", { x: tx, y: ty, "text-anchor": tx >= X(0) ? "start" : "end", "font-size": 10, "font-weight": 600, fill: "#111", stroke: "#fff", "stroke-width": 2.5, "paint-order": "stroke" }, lbl));
+        const right = tx >= X(0);
+        // box: left edge, top edge (text baseline is top + 9)
+        labels.push({ text, w, tipX: x2, tipY: y2, left: right ? tx : tx - w, top: ty - 8, x0: right ? tx : tx - w, y0: ty - 8 });
+      });
+      placeLabels(labels, ML + 3, MT + 3, ML + gw - 3, MT + gh - 3, 11);
+      labels.forEach((b) => {
+        // a leader back to the arrow tip when the label had to move away
+        if (Math.hypot(b.left - b.x0, b.top - b.y0) > 6) {
+          const lx = Math.max(b.left, Math.min(b.tipX, b.left + b.w)),
+            ly = Math.max(b.top, Math.min(b.tipY, b.top + 11));
+          svg.appendChild(svgEl("line", { x1: b.tipX, y1: b.tipY, x2: lx, y2: ly, stroke: "#888", "stroke-width": 0.7 }));
+        }
+        svg.appendChild(svgEl("text", { x: b.left, y: b.top + 9, "font-size": 10, "font-weight": 600, fill: "#111", stroke: "#fff", "stroke-width": 2.5, "paint-order": "stroke" }, b.text));
       });
     }
     legendInto(svg, ML + gw + 24, MT + 8, names);
@@ -1140,7 +1265,9 @@
       if (pts.length < 2) return;
       const mu = [0, 1, 2].map((c) => mean(pts.map((p) => p[c])));
       D.cent.push({ x: mu[0], y: mu[1], z: mu[2], color: col });
-      if (pts.length < 4) return;
+      // 3 points (as in the 2D biplot) span only a plane: the outline is then
+      // a flat ellipse, which is still the honest shape of that spread.
+      if (pts.length < 3) return;
       const C = [0, 1, 2].map((a) => [0, 1, 2].map((b) => pts.reduce((s, p) => s + (p[a] - mu[a]) * (p[b] - mu[b]), 0) / (pts.length - 1)));
       const e = jacobiEigen(C, 3);
       const loops = [[0, 1], [0, 2], [1, 2]].map(([i1, i2]) => {
@@ -1308,6 +1435,19 @@
     say("3D PCA saved as a standalone HTML page.");
   }
 
+  // Radial axis labels run outward along their spoke, so the figure needs a
+  // margin that fits the longest one on every side.
+  function radialPad(labels) {
+    return Math.max(0, Math.ceil(6.6 * Math.max(...labels.map((s) => String(s).length))) - 50);
+  }
+  // A label rotated to its spoke's angle; on the left half it is turned half
+  // a circle more so none reads upside down.
+  function radialLabel(svg, [lx, ly], angle, text) {
+    const left = Math.cos(angle) < -1e-9;
+    const deg = (angle * 180) / Math.PI + (left ? 180 : 0);
+    svg.appendChild(svgEl("text", { x: lx, y: ly, "text-anchor": left ? "end" : "start", "dominant-baseline": "central", transform: `rotate(${deg.toFixed(2)} ${lx.toFixed(1)} ${ly.toFixed(1)})`, "font-size": 11, "font-weight": 600, fill: "#111" }, text));
+  }
+
   // ── Radar: min-max scaled metrics, species mean ± 1 SD ─────────────
   function drawRadar() {
     const host = $("saRadarFig");
@@ -1333,11 +1473,13 @@
       return { lo, span: hi - lo || 1 };
     });
     const scaled = (i, j) => (P.cols[j].raw[i] - mm[j].lo) / mm[j].span;
+    const radial = !!$("saRadarRadial")?.checked;
+    const pad = radial ? radialPad(P.cols.map((c) => c.f.col)) : 0;
     const R = 220,
-      CX = 330,
-      CY = 290,
-      W = CX + R + 150 + Math.ceil(names.length / 16) * legendCol(names),
-      H = CY + R + 70;
+      CX = 330 + pad,
+      CY = 290 + pad,
+      W = CX + R + 150 + pad + Math.ceil(names.length / 16) * legendCol(names),
+      H = CY + R + 70 + pad;
     const svg = svgEl("svg", { xmlns: NS, viewBox: `0 0 ${W} ${H}`, width: W, height: H, style: "background:#fff;display:block;max-width:100%;height:auto", "font-family": "Arial,sans-serif" });
     svg.appendChild(svgEl("rect", { x: 0, y: 0, width: W, height: H, fill: "#fff" }));
     svg.appendChild(svgEl("text", { x: 20, y: 26, "font-size": 14, "font-weight": 600, fill: "#111" }, "Normalised profiles (min–max scaled, mean ± 1 SD)"));
@@ -1350,8 +1492,9 @@
     P.cols.forEach((c, j) => {
       const [x, y] = pt(j, 1);
       svg.appendChild(svgEl("line", { x1: CX, y1: CY, x2: x, y2: y, stroke: "#ccc" }));
-      const [lx, ly] = pt(j, 1.08);
       const cosA = Math.cos(ang(j));
+      if (radial) return radialLabel(svg, pt(j, 1.03), ang(j), c.f.col);
+      const [lx, ly] = pt(j, 1.08);
       svg.appendChild(svgEl("text", { x: lx, y: ly + 4, "text-anchor": Math.abs(cosA) < 0.2 ? "middle" : cosA > 0 ? "start" : "end", "font-size": 11, "font-weight": 600, fill: "#111" }, c.f.col));
     });
     names.forEach((nm) => {
@@ -1476,7 +1619,10 @@
     set("saTempSig", (e) => (e.checked = true));
     set("saEllipse", (e) => (e.checked = true));
     set("saLoadings", (e) => (e.checked = true));
+    set("saRadarRadial", (e) => (e.checked = false));
+    set("saRecRadial", (e) => (e.checked = false));
     set("saSigma", (e) => (e.value = "2"));
+    set("saLoadTop", (e) => (e.value = ""));
     set("saCvLeave", (e) => (e.value = "recording"));
     set("saShowIds", (e) => (e.checked = false));
     ["saPcX", "saPcY"].forEach((id) => set(id, (e) => (e.innerHTML = "")));
@@ -1500,8 +1646,8 @@
   // comparison — so an analysis can be set up again on the same or a later
   // merge of the data. Names are matched by recording file name and species.
   const SETTINGS_KIND = "rthoptera-summary-analysis-settings";
-  const OPT_IDS = ["saPcX", "saPcY", "saSigma", "saCvLeave"];
-  const OPT_CHECKS = ["saEllipse", "saLoadings"];
+  const OPT_IDS = ["saPcX", "saPcY", "saSigma", "saCvLeave", "saLoadTop"];
+  const OPT_CHECKS = ["saEllipse", "saLoadings", "saRadarRadial", "saRecRadial"];
 
   async function saSettingsSave() {
     const obj = {
@@ -1643,6 +1789,7 @@
       return { m: mean(v), sd: v.length > 1 ? sdev(v) : null };
     };
     const data = feats.map((f) => items.map((it) => stat(it, f)));
+    sa.cmp = { items, feats, data }; // kept for saSaveRecXlsx
     // table
     const fmt = (v) => (v == null ? "—" : String(+Number(v).toPrecision(4)));
     const ratioHead = items.length === 2 ? "<th>" + items[1].short + " ÷ " + items[0].short + "</th>" : "<th>largest ÷ smallest</th>";
@@ -1683,6 +1830,7 @@
       radarSvg({
         title: "Comparison (" + (anyNeg ? "min–max scaled" : "each variable as a share of the largest value") + ")",
         axes: feats.map((f) => f.col),
+        radial: !!$("saRecRadial")?.checked,
         series: items.map((it, i) => ({
           label: it.short,
           color: specColor(i),
@@ -1696,13 +1844,14 @@
   }
 
   // A small general radar: axes [labels], series [{label,color,values 0..1,lo?,hi?}].
-  function radarSvg({ title, axes, series }) {
+  function radarSvg({ title, axes, series, radial }) {
     const m = axes.length;
+    const pad = radial ? radialPad(axes) : 0;
     const R = 210,
-      CX = 320,
-      CY = 280,
-      W = CX + R + 140 + 6.4 * Math.max(0, ...series.map((q) => q.label.length)),
-      H = CY + R + 60;
+      CX = 320 + pad,
+      CY = 280 + pad,
+      W = CX + R + 140 + pad + 6.4 * Math.max(0, ...series.map((q) => q.label.length)),
+      H = CY + R + 60 + pad;
     const svg = svgEl("svg", { xmlns: NS, viewBox: `0 0 ${W} ${H}`, width: W, height: H, style: "background:#fff;display:block;max-width:100%;height:auto", "font-family": "Arial,sans-serif" });
     svg.appendChild(svgEl("rect", { x: 0, y: 0, width: W, height: H, fill: "#fff" }));
     svg.appendChild(svgEl("text", { x: 20, y: 26, "font-size": 14, "font-weight": 600, fill: "#111" }, title));
@@ -1716,6 +1865,7 @@
     axes.forEach((a, k) => {
       const [x, y] = pt(k, 1);
       svg.appendChild(svgEl("line", { x1: CX, y1: CY, x2: x, y2: y, stroke: "#ccc" }));
+      if (radial) return radialLabel(svg, pt(k, 1.03), ang(k), a);
       const [lx, ly] = pt(k, 1.09);
       const c = Math.cos(ang(k));
       svg.appendChild(svgEl("text", { x: lx, y: ly + 4, "text-anchor": Math.abs(c) < 0.2 ? "middle" : c > 0 ? "start" : "end", "font-size": 11, "font-weight": 600, fill: "#111" }, a));
@@ -1759,6 +1909,103 @@
         )
         .join("") +
       "</tbody></table>";
+  }
+
+  // The ranking as a figure for a paper: one horizontal bar per variable on
+  // an absolute η² axis (0–1, so figures from different analyses compare),
+  // with η² and F printed at the bar's end. Drawn into a hidden host only
+  // when saved, so the on-screen table stays as it is.
+  function relFigureHost() {
+    const rel = sa.rel || [];
+    if (!rel.length || new Set(sa.samples.map((s) => s.species)).size < 2) {
+      say("Run the analysis with at least 2 species first.", true);
+      return null;
+    }
+    let host = $("saRelSvgHost");
+    if (!host) {
+      host = document.createElement("div");
+      host.id = "saRelSvgHost";
+      host.style.display = "none";
+      document.body.appendChild(host);
+    }
+    host.innerHTML = "";
+    const k = new Set(sa.samples.map((s) => s.species)).size;
+    const LW = Math.ceil(6.3 * Math.max(...rel.map((r) => r.label.length))) + 30,
+      BW = 360,
+      VW = 120,
+      ROW = 20,
+      TOP = 62,
+      W = LW + BW + VW,
+      H = TOP + rel.length * ROW + 40;
+    const X = (v) => LW + v * BW;
+    const svg = svgEl("svg", { xmlns: NS, viewBox: `0 0 ${W} ${H}`, width: W, height: H, "font-family": "Arial,sans-serif" });
+    svg.appendChild(svgEl("rect", { x: 0, y: 0, width: W, height: H, fill: "#fff" }));
+    svg.appendChild(svgEl("text", { x: 14, y: 24, "font-size": 14, "font-weight": 600, fill: "#111" }, "Which variables separate the species?"));
+    svg.appendChild(svgEl("text", { x: 14, y: 42, "font-size": 11, fill: "#555" }, "η² from a one-way ANOVA per variable (species as groups) · " + sa.samples.length + " observations, " + k + " species"));
+    [0, 0.25, 0.5, 0.75, 1].forEach((t) => {
+      svg.appendChild(svgEl("line", { x1: X(t), y1: TOP - 4, x2: X(t), y2: TOP + rel.length * ROW, stroke: t ? "#e4e4e4" : "#888" }));
+      svg.appendChild(svgEl("text", { x: X(t), y: TOP + rel.length * ROW + 14, "text-anchor": "middle", "font-size": 10, fill: "#444" }, String(t)));
+    });
+    svg.appendChild(svgEl("text", { x: X(0.5), y: TOP + rel.length * ROW + 32, "text-anchor": "middle", "font-size": 11, fill: "#111" }, "η² (share of the variance explained by species)"));
+    rel.forEach((r, i) => {
+      const y = TOP + i * ROW;
+      svg.appendChild(svgEl("text", { x: LW - 8, y: y + 14, "text-anchor": "end", "font-size": 11, fill: "#111" }, i + 1 + ". " + r.label));
+      svg.appendChild(svgEl("rect", { x: X(0), y: y + 4, width: Math.max(1, r.eta2 * BW), height: ROW - 8, fill: "#2d6cdf" }));
+      svg.appendChild(svgEl("text", { x: X(1) + 8, y: y + 14, "font-size": 10, fill: "#333" }, r.eta2.toFixed(3)));
+      if (r.F != null) svg.appendChild(svgEl("text", { x: X(1) + 48, y: y + 14, "font-size": 10, fill: "#666" }, "F = " + r.F.toFixed(1)));
+    });
+    host.appendChild(svg);
+    return host;
+  }
+  async function saSaveRelPng() {
+    if (relFigureHost()) await savePng("saRelSvgHost", "variable_importance");
+  }
+  async function saSaveRelSvg() {
+    if (relFigureHost()) await saveSvg("saRelSvgHost", "variable_importance");
+  }
+
+  // The Compare table as an Excel sheet: one row per variable; for each item
+  // its mean, SD and the number of recordings behind them (full precision,
+  // unlike the rounded on-screen table), then the same ratio as on screen.
+  async function saSaveRecXlsx() {
+    const c = sa.cmp;
+    if (!c) {
+      say("Press Compare first.", true);
+      return;
+    }
+    const two = c.items.length === 2;
+    const ratioCol = two ? c.items[1].short + " / " + c.items[0].short : "largest / smallest";
+    const rows = c.feats.map((f, j) => {
+      // f.label is "<Table>: <column>"
+      const row = { table: f.label.slice(0, -(f.col.length + 2)), variable: f.col };
+      c.items.forEach((it, i) => {
+        const d = c.data[j][i];
+        row[it.short + " mean"] = d.m;
+        row[it.short + " sd"] = d.sd == null ? "" : d.sd;
+        row[it.short + " n"] = it.samples.filter((s) => f.id in s.vals).length;
+      });
+      const ms = c.data[j].map((d) => d.m);
+      let r = null;
+      if (two) r = ms[0] !== 0 ? ms[1] / ms[0] : null;
+      else {
+        const mx = Math.max(...ms.map(Math.abs)),
+          mn = Math.min(...ms.map(Math.abs));
+        r = mn > 0 ? mx / mn : null;
+      }
+      row[ratioCol] = r == null ? "" : r;
+      return row;
+    });
+    const info = c.items.map((it) => ({ item: it.short, full_name: it.label, recordings: it.samples.length }));
+    try {
+      await dlFile(
+        "compare_table.xlsx",
+        _buildXlsx([["Compare", rows], ["Items", info]]),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        { exactName: true },
+      );
+    } catch (e) {
+      say("Export failed: " + e.message, true);
+    }
   }
 
   // ── Export ────────────────────────────────────────────────────────
@@ -1834,6 +2081,45 @@
   });
   window.addEventListener("load", attach3d);
 
+  // The variable ranking and the comparison table sit to the right of their
+  // radar and are kept no taller than it (own scrollbar). When the window is
+  // too narrow they wrap below it and the radar's height still caps them.
+  function capHeight(refId, boxId) {
+    const ref = $(refId),
+      box = $(boxId);
+    if (!ref || !box) return;
+    const rr = ref.getBoundingClientRect();
+    if (!rr.height) {
+      box.style.maxHeight = "";
+      return;
+    }
+    const top = box.getBoundingClientRect().top;
+    const beside = top < rr.bottom - 40;
+    box.style.maxHeight = Math.max(120, beside ? rr.bottom - top : rr.height) + "px";
+  }
+  function capAll() {
+    capHeight("saRadarFig", "saRelFig");
+    capHeight("saRecFig", "saRecTable");
+  }
+  window.addEventListener("load", () => {
+    if (typeof ResizeObserver !== "function") return;
+    const ro = new ResizeObserver(capAll);
+    // only the radars: the cap depends on their height alone, and watching
+    // the capped boxes would re-trigger on every cap they receive
+    ["saRadarFig", "saRecFig"].forEach((id) => $(id) && ro.observe($(id)));
+    // the 3D view shares its row with the biplot, so its width also changes
+    // when the panel does, not only with the window
+    let w3 = 0;
+    const cv = $("saPca3d");
+    if (cv)
+      new ResizeObserver(() => {
+        if (cv.clientWidth && cv.clientWidth !== w3 && sa.pca) {
+          w3 = cv.clientWidth;
+          drawPca3d();
+        }
+      }).observe(cv);
+  });
+
   // The selected variables as a matrix, one row per observation, a missing
   // value replaced by that variable's mean. Variables with fewer than 3
   // values are left out.
@@ -1858,6 +2144,7 @@
   window.saScan = saScan;
   window.saRun = saRun;
   window.saSelectFeatures = saSelectFeatures;
+  window.saSelectKind = saSelectKind;
   window.saSelectSpecies = saSelectSpecies;
   window.saRedraw = () => sa.pca && drawAll();
   window.saReset3d = saReset3d;
@@ -1869,6 +2156,8 @@
   window.saSave3dPng = () => saveCanvasPng("pca_3d");
   window.saSaveRadarPng = () => savePng("saRadarFig", "radar_profiles");
   window.saSaveRadarSvg = () => saveSvg("saRadarFig", "radar_profiles");
+  window.saSaveRelPng = saSaveRelPng;
+  window.saSaveRelSvg = saSaveRelSvg;
   window.saSaveCsv = saveCsv;
   // Called by Summarize after every (re)merge so the lists follow the data.
   window.saTempChanged = saTempChanged;
@@ -1883,6 +2172,7 @@
   window.saRecCompare = saRecCompare;
   window.saSaveRecPng = () => savePng("saRecFig", "comparison");
   window.saSaveRecSvg = () => saveSvg("saRecFig", "comparison");
+  window.saSaveRecXlsx = saSaveRecXlsx;
   window.saOnDataChanged = () => {
     const v = $("summPaneAnalysis");
     if (v && v.offsetParent !== null) saScan();

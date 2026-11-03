@@ -111,7 +111,7 @@
       "📶 Normalize selected": "📶 Normalizar seleccionados",
       "↓ Drop selected": "↓ Reducir seleccionados",
       "↓⟳ Downsample selected": "↓⟳ Reducir muestreo de seleccionados",
-      "🔍 Detect Envelope peaks": "🔍 Detectar Picos de Envolvente",
+      "🔍 Detect envelope peaks": "🔍 Detectar picos de envolvente",
       "↖ Select": "↖ Seleccionar",
       "📂 Load": "📂 Cargar",
       "🖼 Render": "🖼 Renderizar",
@@ -320,8 +320,6 @@
         "Clic izquierdo en un marcador para seleccionarlo.",
       "Click anywhere on the plot to add a envelope peak, snapped to the envelope at that time.":
         "Haga clic en cualquier parte del gráfico para añadir un pico de envolvente, ajustado a la envolvente en ese momento.",
-      "Re-run the detected segmentation, discarding manual boundary edits (added/removed envelope peaks are kept).":
-        "Vuelve a ejecutar la segmentación detectada, descartando las ediciones manuales de límites (los picos de envolvente añadidos/eliminados se conservan).",
       "Re-apply the False envelope peak Δ filter to the current envelope peaks (e.g. after manually adding one, or after changing the Δ value).":
         "Vuelve a aplicar el filtro Δ de falso pico de envolvente a los picos de envolvente actuales (p. ej., tras añadir uno manualmente, o tras cambiar el valor de Δ).",
       "Assign the selected envelope peak(s) to the left pulse.":
@@ -338,8 +336,6 @@
         "Dividir el hueco derecho del pico de envolvente seleccionado.",
       "Make the selected envelope peaks into a single pulse.":
         "Convertir los picos de envolvente seleccionados en un solo pulso.",
-      "Join internal gaps within the selected envelope peaks.":
-        "Unir los huecos internos dentro de los picos de envolvente seleccionados.",
       "Remove the selected envelope peak(s).":
         "Eliminar el/los pico(s) de envolvente seleccionado(s).",
       "Clear the current envelope peak selection.":
@@ -580,7 +576,7 @@
       "📶 Normalize selected": "📶 Normalizza selezionati",
       "↓ Drop selected": "↓ Riduci selezionati",
       "↓⟳ Downsample selected": "↓⟳ Sottocampiona selezionati",
-      "🔍 Detect Envelope peaks": "🔍 Rileva Picchi di Inviluppo",
+      "🔍 Detect envelope peaks": "🔍 Rileva picchi di inviluppo",
       "↖ Select": "↖ Seleziona",
       "📂 Load": "📂 Carica",
       "🖼 Render": "🖼 Genera immagine",
@@ -789,8 +785,6 @@
         "Clic sinistro su un marcatore per selezionarlo.",
       "Click anywhere on the plot to add a envelope peak, snapped to the envelope at that time.":
         "Fai clic in un punto qualsiasi del grafico per aggiungere un picco di inviluppo, agganciato all'inviluppo in quell'istante.",
-      "Re-run the detected segmentation, discarding manual boundary edits (added/removed envelope peaks are kept).":
-        "Riesegue la segmentazione rilevata, scartando le modifiche manuali dei confini (i picchi di inviluppo aggiunti/rimossi vengono mantenuti).",
       "Re-apply the False envelope peak Δ filter to the current envelope peaks (e.g. after manually adding one, or after changing the Δ value).":
         "Riapplica il filtro Δ falso picco di inviluppo ai picchi di inviluppo attuali (ad es. dopo averne aggiunto uno manualmente, o dopo aver modificato il valore di Δ).",
       "Assign the selected envelope peak(s) to the left pulse.":
@@ -807,8 +801,6 @@
         "Dividi il gap a destra del picco di inviluppo selezionato.",
       "Make the selected envelope peaks into a single pulse.":
         "Trasforma i picchi di inviluppo selezionati in un unico impulso.",
-      "Join internal gaps within the selected envelope peaks.":
-        "Unisci i gap interni tra i picchi di inviluppo selezionati.",
       "Remove the selected envelope peak(s).":
         "Rimuovi i picchi di inviluppo selezionati.",
       "Clear the current envelope peak selection.":
@@ -1049,7 +1041,7 @@
       "📶 Normalize selected": "📶 Normalizar selecionados",
       "↓ Drop selected": "↓ Reduzir selecionados",
       "↓⟳ Downsample selected": "↓⟳ Reduzir amostragem dos selecionados",
-      "🔍 Detect Envelope peaks": "🔍 Detectar Picos de Envoltória",
+      "🔍 Detect envelope peaks": "🔍 Detectar picos de envoltória",
       "↖ Select": "↖ Selecionar",
       "📂 Load": "📂 Carregar",
       "🖼 Render": "🖼 Renderizar",
@@ -1258,8 +1250,6 @@
         "Clique esquerdo em um marcador para selecioná-lo.",
       "Click anywhere on the plot to add a envelope peak, snapped to the envelope at that time.":
         "Clique em qualquer lugar do gráfico para adicionar um pico de envoltória, ajustado à envoltória naquele instante.",
-      "Re-run the detected segmentation, discarding manual boundary edits (added/removed envelope peaks are kept).":
-        "Executa novamente a segmentação detectada, descartando as edições manuais de limites (os picos de envoltória adicionados/removidos são mantidos).",
       "Re-apply the False envelope peak Δ filter to the current envelope peaks (e.g. after manually adding one, or after changing the Δ value).":
         "Reaplica o filtro Δ de falso pico de envoltória aos picos de envoltória atuais (por ex., após adicionar um manualmente, ou após alterar o valor de Δ).",
       "Assign the selected envelope peak(s) to the left pulse.":
@@ -1276,8 +1266,6 @@
         "Dividir o intervalo à direita do pico de envoltória selecionado.",
       "Make the selected envelope peaks into a single pulse.":
         "Transformar os picos de envoltória selecionados em um único pulso.",
-      "Join internal gaps within the selected envelope peaks.":
-        "Unir os intervalos internos entre os picos de envoltória selecionados.",
       "Remove the selected envelope peak(s).":
         "Remover o(s) pico(s) de envoltória selecionado(s).",
       "Clear the current envelope peak selection.":

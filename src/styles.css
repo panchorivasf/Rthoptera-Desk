@@ -923,6 +923,11 @@
         flex-wrap: wrap;
         min-width: 0;
       }
+      /* Narrow number boxes: slimmer side padding leaves room for the digits. */
+      .pk-params input[type="number"] {
+        padding-left: 4px;
+        padding-right: 2px;
+      }
       .pk-cols button {
         min-width: 0;
         white-space: normal;
@@ -934,10 +939,10 @@
         gap: 4px 16px !important;
         align-content: start;
       }
-      /* 5 settings -> 3 + 2 */
+      /* 4 settings, all in one column (Detection thr. last) */
       .pk-cols-env {
         grid-auto-flow: column;
-        grid-template-rows: repeat(3, auto);
+        grid-template-rows: repeat(4, auto);
       }
       /* Pulses (heading + 4 settings) | Motifs (heading + 3) */
       .pk-cols-grp {
@@ -949,7 +954,11 @@
         padding-top: 0 !important;
         border-top: none !important;
       }
-      /* Floor %, Min dur, Min gap | everything from Floor win. down */
+      /* Floor %, Min dur, Min gap | everything from Floor win. down. Dense
+         packing starts the second column at the top row, not beside Min gap. */
+      .pk-cols-amp {
+        grid-auto-flow: row dense;
+      }
       .pk-cols-amp > :nth-child(-n + 3) {
         grid-column: 1;
       }

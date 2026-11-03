@@ -21,41 +21,55 @@ let strEchemeSel = -1; // -1 = whole song
 function strInit() {
   const root = document.getElementById("strRoot");
   if (!root) return;
+  // One parameter as a label cell and a box cell of a grid, so a pane's
+  // fields line up in columns and the three top panes stay compact.
   const num = (id, label, val, tip, min, step) =>
-    '<label class="chk" style="font-size:11px;color:var(--txt2)" title="' + tip + '">' + label +
-    ' <input type="number" id="' + id + '" value="' + val + '" min="' + min + '" step="' + step +
-    '" style="width:64px;font-size:11px"></label>';
+    '<span style="font-size:11px;color:var(--txt2);white-space:nowrap" title="' + tip + '">' + label + "</span>" +
+    '<input type="number" id="' + id + '" value="' + val + '" min="' + min + '" step="' + step +
+    '" title="' + tip + '" style="width:64px;font-size:11px">';
+  const grid = (cols) => '<div style="display:grid;grid-template-columns:' + cols + ';gap:5px 8px;align-items:center">';
   root.innerHTML =
-    '<div style="font-size:11px;color:var(--txt2);line-height:1.6;max-width:950px">' +
+    '<div style="font-size:11px;color:var(--txt2);line-height:1.6;max-width:1250px">' +
     "<b>STR = Simplified Temporal Representation.</b> The song is reduced to the two things that carry most of its identity: " +
     "its <b>dominant frequency</b> and the <b>timing of its pulses</b>, drawn as a barcode " +
     "(bar width = pulse duration, bar height = maximum amplitude, the spaces between bars = the silent gaps). " +
     "The frequency comes from a long window averaged over all the pulses, so a single noisy moment cannot move it. " +
     "Compute it from the checked recordings, or build it from the Pulses table of a Temporal Analysis export." +
     "</div>" +
-    '<div class="panel" style="max-width:950px"><h2>Dominant frequency</h2><div class="row" style="gap:10px;flex-wrap:wrap;align-items:center">' +
+    // Settings and actions: one row of three panes (wraps on narrow windows).
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:stretch;max-width:1250px">' +
+    '<div class="panel" style="flex:0 0 auto;margin:0"><h2>Dominant frequency</h2>' + grid("auto auto") +
     num("strWin", "Window (ms)", 50, "Length of each spectrum window. Longer windows give a finer, steadier peak.", 5, 5) +
     num("strSmooth", "Smoothing (Hz)", 1000, "The averaged spectrum is smoothed over this width before the peak is taken, so the result follows the main band rather than a single spike.", 0, 100) +
     num("strLow", "Search from (kHz)", 1, "Ignore everything below this frequency (wind, handling noise).", 0, 0.5) +
     "</div></div>" +
-    '<div class="panel" style="max-width:950px"><h2>Pulses</h2><div class="row" style="gap:10px;flex-wrap:wrap;align-items:center">' +
+    '<div class="panel" style="flex:0 0 auto;margin:0"><h2>Pulses</h2>' + grid("auto auto auto auto") +
     num("strBand", "Band-limit &plusmn; (kHz)", 3, "Before looking for pulses, keep only this much either side of the dominant frequency, so noise outside the song does not count. 0 = use the whole band.", 0, 0.5) +
     num("strRes", "Envelope step (ms)", 0.25, "Time resolution of the amplitude envelope. Pulse starts and ends are accurate to about this much.", 0.05, 0.05) +
     num("strThr", "Threshold (dB below peak)", 20, "A pulse is any stretch whose envelope stays above this level, measured down from the loud end of the recording.", 3, 1) +
     num("strMinDur", "Min pulse (ms)", 1, "Shorter blips are discarded.", 0, 0.5) +
     num("strMerge", "Join gaps shorter than (ms)", 0.5, "Two stretches separated by less than this are one pulse.", 0, 0.25) +
     "</div></div>" +
-    '<div class="panel" style="max-width:950px"><div class="row" style="gap:10px;flex-wrap:wrap;align-items:center">' +
+    '<div class="panel" style="flex:1 1 340px;min-width:0;margin:0;display:flex;flex-direction:column;gap:6px">' +
+    '<div class="row" style="gap:6px;flex-wrap:wrap;align-items:center">' +
     '<button id="strRun" class="suc" style="font-size:11px" onclick="strRun()">&#9654; Compute STR for checked recordings</button>' +
-    '<button style="font-size:11px" onclick="document.getElementById(\'strXlsx\').click()" title="Build the STR from the Pulses sheet of a Temporal Analysis Excel export (pulse_start, pulse_end, amplitude, peak frequency). No audio is needed, and the pulses and motifs are exactly the ones you checked and edited there. A workbook holding several recordings (e.g. merged in Summarize) gives one STR per source_file.">&#128194; From Temporal Analysis table (.xlsx)</button>' +
+    '<button style="font-size:11px" onclick="pickXlsxFiles(\'strXlsx\', strImportTables)" title="Build the STR from the Pulses sheet of Temporal Analysis Excel exports (pulse_start, pulse_end, amplitude, peak frequency). No audio is needed, and the pulses and motifs are exactly the ones you checked and edited there. Pick several files at once with Ctrl+click or Shift+click; a workbook holding several recordings (e.g. merged in Summarize) gives one STR per source_file. Each import ADDS to the list.">&#128194; Add Temporal Analysis tables (.xlsx)&hellip;</button>' +
+    '<button style="font-size:11px" onclick="strClear()" title="Remove every STR from the list, and the representatives built from or loaded with them.">Clear</button>' +
     '<input type="file" id="strXlsx" accept=".xlsx" multiple style="display:none" onchange="strImportTables(this.files); this.value=\'\';">' +
+    "</div>" +
+    '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">' +
+    grid("auto auto auto auto") +
     num("strEGap", "Echeme gap (ms)", 100, "Pulses closer together than this belong to the same echeme. Changing it regroups instantly.", 1, 10) +
-    '<label class="chk" style="font-size:11px;color:var(--txt2)" title="Bar heights are divided by the loudest pulse of each echeme, or of the whole song. Changing it redraws instantly.">Normalise per <select id="strNorm" style="font-size:11px" onchange="strRegroup()"><option value="echeme">echeme</option><option value="song">song</option></select></label>' +
+    '<span style="font-size:11px;color:var(--txt2)" title="Bar heights are divided by the loudest pulse of each echeme, or of the whole song. Changing it redraws instantly.">Normalise per</span>' +
+    '<select id="strNorm" style="font-size:11px" onchange="strRegroup()"><option value="echeme">echeme</option><option value="song">song</option></select>' +
+    "</div>" +
     '<button id="strExport" style="font-size:11px" onclick="strExport()" disabled>&#11015; Export (Excel)</button>' +
     "</div>" +
-    '<div id="strStatus" style="font-size:11px;color:var(--txt2);margin-top:4px">Check recordings in the Loaded Audio list (or leave none checked to use the active one).</div></div>' +
+    '<div id="strStatus" style="font-size:11px;color:var(--txt2)">Compute from recordings checked in the Loaded Audio list (or the active one), and/or add Temporal Analysis tables. Both add to the same list, so recordings and tables can be pooled.</div></div>' +
+    "</div>" +
+    // Results: plots on the left, the list of loaded STRs on the right (the
+    // list drops below the plots on narrow windows).
     '<div id="strResults" style="display:none;max-width:1250px;gap:8px;flex-wrap:wrap;align-items:flex-start">' +
-    '<div class="panel" style="flex:0 1 330px;max-height:520px;overflow:auto"><table class="dtable"><thead><tr><th>Recording</th><th>kHz</th><th>Pulses</th><th>Echemes</th></tr></thead><tbody id="strBody"></tbody></table></div>' +
     '<div style="flex:1 1 600px;min-width:0;display:flex;flex-direction:column;gap:8px">' +
     '<div class="panel"><div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;font-size:11px;color:var(--txt2)">' +
     '<span id="strTitle" style="font-weight:700;color:var(--txt3)"></span><span style="flex:1"></span>' +
@@ -69,9 +83,53 @@ function strInit() {
     '<div class="panel"><div style="font-size:11px;color:var(--txt2);margin-bottom:2px" title="A fixed set of numbers summarising the whole song, the same for every recording, so songs can be compared and pooled into species profiles. Histograms are shares of pulses or intervals; the along-echeme profiles are relative, so recording length and gain do not matter.">STR fingerprint (fixed length, for comparing and pooling songs)</div>' +
     '<canvas id="strFp" style="width:100%;height:90px;display:block"></canvas>' +
     '<div id="strFpNote" style="font-size:11px;color:var(--txt2);margin-top:3px"></div></div>' +
-    "</div></div>";
+    "</div>" +
+    '<div class="panel" style="flex:0 1 360px;min-width:260px;max-height:640px;overflow:auto;margin:0">' +
+    '<table class="dtable" style="table-layout:fixed;width:100%"><colgroup><col><col style="width:44px"><col style="width:48px"><col style="width:56px"><col style="width:20px"></colgroup>' +
+    "<thead><tr><th>Recording</th><th>kHz</th><th>Pulses</th><th>Echemes</th><th></th></tr></thead><tbody id=\"strBody\"></tbody></table></div>" +
+    "</div>" +
+    // Outside #strResults: loaded representative files must show even with
+    // no STR in the list.
+    '<div id="strRepPanel" class="panel" style="display:none;max-width:1250px;min-width:0">' +
+    '<div class="row" style="gap:10px;align-items:center;flex-wrap:wrap;font-size:11px;color:var(--txt2)">' +
+    '<b style="color:var(--txt3)" title="One consensus song per species, pooled from every STR in the list above, plus any representatives loaded from files. Time is expressed as a proportion of each echeme, so faster and slower renditions (temperature, individuals) line up; the tempo itself is kept apart as one number, the median period.">Representative STR</b>' +
+    '<label class="chk">Species <select id="strRepSp" style="font-size:11px" onchange="strDrawRep()"></select></label>' +
+    '<label class="chk" title="Overlay a second species on both plots, in pink: its amplitude as an outline and its occupancy as a dashed line on the barcode, its fingerprint as outlined bars.">Compare with <select id="strRepCmp" style="font-size:11px" onchange="strDrawRep()"></select></label>' +
+    '<label class="chk" title="Echeme period = onset to the next echeme\'s onset, so the silence after the echeme is part of the shape (the last echeme of each recording has no period and is left out). Echeme duration = first pulse onset to last pulse offset: the internal pattern only. Applies to representatives built here; loaded ones keep the setting they were saved with.">Normalise by <select id="strRepBy" style="font-size:11px" onchange="strBuildRep()"><option value="period">echeme period</option><option value="duration">echeme duration</option></select></label>' +
+    '<span style="flex:1"></span>' +
+    '<button style="font-size:11px" onclick="pickXlsxFiles(\'strRepXlsx\', strLoadReps)" title="Load representatives saved earlier (the representative Excel, or the main STR export), any number of files and species, to view and compare them here.">&#128194; Load representatives&hellip;</button>' +
+    '<input type="file" id="strRepXlsx" accept=".xlsx" multiple style="display:none" onchange="strLoadReps(this.files); this.value=\'\';">' +
+    '<button style="font-size:11px" onclick="strRepSavePng()" title="Both plots of the species shown, with a caption, as one PNG.">&#11015; PNG</button>' +
+    '<button style="font-size:11px" onclick="strRepExportXlsx()" title="Every species\' representative: STR_representative (tempo, consensus bars, occupancy and amplitude per 1% of the unit) and STR_rep_fingerprint (median and quartiles of the 52 numbers). Both are also in the main Export (Excel).">&#11015; Excel</button>' +
+    "</div>" +
+    '<canvas id="strRepCanvas" style="width:100%;height:200px;display:block;margin-top:4px"></canvas>' +
+    '<div id="strRepNote" style="font-size:11px;color:var(--txt2);margin-top:3px"></div>' +
+    '<canvas id="strRepFp" style="width:100%;height:110px;display:block;margin-top:10px"></canvas>' +
+    '<div id="strRepFpNote" style="font-size:11px;color:var(--txt2);margin-top:3px"></div></div>';
   document.getElementById("strCanvas").addEventListener("click", strCanvasClick);
-  window.addEventListener("resize", () => strSel >= 0 && strDraw());
+  // Redraw whenever the plots change size: window resizes, the Loaded Audio
+  // pane opening, and above all the STR tab or results block going from
+  // hidden (0 wide) to shown, which is what left the plots blank before.
+  if (typeof ResizeObserver === "function") {
+    let pending = false;
+    const ro = new ResizeObserver(() => {
+      if (pending) return;
+      pending = true;
+      requestAnimationFrame(() => {
+        pending = false;
+        strRedrawAll();
+      });
+    });
+    ["strCanvas", "strRepCanvas"].forEach((id) => ro.observe(document.getElementById(id)));
+  } else window.addEventListener("resize", strRedrawAll);
+}
+// Every STR plot, but only while visible: drawn while hidden, a canvas is
+// 0 wide, and redrawing then would wipe a good picture.
+function strRedrawAll() {
+  const c = document.getElementById("strRepCanvas");
+  if (!c || !c.clientWidth) return;
+  if (strSel >= 0 && strResults[strSel]) strDraw();
+  strDrawRep();
 }
 function strSetStatus(t, err) {
   const s = document.getElementById("strStatus");
@@ -323,18 +381,58 @@ async function strImportTables(files) {
     strSetStatus("Nothing imported. " + problems.join("; "), true);
     return;
   }
-  strResults = out;
-  strSel = 0;
-  strEchemeSel = -1;
-  strRegroup();
-  document.getElementById("strResults").style.display = "flex";
-  document.getElementById("strExport").disabled = false;
+  const replaced = strAddResults(out);
   strSetStatus(
-    out.length + " recording(s) built from Temporal Analysis tables. Echemes follow the table's motif_id where present." +
+    "Added " + out.length + " recording(s) from " + files.length + " table(s)" +
+      (replaced ? " (" + replaced + " already listed, replaced)" : "") + "; " + strResults.length + " in the list. " +
+      "Echemes follow the table's motif_id where present." +
       (problems.length ? " Skipped: " + problems.join("; ") + "." : ""),
     false,
   );
-  strSelect(0);
+}
+// New STRs join the list; one with the same recording name replaces the old
+// entry, so re-importing a corrected table updates it instead of doubling it.
+function strAddResults(list) {
+  let replaced = 0;
+  list.forEach((r) => {
+    const i = strResults.findIndex((x) => x.name === r.name);
+    if (i >= 0) {
+      strResults[i] = r;
+      replaced++;
+    } else strResults.push(r);
+  });
+  strSel = strResults.indexOf(list[0]);
+  strEchemeSel = -1;
+  // Shown BEFORE drawing: a canvas inside a hidden block measures 0 wide and
+  // stays blank.
+  document.getElementById("strResults").style.display = "flex";
+  document.getElementById("strExport").disabled = !strResults.length;
+  strRegroup();
+  strSelect(strSel);
+  return replaced;
+}
+function strRemove(i) {
+  strResults.splice(i, 1);
+  if (!strResults.length) {
+    strClear();
+    return;
+  }
+  strSel = Math.min(strSel, strResults.length - 1);
+  strEchemeSel = -1;
+  strRegroup();
+  strSelect(strSel);
+  strSetStatus(strResults.length + " in the list.", false);
+}
+function strClear() {
+  strResults = [];
+  strReps = [];
+  strRepsFile = [];
+  strSel = -1;
+  strEchemeSel = -1;
+  document.getElementById("strResults").style.display = "none";
+  document.getElementById("strExport").disabled = true;
+  strBuildRep();
+  strSetStatus("List cleared.", false);
 }
 
 // Echeme grouping and normalisation: cheap, so they follow the controls live.
@@ -367,6 +465,395 @@ function strRegroup() {
     strFillEchemes();
     strDraw();
   }
+  strBuildRep();
+}
+
+// ── representative STR ───────────────────────────────────────────────
+// Shape and tempo are pooled separately. Each unit (echeme period, echeme
+// duration, or for trills the pulse cycle) is mapped onto 0..1 and cut into
+// STR_REP_BINS bins. Per bin: occupancy = share of units with sound there
+// (partial overlap counts partially), amplitude = mean level of that sound,
+// each unit scaled to its own loudest pulse. Units with different pulse
+// counts blend instead of being discarded: positions every rendition agrees
+// on come out solid, variable ones faint. The tempo is the unit length in ms,
+// reported as median and quartiles.
+const STR_REP_BINS = 100;
+let strReps = []; // built from the STR list
+let strRepsFile = []; // loaded from saved files (strLoadReps)
+const strRepsAll = () => strReps.concat(strRepsFile);
+function strRepUnits(r, by) {
+  const P = r.pulses,
+    E = r.echemes,
+    units = [];
+  E.forEach((e, i) => {
+    if (by === "period") {
+      if (i < E.length - 1) units.push({ a: e.start, b: E[i + 1].start, first: e.first, last: e.last, max: e.max });
+    } else if (e.last > e.first) units.push({ a: e.start, b: e.end, first: e.first, last: e.last, max: e.max });
+  });
+  return units;
+}
+function strRepCycles(r) {
+  // Trill fallback: every pulse onset to the next pulse's onset.
+  const P = r.pulses,
+    max = Math.max(0, ...P.map((p) => p.amp)),
+    out = [];
+  for (let i = 0; i < P.length - 1; i++) out.push({ a: P[i].start, b: P[i + 1].start, first: i, last: i, max });
+  return out;
+}
+function strBuildRep() {
+  const sel = document.getElementById("strRepBy");
+  if (!sel) return;
+  const by = sel.value,
+    groups = new Map();
+  strResults.forEach((r) => {
+    const sp = (r.meta && String(r.meta.species || "").trim()) || "(no species)";
+    if (!groups.has(sp)) groups.set(sp, []);
+    groups.get(sp).push(r);
+  });
+  strReps = [];
+  groups.forEach((recs, sp) => {
+    // A period needs a FOLLOWING echeme in the same recording, so n echemes
+    // give n - 1 periods and a one-echeme recording gives none. When that
+    // leaves fewer than 3, durations (any echeme of 2+ pulses) are tried
+    // before falling back to the pulse cycle, and `why` says what happened.
+    const collect = (b) => {
+        const ps = [];
+        recs.forEach((r) => strRepUnits(r, b).forEach((u) => ps.push([r, u])));
+        return ps;
+      },
+      nEch = recs.reduce((s, r) => s + r.echemes.length, 0),
+      found = nEch + " echeme(s) in " + recs.length + " recording(s)";
+    let unitKind = by === "period" ? "echeme period" : "echeme duration",
+      pairs = collect(by),
+      why = "";
+    if (pairs.length < 3 && by === "period") {
+      const d = collect("duration");
+      why =
+        found + " give only " + pairs.length + " echeme period(s): a period runs to the NEXT echeme's onset, so the last echeme of each recording has none.";
+      if (d.length >= 3) {
+        pairs = d;
+        unitKind = "echeme duration";
+        why += " Echeme durations are used instead.";
+      }
+    }
+    if (pairs.length < 3) {
+      if (!why) why = found + " give only " + pairs.length + " echeme(s) with 2 or more pulses.";
+      why +=
+        " Too few to pool, so the pulse cycle (onset to next onset) is used. If the song does have echemes, they were not separated:" +
+        " for tables, echemes follow motif_id (check Max pulse gap in Temporal Analysis); from audio, lower the Echeme gap.";
+      unitKind = "pulse cycle";
+      pairs = [];
+      recs.forEach((r) => strRepCycles(r).forEach((u) => pairs.push([r, u])));
+    }
+    if (!pairs.length) return;
+    const B = STR_REP_BINS,
+      occ = new Float64Array(B),
+      ampW = new Float64Array(B),
+      lens = [];
+    pairs.forEach(([r, u]) => {
+      const L = u.b - u.a;
+      if (!(L > 0)) return;
+      lens.push(L * 1000);
+      for (let i = u.first; i <= u.last; i++) {
+        const p = r.pulses[i],
+          x0 = Math.max(0, (p.start - u.a) / L),
+          x1 = Math.min(1, (p.end - u.a) / L),
+          a = u.max > 0 ? p.amp / u.max : 0;
+        if (!(x1 > x0)) continue;
+        for (let k = Math.floor(x0 * B); k < Math.min(B, Math.ceil(x1 * B)); k++) {
+          const cov = Math.max(0, Math.min(x1, (k + 1) / B) - Math.max(x0, k / B)) * B;
+          occ[k] += cov;
+          ampW[k] += cov * a;
+        }
+      }
+    });
+    const n = lens.length;
+    if (!n) return;
+    const s = [...lens].sort((x, y) => x - y),
+      q = (f) => s[Math.min(n - 1, Math.max(0, Math.round(f * (n - 1))))],
+      temps = recs.map((r) => parseFloat(r.meta && r.meta.temp_c)).filter(isFinite);
+    // Representative fingerprint: per number, the median of the recordings'
+    // fingerprints, with quartiles. One recording = one vote, however many
+    // pulses it holds.
+    const fps = recs.map(strFingerprint).filter(Boolean),
+      fp = {},
+      fpQ = {};
+    if (fps.length)
+      Object.keys(fps[0]).forEach((k) => {
+        const v = fps.map((f) => f[k]).filter((x) => x !== null && isFinite(x)).sort((a, b) => a - b),
+          at = (f) => {
+            const p = f * (v.length - 1),
+              i = Math.floor(p);
+            return i + 1 < v.length ? v[i] + (p - i) * (v[i + 1] - v[i]) : v[i];
+          };
+        fp[k] = v.length ? Math.round(at(0.5) * 1e4) / 1e4 : null;
+        fpQ[k] = v.length ? [Math.round(at(0.25) * 1e4) / 1e4, Math.round(at(0.75) * 1e4) / 1e4] : null;
+      });
+    strReps.push({
+      species: sp,
+      unit: unitKind,
+      why,
+      fp: fps.length ? fp : null,
+      fpQ,
+      nFp: fps.length,
+      nRec: recs.length,
+      nUnits: n,
+      occ: Array.from(occ, (v) => v / n),
+      amp: Array.from(occ, (v, k) => (v > 0 ? ampW[k] / v : 0)),
+      med: q(0.5),
+      q1: q(0.25),
+      q3: q(0.75),
+      tMin: temps.length ? Math.min(...temps) : null,
+      tMax: temps.length ? Math.max(...temps) : null,
+    });
+  });
+  strFillRepSelects();
+  strDrawRep();
+}
+// Species and Compare menus over built + loaded representatives; the choice
+// survives a rebuild by matching the label, not the index.
+function strRepLabel(x) {
+  return x.species + (x.fromFile ? " (" + x.fromFile + ")" : "");
+}
+function strFillRepSelects() {
+  const all = strRepsAll(),
+    spSel = document.getElementById("strRepSp"),
+    cmpSel = document.getElementById("strRepCmp"),
+    prevSp = spSel.selectedOptions[0] ? spSel.selectedOptions[0].textContent : "",
+    prevCmp = cmpSel.selectedOptions[0] ? cmpSel.selectedOptions[0].textContent : "";
+  const opts = all.map((x, i) => '<option value="' + i + '">' + strEsc(strRepLabel(x)) + "</option>").join("");
+  spSel.innerHTML = opts;
+  cmpSel.innerHTML = '<option value="-1">(none)</option>' + opts;
+  const find = (label) => all.findIndex((x) => strRepLabel(x) === label);
+  if (find(prevSp) >= 0) spSel.value = String(find(prevSp));
+  cmpSel.value = find(prevCmp) >= 0 ? String(find(prevCmp)) : "-1";
+  document.getElementById("strRepPanel").style.display = all.length ? "" : "none";
+}
+// Representatives saved earlier: STR_representative rows (barcode, tempo)
+// joined by species with STR_rep_fingerprint rows (fingerprint). Either sheet
+// alone is enough. A species loaded again from the same file replaces itself.
+async function strLoadReps(files) {
+  if (!files || !files.length) return;
+  let added = 0;
+  const problems = [];
+  for (const file of files) {
+    let wb;
+    try {
+      wb = await _readXlsx(new Uint8Array(await file.arrayBuffer()));
+    } catch (e) {
+      problems.push(file.name + ": " + e.message);
+      continue;
+    }
+    const bar = wb.STR_representative || [],
+      fpr = wb.STR_rep_fingerprint || [];
+    if (!bar.length && !fpr.length) {
+      problems.push(file.name + ": no STR_representative or STR_rep_fingerprint sheet");
+      continue;
+    }
+    const num = (v) => (v === "" || v === null || v === undefined || !isFinite(+v) ? null : +v);
+    const species = [...new Set(bar.concat(fpr).map((r) => String(r.species || "").trim() || "(no species)"))];
+    species.forEach((sp) => {
+      const b = bar.find((r) => (String(r.species || "").trim() || "(no species)") === sp),
+        f = fpr.find((r) => (String(r.species || "").trim() || "(no species)") === sp);
+      const series = (row, pre) =>
+        row
+          ? Object.keys(row)
+              .filter((k) => k.startsWith(pre))
+              .sort()
+              .map((k) => num(row[k]) ?? 0)
+          : null;
+      let fp = null,
+        fpQ = {};
+      if (f) {
+        fp = {};
+        Object.keys(f).forEach((k) => {
+          if (/^(species|n_recordings|temp_min_c|temp_max_c)$/.test(k) || /_q[13]$/.test(k)) return;
+          fp[k] = num(f[k]);
+          fpQ[k] = num(f[k + "_q1"]) !== null ? [num(f[k + "_q1"]), num(f[k + "_q3"])] : null;
+        });
+      }
+      const rep = {
+        species: sp,
+        fromFile: file.name.replace(/\.xlsx$/i, ""),
+        unit: (b && b.unit) || "echeme period",
+        why: (b && b.note) || "",
+        nRec: num(b ? b.n_recordings : f.n_recordings) ?? 0,
+        nUnits: num(b && b.n_units) ?? 0,
+        occ: series(b, "occ_"),
+        amp: series(b, "amp_"),
+        med: num(b && b.tempo_median_ms),
+        q1: num(b && b.tempo_q1_ms),
+        q3: num(b && b.tempo_q3_ms),
+        tMin: num((b || f).temp_min_c),
+        tMax: num((b || f).temp_max_c),
+        fp,
+        fpQ,
+        nFp: num(f && f.n_recordings) ?? 0,
+      };
+      const i = strRepsFile.findIndex((x) => x.species === sp && x.fromFile === rep.fromFile);
+      if (i >= 0) strRepsFile[i] = rep;
+      else strRepsFile.push(rep);
+      added++;
+    });
+  }
+  strFillRepSelects();
+  // Show the first species just loaded.
+  const spSel = document.getElementById("strRepSp");
+  if (added) spSel.value = String(strRepsAll().length - strRepsFile.length + Math.max(0, strRepsFile.length - added));
+  strDrawRep();
+  strSetStatus(
+    "Loaded " + added + " representative(s) from " + files.length + " file(s)." + (problems.length ? " Skipped: " + problems.join("; ") + "." : ""),
+    !added,
+  );
+}
+// The consensus as bars: runs of bins where most units have sound (occupancy
+// >= 0.5), each with its mean amplitude. [start, end] are proportions.
+function strRepBars(rep) {
+  const bars = [],
+    B = rep.occ.length;
+  let k = 0;
+  while (k < B) {
+    if (rep.occ[k] < 0.5) {
+      k++;
+      continue;
+    }
+    let j = k,
+      s = 0,
+      w = 0;
+    while (j < B && rep.occ[j] >= 0.5) {
+      s += rep.amp[j] * rep.occ[j];
+      w += rep.occ[j];
+      j++;
+    }
+    bars.push([k / B, j / B, w > 0 ? s / w : 0]);
+    k = j;
+  }
+  return bars;
+}
+function strDrawRep() {
+  const cv = document.getElementById("strRepCanvas"),
+    note = document.getElementById("strRepNote");
+  if (!cv) return;
+  const dpr = window.devicePixelRatio || 1,
+    w = cv.clientWidth,
+    h = cv.clientHeight;
+  cv.width = w * dpr;
+  cv.height = h * dpr;
+  const g = cv.getContext("2d");
+  g.scale(dpr, dpr);
+  const all = strRepsAll(),
+    rep = all[+document.getElementById("strRepSp").value],
+    cmpI = +document.getElementById("strRepCmp").value,
+    cmp = cmpI >= 0 && all[cmpI] !== rep ? all[cmpI] : null,
+    PINK = "#e8589c";
+  if (!rep) {
+    note.textContent = strResults.length ? "Not enough pulses to build a representative." : "";
+    strDrawFpChart(document.getElementById("strRepFp"), null);
+    document.getElementById("strRepFpNote").textContent = "";
+    return;
+  }
+  const css = getComputedStyle(document.body),
+    ink = css.getPropertyValue("--txt2").trim() || "#999",
+    accent = css.getPropertyValue("--accent").trim() || "#58a6ff";
+  const L = 40, R = 12, T = 10, B = 24,
+    pw = w - L - R, ph = h - T - B, base = T + ph;
+  g.strokeStyle = "rgba(150,150,160,0.35)";
+  g.beginPath();
+  [0.5, 1].forEach((f) => {
+    g.moveTo(L, base - f * ph);
+    g.lineTo(L + pw, base - f * ph);
+  });
+  g.stroke();
+  if (rep.occ && rep.occ.length) {
+    const bw = pw / rep.occ.length;
+    // Every bin: height = mean amplitude, opacity = how many units agree.
+    g.fillStyle = accent;
+    rep.occ.forEach((o, k) => {
+      if (o <= 0) return;
+      g.globalAlpha = 0.15 + 0.85 * o;
+      const bh = rep.amp[k] * ph;
+      g.fillRect(L + k * bw, base - bh, Math.max(1, bw + 0.5), bh);
+    });
+    g.globalAlpha = 1;
+    // Occupancy as a line, so "always there" and "sometimes there" read apart.
+    g.strokeStyle = "#f0b429";
+    g.beginPath();
+    rep.occ.forEach((o, k) => {
+      const x = L + (k + 0.5) * bw,
+        y = base - o * ph;
+      k ? g.lineTo(x, y) : g.moveTo(x, y);
+    });
+    g.stroke();
+  } else {
+    g.fillStyle = ink;
+    g.font = "11px sans-serif";
+    g.fillText("No barcode in this file (fingerprint only).", L + 8, T + ph / 2);
+  }
+  // The compared species, in pink: amplitude where it has sound (outline)
+  // and its occupancy (dashed).
+  if (cmp && cmp.occ && cmp.occ.length) {
+    const bw2 = pw / cmp.occ.length;
+    g.strokeStyle = PINK;
+    g.lineWidth = 1.5;
+    g.beginPath();
+    cmp.occ.forEach((o, k) => {
+      const y = base - (o > 0 ? cmp.amp[k] : 0) * ph;
+      if (!k) g.moveTo(L, y);
+      g.lineTo(L + k * bw2, y);
+      g.lineTo(L + (k + 1) * bw2, y);
+    });
+    g.stroke();
+    g.setLineDash([4, 3]);
+    g.lineWidth = 1;
+    g.beginPath();
+    cmp.occ.forEach((o, k) => {
+      const x = L + (k + 0.5) * bw2,
+        y = base - o * ph;
+      k ? g.lineTo(x, y) : g.moveTo(x, y);
+    });
+    g.stroke();
+    g.setLineDash([]);
+  }
+  g.strokeStyle = "rgba(150,150,160,0.7)";
+  g.beginPath();
+  g.moveTo(L, base);
+  g.lineTo(L + pw, base);
+  g.stroke();
+  g.fillStyle = ink;
+  g.font = "10px sans-serif";
+  g.textAlign = "right";
+  [["1", T + 4], ["0.5", base - ph / 2 + 3], ["0", base + 3]].forEach(([s, y]) => g.fillText(s, L - 5, y));
+  g.textAlign = "center";
+  for (let i = 0; i <= 10; i++) g.fillText((i / 10).toFixed(1), L + (pw * i) / 10, h - 8);
+  g.textAlign = "left";
+  const r0 = (x) => (x === null || x === undefined ? "–" : Math.round(x * 10) / 10);
+  const tempo = (x) =>
+    "median " + x.unit + " " + r0(x.med) + " ms (quartiles " + r0(x.q1) + "–" + r0(x.q3) + ")" +
+    (x.tMin !== null && x.tMin !== undefined ? ", recorded at " + x.tMin + (x.tMax !== x.tMin ? "–" + x.tMax : "") + " °C" : "");
+  note.innerHTML =
+    "<b>" + strEsc(strRepLabel(rep)) + "</b>: " + rep.nUnits + " " + rep.unit + "s from " + rep.nRec + " recording(s). " +
+    "Time axis = proportion of the " + rep.unit + "; bar height = mean amplitude, opacity and the " +
+    '<span style="color:#f0b429">yellow line</span> = share of renditions with sound there. ' +
+    "Tempo: " + tempo(rep) + "." +
+    (rep.why ? ' <span style="color:#f0b429">' + strEsc(rep.why) + "</span>" : "") +
+    (cmp
+      ? '<br><span style="color:' + PINK + '"><b>Compared: ' + strEsc(strRepLabel(cmp)) + "</b></span> (outline = amplitude, dashed = occupancy): " +
+        tempo(cmp) + "." +
+        (cmp.unit !== rep.unit ? ' <span style="color:#f0b429">Different units (' + rep.unit + " vs " + cmp.unit + "): the time axes do not mean the same thing.</span>" : "")
+      : "");
+  const fcv = document.getElementById("strRepFp"),
+    fnote = document.getElementById("strRepFpNote");
+  strDrawFpChart(fcv, rep.fp, rep.fpQ, cmp && cmp.fp);
+  const f = rep.fp,
+    line = (x) =>
+      "rate " + (x.pulse_rate_pps ?? "–") + " pulses/s, duty cycle " + (x.duty_cycle_pct ?? "–") + " %, " + (x.pulses_per_echeme ?? "–") +
+      " pulses/echeme, echeme period " + (x.echeme_period_ms ?? "–") + " ms";
+  fnote.innerHTML = f
+    ? "Representative fingerprint: median of " + rep.nFp + " recording fingerprint(s), whiskers = quartiles; " + line(f) +
+      ". Rates and intervals are in real time, so recordings at different temperatures widen the quartiles." +
+      (rep.nFp < 3 ? " With fewer than 3 recordings the quartiles mean little." : "") +
+      (cmp && cmp.fp ? '<br><span style="color:' + PINK + '">Outlined: ' + strEsc(strRepLabel(cmp)) + "</span>; " + line(cmp.fp) + "." : "")
+    : "No fingerprint for this species.";
 }
 
 // ── run ──────────────────────────────────────────────────────────────
@@ -409,18 +896,18 @@ async function strRun() {
     strSetStatus("Cancelled.");
     return;
   }
-  strResults = out;
-  strSel = out.length ? 0 : -1;
-  strEchemeSel = -1;
-  strRegroup();
-  document.getElementById("strResults").style.display = "flex";
-  document.getElementById("strExport").disabled = !out.length;
+  if (!out.length) {
+    strSetStatus("No audio to process.", true);
+    return;
+  }
+  const replaced = strAddResults(out);
   const none = out.filter((r) => !r.pulses.length).length;
   strSetStatus(
-    out.length + " recording(s) processed" + (none ? "; " + none + " with no pulses found (try a lower threshold or a smaller minimum pulse)" : "") + ".",
+    out.length + " recording(s) processed" + (replaced ? " (" + replaced + " already listed, replaced)" : "") + "; " +
+      strResults.length + " in the list" +
+      (none ? "; " + none + " with no pulses found (try a lower threshold or a smaller minimum pulse)" : "") + ".",
     false,
   );
-  if (strSel >= 0) strSelect(0);
 }
 
 // ── results ──────────────────────────────────────────────────────────
@@ -431,8 +918,10 @@ function strRenderTable() {
   document.getElementById("strBody").innerHTML = strResults
     .map(
       (r, i) =>
-        '<tr style="cursor:pointer;' + (i === strSel ? "background:var(--bg3, rgba(128,128,128,.25))" : "") + '" onclick="strSelect(' + i + ')"><td>' +
-        strEsc(r.name) + "</td><td>" + (r.dom ? r.dom.f0.toFixed(1) : "–") + "</td><td>" + r.pulses.length + "</td><td>" + r.echemes.length + "</td></tr>",
+        '<tr style="cursor:pointer;' + (i === strSel ? "background:var(--bg3, rgba(128,128,128,.25))" : "") + '" onclick="strSelect(' + i + ')"><td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + strEsc(r.name) + '">' +
+        strEsc(r.name) + (r.source === "table" ? ' <span style="color:var(--txt3);font-size:10px" title="Built from a Temporal Analysis table">&#9638;</span>' : "") +
+        "</td><td>" + (r.dom ? r.dom.f0.toFixed(1) : "–") + "</td><td>" + r.pulses.length + "</td><td>" + r.echemes.length +
+        '</td><td><span title="Remove from the list" style="cursor:pointer;color:var(--txt2)" onclick="event.stopPropagation(); strRemove(' + i + ')">&#10005;</span></td></tr>',
     )
     .join("");
 }
@@ -733,6 +1222,21 @@ function strDrawFingerprint(r) {
   const cv = document.getElementById("strFp"),
     note = document.getElementById("strFpNote");
   if (!cv) return;
+  const fp = strFingerprint(r);
+  strDrawFpChart(cv, fp);
+  if (!fp) {
+    note.textContent = "Needs at least 2 pulses.";
+    return;
+  }
+  note.textContent =
+    Object.keys(fp).length + " numbers. Rate " + (fp.pulse_rate_pps ?? "–") + " pulses/s, duty cycle " + (fp.duty_cycle_pct ?? "–") +
+    " %, " + (fp.pulses_per_echeme ?? "–") + " pulses/echeme, echeme period " + (fp.echeme_period_ms ?? "–") + " ms. " +
+    "Exported in the STR_fingerprint sheet, which Summarize reads as the STR table.";
+}
+// The four block charts of a fingerprint. With `spread` ({key: [q1, q3]}) a
+// whisker marks the quartiles of each bar (the representative fingerprint);
+// `other` is a second fingerprint drawn as pink outlined bars, to compare.
+function strDrawFpChart(cv, fp, spread, other) {
   const dpr = window.devicePixelRatio || 1,
     w = cv.clientWidth,
     h = cv.clientHeight;
@@ -740,11 +1244,7 @@ function strDrawFingerprint(r) {
   cv.height = h * dpr;
   const g = cv.getContext("2d");
   g.scale(dpr, dpr);
-  const fp = strFingerprint(r);
-  if (!fp) {
-    note.textContent = "Needs at least 2 pulses.";
-    return;
-  }
+  if (!fp) return;
   const css = getComputedStyle(document.body),
     ink = css.getPropertyValue("--txt2").trim() || "#999",
     accent = css.getPropertyValue("--accent").trim() || "#58a6ff";
@@ -767,19 +1267,34 @@ function strDrawFingerprint(r) {
     g.fillText(label, x, 10);
     g.strokeStyle = "rgba(150,150,160,0.35)";
     g.strokeRect(x, T, bw * ks.length, h - T - B);
-    g.fillStyle = accent;
+    const ph = h - T - B,
+      Y = (val) => h - B - Math.min(1, Math.max(0, val / max)) * ph;
     ks.forEach((k, i) => {
-      const v = fp[k] === null ? 0 : Math.min(1, fp[k] / max),
-        bh = v * (h - T - B);
-      g.fillRect(x + i * bw + 1, h - B - bh, Math.max(1, bw - 2), bh);
+      const v = fp[k] === null ? 0 : fp[k];
+      g.fillStyle = accent;
+      g.fillRect(x + i * bw + 1, Y(v), Math.max(1, bw - 2), h - B - Y(v));
+      const s = spread && spread[k];
+      if (s) {
+        const cx = x + i * bw + bw / 2;
+        g.strokeStyle = ink;
+        g.beginPath();
+        g.moveTo(cx, Y(s[0]));
+        g.lineTo(cx, Y(s[1]));
+        g.moveTo(cx - Math.min(3, bw / 3), Y(s[0]));
+        g.lineTo(cx + Math.min(3, bw / 3), Y(s[0]));
+        g.moveTo(cx - Math.min(3, bw / 3), Y(s[1]));
+        g.lineTo(cx + Math.min(3, bw / 3), Y(s[1]));
+        g.stroke();
+      }
+      if (other && other[k] !== null && other[k] !== undefined) {
+        g.strokeStyle = "#e8589c";
+        g.lineWidth = 1.5;
+        g.strokeRect(x + i * bw + 1.5, Y(other[k]), Math.max(1, bw - 3), h - B - Y(other[k]));
+        g.lineWidth = 1;
+      }
     });
     x += bw * ks.length + gap;
   });
-  const n = keys.length;
-  note.textContent =
-    n + " numbers. Rate " + (fp.pulse_rate_pps ?? "–") + " pulses/s, duty cycle " + (fp.duty_cycle_pct ?? "–") +
-    " %, " + (fp.pulses_per_echeme ?? "–") + " pulses/echeme, echeme period " + (fp.echeme_period_ms ?? "–") + " ms. " +
-    "Exported in the STR_fingerprint sheet, which Summarize reads as the STR table.";
 }
 function strCopyVector() {
   const r = strResults[strSel];
@@ -838,32 +1353,148 @@ async function strExport() {
     add("song", r.pulses);
     r.echemes.forEach((e, i) => add("echeme " + (i + 1), r.pulses.slice(e.first, e.last + 1)));
   });
-  const P = strParams();
-  const info = [
-    {
-      ...P,
-      echeme_gap_ms: parseFloat(document.getElementById("strEGap").value) || 100,
-      normalised_per: document.getElementById("strNorm").value,
-      vector_layout: "dominant_khz;duration_ms;amplitude_norm;gap_ms;duration_ms;amplitude_norm;gap_ms;...;duration_ms;amplitude_norm",
-      fingerprint_version: 1,
-      fingerprint_layout:
-        "scalars; pdur_* = share of pulses per duration bin (8, log 0.5-500 ms); ioi_* = share of onset-to-onset intervals per bin (12, log 1-2000 ms); amp_p01-16 = mean amplitude along the echeme (each scaled to its loudest pulse); dur_p01-08 = pulse duration along the echeme / echeme mean",
-      generated: new Date().toISOString(),
-    },
-  ];
+  const { reps, repFps } = strRepRows();
   try {
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
     await dlFile(
       "Rthoptera_STR_" + stamp + ".xlsx",
       // STR_pulses, not Pulses: Summarize would otherwise take these rows for
       // a Temporal Analysis pulse table.
-      _buildXlsx([["STR_fingerprint", prints], ["STR_summary", summary], ["STR_pulses", pulses], ["STR_vectors", vectors], ["Info", info]]),
+      _buildXlsx([["STR_fingerprint", prints], ["STR_representative", reps], ["STR_rep_fingerprint", repFps], ["STR_summary", summary], ["STR_pulses", pulses], ["STR_vectors", vectors], ["Info", strInfoRows()]].filter(([, rows]) => rows.length)),
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       { exactName: true },
     );
   } catch (e) {
     log("STR export failed: " + e.message, "err");
   }
+}
+// The representative alone: both species-level sheets and the parameters.
+async function strRepExportXlsx() {
+  const all = strRepsAll();
+  if (!all.length) return;
+  const { reps, repFps } = strRepRows();
+  // Named after the species it holds, so files can be told apart without
+  // opening them; past three names the rest are counted, not listed.
+  const species = [...new Set(all.map((x) => x.species))],
+    named =
+      species.slice(0, 3).join("_") + (species.length > 3 ? "_and_" + (species.length - 3) + "_more" : ""),
+    safe = named.replace(/[^\w.-]+/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "").slice(0, 120);
+  try {
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    await dlFile(
+      "Rthoptera_STR_representative_" + (safe ? safe + "_" : "") + stamp + ".xlsx",
+      _buildXlsx([["STR_representative", reps], ["STR_rep_fingerprint", repFps], ["Info", strInfoRows()]].filter(([, rows]) => rows.length)),
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      { exactName: true },
+    );
+  } catch (e) {
+    log("Representative export failed: " + e.message, "err");
+  }
+}
+// The shown species' two plots stacked into one PNG, with a caption, on the
+// page's own background so it reads the same as on screen.
+async function strRepSavePng() {
+  const all = strRepsAll(),
+    rep = all[+document.getElementById("strRepSp").value],
+    cmpI = +document.getElementById("strRepCmp").value,
+    cmp = cmpI >= 0 && all[cmpI] !== rep ? all[cmpI] : null;
+  if (!rep) return;
+  strDrawRep();
+  const a = document.getElementById("strRepCanvas"),
+    b = document.getElementById("strRepFp"),
+    dpr = window.devicePixelRatio || 1,
+    head = Math.round(44 * dpr),
+    gap = Math.round(12 * dpr),
+    out = document.createElement("canvas");
+  out.width = Math.max(a.width, b.width);
+  out.height = head + a.height + gap + b.height;
+  const g = out.getContext("2d"),
+    css = getComputedStyle(document.body);
+  g.fillStyle = css.getPropertyValue("--bg2").trim() || css.backgroundColor || "#161b22";
+  g.fillRect(0, 0, out.width, out.height);
+  g.fillStyle = css.getPropertyValue("--txt3").trim() || "#ddd";
+  g.font = "bold " + Math.round(13 * dpr) + "px sans-serif";
+  g.fillText("Representative STR: " + rep.species + (cmp ? "   vs   " + cmp.species + " (pink)" : ""), 8 * dpr, 18 * dpr);
+  g.fillStyle = css.getPropertyValue("--txt2").trim() || "#999";
+  g.font = Math.round(11 * dpr) + "px sans-serif";
+  const r0 = (x) => (x === null || x === undefined ? "–" : Math.round(x * 10) / 10);
+  g.fillText(
+    rep.nUnits + " " + rep.unit + "s, " + rep.nRec + " recording(s); x = proportion of the " + rep.unit +
+      "; median " + rep.unit + " " + r0(rep.med) + " ms (quartiles " + r0(rep.q1) + "–" + r0(rep.q3) + ")" +
+      (rep.tMin !== null && rep.tMin !== undefined ? "; " + rep.tMin + (rep.tMax !== rep.tMin ? "–" + rep.tMax : "") + " °C" : ""),
+    8 * dpr,
+    36 * dpr,
+  );
+  g.drawImage(a, 0, head);
+  g.drawImage(b, 0, head + a.height + gap);
+  const blob = await new Promise((res) => out.toBlob(res, "image/png"));
+  const safe = (rep.species + (cmp ? "_vs_" + cmp.species : "")).replace(/[^\w.-]+/g, "_");
+  try {
+    await dlFile("Rthoptera_STR_representative_" + safe + ".png", new Uint8Array(await blob.arrayBuffer()), "image/png", { exactName: true });
+  } catch (e) {
+    log("PNG export failed: " + e.message, "err");
+  }
+}
+function strRepRows() {
+  // One row per species, fixed length: tempo, the consensus bars, then the
+  // occupancy and amplitude of every bin (proportions of the unit).
+  const pad3 = (k) => String(k + 1).padStart(3, "0"),
+    r4 = (x) => Math.round(x * 1e4) / 1e4;
+  // Built and loaded representatives alike; a loaded one with no barcode
+  // contributes only its fingerprint row.
+  const all = strRepsAll(),
+    rn = (x) => (x === null || x === undefined ? "" : r4(x));
+  const reps = all.filter((rep) => rep.occ && rep.occ.length).map((rep) => {
+    const row = {
+      species: rep.species,
+      from_file: rep.fromFile || "",
+      unit: rep.unit,
+      n_recordings: rep.nRec,
+      n_units: rep.nUnits,
+      tempo_median_ms: rn(rep.med),
+      tempo_q1_ms: rn(rep.q1),
+      tempo_q3_ms: rn(rep.q3),
+      temp_min_c: rep.tMin ?? "",
+      temp_max_c: rep.tMax ?? "",
+      consensus_bars: strRepBars(rep).map(([a, b, amp]) => r4(a) + "-" + r4(b) + ":" + r4(amp)).join(";"),
+      note: rep.why || "",
+    };
+    rep.occ.forEach((v, k) => (row["occ_" + pad3(k)] = r4(v)));
+    rep.amp.forEach((v, k) => (row["amp_" + pad3(k)] = r4(v)));
+    return row;
+  });
+  // Representative fingerprint: medians under the same column names as the
+  // per-recording STR_fingerprint sheet (so the two line up), then quartiles.
+  const repFps = all
+    .filter((rep) => rep.fp)
+    .map((rep) => {
+      const row = { species: rep.species, n_recordings: rep.nFp, temp_min_c: rep.tMin ?? "", temp_max_c: rep.tMax ?? "" };
+      Object.keys(rep.fp).forEach((k) => (row[k] = rep.fp[k]));
+      Object.keys(rep.fp).forEach((k) => {
+        row[k + "_q1"] = rep.fpQ[k] ? rep.fpQ[k][0] : null;
+        row[k + "_q3"] = rep.fpQ[k] ? rep.fpQ[k][1] : null;
+      });
+      return row;
+    });
+  return { reps, repFps };
+}
+function strInfoRows() {
+  const P = strParams();
+  return [
+    {
+      ...P,
+      echeme_gap_ms: parseFloat(document.getElementById("strEGap").value) || 100,
+      normalised_per: document.getElementById("strNorm").value,
+      vector_layout: "dominant_khz;duration_ms;amplitude_norm;gap_ms;duration_ms;amplitude_norm;gap_ms;...;duration_ms;amplitude_norm",
+      representative_normalised_by: document.getElementById("strRepBy").value,
+      representative_layout:
+        "per species: tempo = unit length in ms (median, quartiles); consensus_bars = start-end:amplitude as proportions of the unit, where at least half the renditions have sound; occ_001-100 = share of renditions with sound in each 1% of the unit; amp_001-100 = their mean amplitude (each unit scaled to its loudest pulse)",
+      fingerprint_version: 1,
+      fingerprint_layout:
+        "scalars; pdur_* = share of pulses per duration bin (8, log 0.5-500 ms); ioi_* = share of onset-to-onset intervals per bin (12, log 1-2000 ms); amp_p01-16 = mean amplitude along the echeme (each scaled to its loudest pulse); dur_p01-08 = pulse duration along the echeme / echeme mean",
+      generated: new Date().toISOString(),
+    },
+  ];
 }
 
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", strInit);

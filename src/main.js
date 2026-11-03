@@ -413,14 +413,15 @@
                 : !!row.closest("#mainview-envpeaks"),
             );
           });
-        setupPreprocessCollapse();
+        setupPanelCollapse("mainview-preprocess");
+        setupPanelCollapse("summPaneAnalysis");
       }
 
-      // Preprocessing: each pane (Edit Audio, Batch Edit) gets one ▾/▸ button in
+      // Preprocessing and Summary Analysis: each pane gets one ▾/▸ button in
       // its header. The tools inside a pane are not collapsible on their own.
       // A pane marked data-collapse-default="closed" starts folded.
-      function setupPreprocessCollapse() {
-        const root = $("mainview-preprocess");
+      function setupPanelCollapse(rootId) {
+        const root = $(rootId);
         if (!root) return;
         const makeBtn = (head, bodyNodes, extra, startCollapsed) => {
           const btn = document.createElement("button");
@@ -1552,6 +1553,40 @@
         return idx >= 0 ? path.slice(idx + 1) : path;
       }
 
+      // Pick files through the OS dialog, where Ctrl/Shift multi-select works
+      // (the webview's <input type=file> did not honour it in the installed
+      // app), and hand them on as File objects so the handlers need not care
+      // which picker ran. Returns false when the Tauri APIs are absent (browser
+      // preview) so the caller can fall back to its hidden file input.
+      async function openFilesNative(name, extensions, onFiles) {
+        const T = window.__TAURI__;
+        if (!T || !T.dialog || typeof T.dialog.open !== "function" || !T.fs || typeof T.fs.readFile !== "function")
+          return false;
+        let sel;
+        try {
+          sel = await T.dialog.open({ multiple: true, filters: [{ name, extensions }] });
+        } catch (e) {
+          log("File dialog failed (" + e.message + "); using the browser picker instead.", "warn");
+          return false;
+        }
+        if (!sel) return true; // cancelled
+        const files = [];
+        for (const p of Array.isArray(sel) ? sel : [sel]) {
+          try {
+            files.push(new File([await T.fs.readFile(p)], getFilenameFromPath(p) || p));
+          } catch (e) {
+            log("Could not read " + p + ": " + e.message, "err");
+          }
+        }
+        if (files.length) await onFiles(files);
+        return true;
+      }
+      function pickXlsxFiles(fallbackInputId, onFiles) {
+        openFilesNative("Excel workbook", ["xlsx"], onFiles).then((done) => {
+          if (!done) $(fallbackInputId).click();
+        });
+      }
+
       // decodeAudioData silently resamples to the AudioContext's own sample
       // rate (usually the OS output device default) unless the context is
       // created at the file's native rate — otherwise a 96kHz recording
@@ -1925,7 +1960,7 @@
         renderMinimap();
 
         // Temporal Analysis works on its own envelope, built at the smoothing
-        // set in that pane. Build it here rather than inside Detect Envelope peaks, so
+        // set in that pane. Build it here rather than inside Detect envelope peaks, so
         // the trace is on screen as soon as audio is loaded — you can see what
         // you are about to detect on, and envelope peaks can be imported from a saved
         // table without running detection first.
@@ -3231,7 +3266,7 @@
           const ps = $("pkStatus");
           if (ps)
             ps.textContent =
-              "Audio edited — set parameters and click Detect Envelope peaks";
+              "Audio edited — set parameters and click Detect envelope peaks";
         }
         detections = [];
         detMeasurements = [];
@@ -3346,7 +3381,7 @@
             ps.textContent = pkEnvPeaks.length
               ? pkEnvPeaks.length +
                 " envelope peaks kept after trim — click Compute Metrics from Peaks to recompute"
-              : "Audio trimmed — set parameters and click Detect Envelope peaks";
+              : "Audio trimmed — set parameters and click Detect envelope peaks";
           if (typeof pkLiveUpdate === "function" && pkEnvPeaks.length) {
             pkLiveUpdate("trimmed");
           } else if (typeof pkDrawEnvelope === "function") {
@@ -3816,7 +3851,7 @@
         audioEdits = [];
         $("infoCh").textContent = 1; // library entries are already mono-mixed
         $("pkStatus").textContent =
-          "Audio loaded — set parameters and click Detect Envelope peaks";
+          "Audio loaded — set parameters and click Detect envelope peaks";
 
         resetEditUiForNewFile();
         rebuildAudioFromEdits({ resetView: true });
@@ -8954,6 +8989,8 @@
         const st = $("mainview-str");
         if (st) st.style.display = name === "str" ? "flex" : "none";
         if (name === "workflow" && typeof wfRenderList === "function") wfRenderList();
+        // Its canvases measured 0 wide while the tab was hidden: redraw once shown.
+        if (name === "str" && typeof strRedrawAll === "function") setTimeout(strRedrawAll, 0);
         if (pp) pp.style.display = name === "preprocess" ? "flex" : "none";
         if (a) a.style.display = name === "analyzer" ? "flex" : "none";
         if (k) k.style.display = name === "envpeaks" ? "flex" : "none";
@@ -9668,7 +9705,7 @@
         }, 250);
       }
       pkOnReady(() => {
-        ["pkSmooth", "pkWin", "pkThresh", "pkDetThr", "pkLinkThr"].forEach((id) => {
+        ["pkSmooth", "pkWin", "pkThresh", "pkDetThr"].forEach((id) => {
           const el = $(id);
           if (el) el.addEventListener("input", () => pkScheduleRedetect());
         });
@@ -9687,6 +9724,13 @@
           });
         const auto = $("pkDetThrAuto");
         if (auto) auto.addEventListener("change", () => pkScheduleRedetect(0));
+        // The Floor % line on the plot follows the box as it is typed or
+        // focused, before any re-detection.
+        const ampThrBox = $("pkAmpThreshPct");
+        if (ampThrBox)
+          ["input", "focus", "blur"].forEach((ev) =>
+            ampThrBox.addEventListener(ev, () => pkDrawEnvelope()),
+          );
         ["pkAmpThreshPct", "pkAmpMinDurMs", "pkAmpMinGapMs", "pkFloorWinMs"].forEach((id) => {
           const el = $(id);
           if (el) el.addEventListener("input", pkScheduleAmpRedetect);
@@ -10416,12 +10460,20 @@
         const clearBtn = $("btnPkClearAmpDet");
         if (clearBtn) clearBtn.disabled = !pkAmpDetections.length;
         const mergeBtn = $("btnPkMergeSel");
-        if (mergeBtn) mergeBtn.disabled = !(pkSelSelected && pkSelExtra.length);
+        if (mergeBtn)
+          mergeBtn.disabled = !(
+            (pkSelSelected && pkSelExtra.length) ||
+            pkSelectionIndices().length > 1
+          );
+        const deselBtn = $("btnPkClearSelection");
+        if (deselBtn) deselBtn.disabled = !(pkSelSelected || pkSelection.size);
         const exportBtn = $("btnPkExportSel");
         if (exportBtn)
           exportBtn.disabled = !(pkAmpDetections.length || pkAnnotations.length);
         const cmp = $("btnPkConfirmPulses");
         if (cmp) cmp.disabled = !pkPulseSpans().length;
+        const clrP = $("btnPkClearPulses");
+        if (clrP) clrP.disabled = !pkPulseSpans().length;
         const clearDraws = $("btnPkClearDraws");
         if (clearDraws) clearDraws.disabled = !pkAnnotations.length;
         pkRefreshApplyBtn();
@@ -10475,6 +10527,32 @@
           pkSelSelected = null;
           pkSelExtra = [];
         } else pkSelExtra = pkSelExtra.filter((x) => x.list !== "annot");
+        pkUpdateSelUi();
+        pkDrawEnvelope();
+      }
+
+      // Every pulse "Compute Metrics from Pulses" works on: the amplitude
+      // detections plus the drawn/imported selections of type Pulse. Other
+      // selection types (echemes, labels) and the envelope peaks stay. When
+      // the current results were computed from those pulses (no envelope
+      // peaks behind them), they no longer describe anything on screen and
+      // are cleared as well; recomputing is one click.
+      function pkClearPulses() {
+        if (!pkPulseSpans().length) return;
+        pkSnapshot("clear pulses");
+        pkAmpDetections = [];
+        pkAnnotations = pkAnnotations.filter((a) => a.unit !== "pulse");
+        pkSelSelected = null;
+        pkSelExtra = [];
+        if (!pkEnvPeaks.length && pkPulseData.length) {
+          pkPulseData = [];
+          pkMotifData = [];
+          pkMotifSeqData = [];
+          pkSummaryData = null;
+          pkConfirmed = false;
+          $("pkResults").style.display = "none";
+          $("pkStatus").textContent = "Pulses cleared";
+        }
         pkUpdateSelUi();
         pkDrawEnvelope();
       }
@@ -10926,7 +11004,6 @@
         "pkThresh",
         "pkDetThr",
         "pkDetThrAuto",
-        "pkLinkThr",
         "pkSpecResEnvPeak",
         "pkSpecResPulse",
         "pkSpecResMotif",
@@ -11141,7 +11218,7 @@
           _pkPresetStatus(
             '✔ Loaded "' +
               (data._name || "Preset " + n) +
-              '" — click Detect Envelope peaks to apply.',
+              '" — click Detect envelope peaks to apply.',
           );
         } catch (e) {
           _pkPresetStatus("Load error: " + e.message, true);
@@ -11249,13 +11326,14 @@
       // ── Shared parameter + grouping helpers ─────────────────────────────
       function pkReadParams() {
         const maxDiffRaw = $("pkMaxDiff").value.trim();
-        const linkRaw = $("pkLinkThr").value.trim();
         return {
           smoothMs: Math.max(0.5, parseFloat($("pkSmooth").value) || 1),
           winMs: Math.max(0.05, parseFloat($("pkWin").value) || 1),
           env_peakThr: parseFloat($("pkThresh").value) || 1,
           detThr: parseFloat($("pkDetThr").value) || 5,
-          linkThr: linkRaw === "" ? null : parseFloat(linkRaw),
+          // The Onset threshold box was removed in 0.9.0; the hysteresis in
+          // pkFindEnvPeaks stays available but is always off.
+          linkThr: null,
           maxGapMs: parseFloat($("pkMaxGap").value) || 8,
           maxDiff: maxDiffRaw === "" ? null : parseFloat(maxDiffRaw),
           archEnable: $("pkArchEnable").checked,
@@ -11623,8 +11701,8 @@
         for (const winMs of winCands) {
           for (const env_peakThr of promCands) {
             for (const detThr of detCands) {
-              // Onset threshold only means anything below the detection bar.
-              for (const linkThr of [null, detThr * 0.5, detThr * 0.25]) {
+              {
+                const linkThr = null; // Onset threshold is no longer offered
                 await busyYield();
                 const found = pkFindEnvPeaks(
                   slice,
@@ -11911,11 +11989,7 @@
               det.params.env_peakThr +
               "%, det " +
               det.params.detThr.toFixed(1) +
-              "%, onset " +
-              (det.params.linkThr == null
-                ? "off"
-                : det.params.linkThr.toFixed(1) + "%") +
-              ")",
+              "%)",
           );
         bits.push(
           "gap " + p.maxGapMs.toFixed(1) + "ms",
@@ -11989,8 +12063,6 @@
           $("pkThresh").value = String(d.env_peakThr);
           $("pkDetThr").value = String(Math.round(d.detThr * 100) / 100);
           if ($("pkDetThrAuto")) $("pkDetThrAuto").checked = false;
-          $("pkLinkThr").value =
-            d.linkThr == null ? "" : String(Math.round(d.linkThr * 100) / 100);
           // Detection changed, so the envelope peak list itself has to be rebuilt —
           // re-freezing boundaries over the old envelope peaks would be meaningless.
           // Smoothing is untouched, so the envelope comes out identical.
@@ -12743,6 +12815,54 @@
           ctx.shadowColor = "rgba(57,255,20,0.9)";
           ctx.shadowBlur = 8;
           ctx.stroke();
+          ctx.restore();
+        }
+
+        // Amplitude Detector threshold: the level the envelope must reach to
+        // count, i.e. Floor % itself, or Floor % above the local noise floor
+        // when that curve is on. Shown while the detector is in use (it has
+        // detections, the floor curve is on, or the Floor % box has focus) so
+        // the effect of a new value can be seen before re-running.
+        const ampThrEl = $("pkAmpThreshPct");
+        const ampThr = ampThrEl ? parseFloat(ampThrEl.value) / 100 : NaN;
+        const ampFloorOn = pkFloor && pkFloor.env === pkEnv;
+        if (
+          ampThr >= 0 &&
+          (pkAmpDetections.length || ampFloorOn || document.activeElement === ampThrEl)
+        ) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(padL, padT, pw, ph);
+          ctx.clip();
+          ctx.setLineDash([6, 4]);
+          ctx.strokeStyle = "#7cc7f0";
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          if (ampFloorOn) {
+            let f = true;
+            for (let i = iStart; i <= iEnd; i += step) {
+              const x = tX(i / sampleRate),
+                y = aY(pkFloor.curve[i] + ampThr);
+              if (f) {
+                ctx.moveTo(x, y);
+                f = false;
+              } else ctx.lineTo(x, y);
+            }
+          } else {
+            ctx.moveTo(padL, aY(ampThr));
+            ctx.lineTo(padL + pw, aY(ampThr));
+          }
+          ctx.stroke();
+          ctx.setLineDash([]);
+          const ly = ampFloorOn ? aY(pkFloor.curve[iEnd] + ampThr) : aY(ampThr);
+          ctx.font = "9px monospace";
+          ctx.textAlign = "right";
+          ctx.fillStyle = "#7cc7f0";
+          ctx.fillText(
+            (ampFloorOn ? "floor + " : "Floor ") + ampThrEl.value + "%",
+            padL + pw - 4,
+            Math.max(padT + 10, ly - 3),
+          );
           ctx.restore();
         }
 
@@ -13559,19 +13679,6 @@
         pkLiveUpdate("envelope peak removed");
       }
 
-      // Re-run the detection algorithm's segmentation and re-freeze it, discarding
-      // manual boundary edits (added/removed envelope peaks are kept). Wired to the
-      // "Reset boundaries" button.
-      function pkClearOverrides() {
-        if (!pkEnvPeaks.length) {
-          pkLiveUpdate("nothing to reset");
-          return;
-        }
-        pkSnapshot("reset boundaries");
-        pkInitBoundaries();
-        pkLiveUpdate("boundaries reset to detected");
-      }
-
       // ── Multi-selection + bulk boundary edits ───────────────────────────
       // Selection stores envelope peak object references (stable across boundary edits).
       function pkClearSelection() {
@@ -13628,9 +13735,26 @@
         if (idxs.length === 1) pkRemoveEnvPeak(idxs[0]);
         else pkBulkRemove();
       }
+      // Deselect: drops both the envelope-peak selection and the detection /
+      // drawn-selection highlight.
       function pkClearSelectionAction() {
         pkClearSelection();
+        pkSelSelected = null;
+        pkSelExtra = [];
+        pkUpdateSelUi();
         pkLiveUpdate("selection cleared");
+      }
+      // Merge: joins the selected envelope peaks into one pulse and merges the
+      // selected detections / drawn selections, whichever are selected.
+      function pkMergeAny() {
+        const peaks = pkSelectionIndices().length > 1;
+        const sels = !!(pkSelSelected && pkSelExtra.length);
+        if (!peaks && !sels) {
+          log("Select two or more envelope peaks or detections to merge", "warn");
+          return;
+        }
+        if (peaks) pkBulkJoin();
+        if (sels) pkMergeSelections();
       }
       function pkUpdateSelectionButtons() {
         const idxs = pkSelectionIndices();
@@ -13656,7 +13780,7 @@
         const isolate = count > 1;
         const join = count > 1;
         const remove = hasSel;
-        const clear = hasSel;
+        const clear = hasSel || !!pkSelSelected;
 
         const setState = (id, state) => {
           const el = $(id);
@@ -13669,9 +13793,9 @@
         setState("btnPkSplitLeft", splitLeft);
         setState("btnPkSplitRight", splitRight);
         setState("btnPkBulkIsolate", isolate);
-        setState("btnPkBulkJoin", join);
         setState("btnPkRemoveSel", remove);
         setState("btnPkClearSelection", clear);
+        setState("btnPkMergeSel", join || !!(pkSelSelected && pkSelExtra.length));
       }
       // Sorted array-indices of the currently-selected envelope peaks (drops any stale refs).
       function pkSelectionIndices() {
@@ -14823,6 +14947,7 @@
             ...pkFreqCols(allEnvPeaks),
           });
         });
+        pkAddLevelCols();
 
         // ── Build motif sequence data ────────────────────────────────────
         pkMotifSeqData = [];
@@ -15217,6 +15342,94 @@
         return { motifs, seqs };
       }
 
+      // ── Pulse level, measured in the audio ─────────────────────────────
+      // The envelope only places the pulses; their level is measured in the
+      // samples themselves, between pulse_start and pulse_end. Added to every
+      // Pulses row:
+      //   rms_db_rel   the pulse's RMS relative to the MEDIAN pulse RMS of the
+      //                recording, in dB (0 = a typical pulse, +3 = accented)
+      //   peak_db_rel  its largest |sample| relative to the median pulse peak
+      //   crest_db     peak / RMS within the pulse, in dB (impulsive vs even)
+      //   peak_dbfs    the absolute peak, dB re full scale. A clipping check
+      //                only: it depends on gain and distance, so Summarize
+      //                and Summary Analysis leave it out.
+      // and to every Motifs row, from the rms_db_rel of its pulses:
+      //   level_sd_db     their spread (sample SD; null below 2 pulses)
+      //   level_range_db  loudest minus quietest pulse
+      // Why a median reference: max_amp / mean_amp divide by the envelope's
+      // single loudest point, so one click, a louder neighbour or the animal
+      // moving closer lowers every pulse of the recording. The median of the
+      // pulses barely moves with one outlier, and gain and microphone
+      // distance cancel out of the ratio. RMS rather than peak for the main
+      // value because it uses every sample of the pulse, not the one a click
+      // or a clipped sample would set. Unlike the envelope values it does not
+      // depend on the Smoothing setting.
+      function pkAddLevelCols() {
+        if (!rawSamples || !pkPulseData.length) return;
+        const n = rawSamples.length;
+        const lv = pkPulseData.map((r) => {
+          const i0 = Math.max(0, Math.round(r.pulse_start * sampleRate)),
+            i1 = Math.min(n, Math.round(r.pulse_end * sampleRate));
+          if (!(i1 - i0 >= 2)) return null;
+          let ss = 0,
+            pk = 0;
+          for (let i = i0; i < i1; i++) {
+            const v = rawSamples[i];
+            ss += v * v;
+            const a = Math.abs(v);
+            if (a > pk) pk = a;
+          }
+          const rms = Math.sqrt(ss / (i1 - i0));
+          return rms > 0 ? { rms, pk } : null;
+        });
+        const med = (a) => {
+          const s = a.filter((v) => v > 0).sort((x, y) => x - y);
+          if (!s.length) return null;
+          const m = s.length >> 1;
+          return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+        };
+        const refRms = med(lv.map((q) => (q ? q.rms : 0))),
+          refPk = med(lv.map((q) => (q ? q.pk : 0)));
+        const db = (x, ref) => (x > 0 && ref > 0 ? round4(20 * Math.log10(x / ref)) : null);
+        // New columns go right after the amplitude ones, not at the far end.
+        // The row object itself is reordered in place, so anything holding a
+        // reference to it still sees the same row.
+        const insertAfter = (row, keys, extra) => {
+          const anchor = keys.find((k) => k in row);
+          if (!anchor) return Object.assign(row, extra);
+          const out = {};
+          Object.keys(row).forEach((k) => {
+            out[k] = row[k];
+            if (k === anchor) Object.assign(out, extra);
+          });
+          Object.keys(row).forEach((k) => delete row[k]);
+          return Object.assign(row, out);
+        };
+        pkPulseData.forEach((r, i) => {
+          const q = lv[i];
+          insertAfter(r, ["max_amp", "mean_amp"], {
+            rms_db_rel: q ? db(q.rms, refRms) : null,
+            peak_db_rel: q ? db(q.pk, refPk) : null,
+            crest_db: q ? db(q.pk, q.rms) : null,
+            peak_dbfs: q ? db(q.pk, 1) : null,
+          });
+        });
+        pkMotifData.forEach((m) => {
+          const v = pkPulseData
+            .filter((t) => t.motif_id === m.motif_id && t.rms_db_rel != null)
+            .map((t) => t.rms_db_rel);
+          let s = null;
+          if (v.length > 1) {
+            const mu = v.reduce((a, b) => a + b, 0) / v.length;
+            s = round4(Math.sqrt(v.reduce((a, b) => a + (b - mu) * (b - mu), 0) / (v.length - 1)));
+          }
+          insertAfter(m, ["dyn_exc_mean"], {
+            level_sd_db: s,
+            level_range_db: v.length > 1 ? round4(Math.max(...v) - Math.min(...v)) : null,
+          });
+        });
+      }
+
       async function _pkConfirmPulseStages(spans, progress) {
         const useMotifSeq = $("pkMotifSeq").checked;
         const { motifs, seqs } = pkGroupPulseSpans(spans);
@@ -15339,6 +15552,7 @@
             ...noFreq,
           });
         });
+        pkAddLevelCols();
 
         pkMotifSeqData = [];
         seqs.forEach((seq, si) => {
@@ -16143,7 +16357,7 @@
         const paragraphs = buildTextReportParagraphs();
         if (!paragraphs || !paragraphs.length) {
           log(
-            "Run Detect Envelope peaks and Confirm (or compute spectral metrics) before exporting a report.",
+            "Run Detect envelope peaks and Confirm (or compute spectral metrics) before exporting a report.",
             "warn",
           );
           return;
@@ -16447,7 +16661,7 @@
         if (b) b.disabled = !(pkEnvPeaks.length || pkPulseSpans().length);
       }
 
-      // Enable Detect Envelope peaks button when audio loads
+      // Enable Detect envelope peaks button when audio loads
       // (hooked into existing load pipeline via a small addition)
 
       // Sync the Loaded Audio panel's settings inputs with any persisted
@@ -16598,7 +16812,8 @@
         // An STR export: only its fingerprint is a table to pool. Its other
         // sheets (STR_pulses, STR_vectors, STR_summary) must not be mistaken
         // for Temporal Analysis tables below.
-        if (nm.startsWith("str_")) return nm === "str_fingerprint" ? "str" : null;
+        if (nm.startsWith("str_"))
+          return nm === "str_fingerprint" ? "str" : nm === "str_rep_fingerprint" ? "strRep" : null;
         // The pre-rename vocabulary is accepted alongside the new one
         // throughout this classifier: "train" for pulse and "peak" for
         // envelope peak. Workbooks exported before the rename carry the old names,
@@ -16785,6 +17000,14 @@
         // which members it spans, written "1-2". Their LENGTHS are separate
         // columns (gap_ms, syl_dur_ms, …) and are averaged normally.
         if (/^(gap|syl|grp)_(start|end|between|members)$/.test(kl)) return true;
+        // How the spectrum was measured, not what was measured: the audio
+        // length per transform, the resolution it reached and the bin spacing
+        // after zero-padding (also as per-pulse means). Quality checks that
+        // stay in the per-level tables, not properties of the song.
+        if (/^spec_(signal|res|bin)_/.test(kl)) return true;
+        // Absolute pulse level (dB re full scale): set by gain and distance,
+        // a clipping check — the song's level pattern is rms_db_rel.
+        if (kl === "peak_dbfs") return true;
         return false;
       }
 
@@ -16804,12 +17027,12 @@
                 );
             });
             if (!Object.keys(sheets).length) {
-              log(
-                '"' +
-                  f.name +
-                  '": no recognizable Envelope peaks/Pulses/Motifs/Spectral/STR_fingerprint table found — skipped.',
-                "warn",
-              );
+              // Said in a toast too: the log is usually collapsed, and a file
+              // that silently fails to appear looks like an app fault.
+              const msg =
+                '"' + f.name + '": no recognizable Envelope peaks/Pulses/Motifs/Spectral/STR_fingerprint/STR_rep_fingerprint table found, so it was not added.';
+              log(msg, "warn");
+              showToast(msg, 9000);
               continue;
             }
             const idTag = _summFindTagField(workbook, "specimen_id");
@@ -16820,10 +17043,38 @@
               .value;
             const idNear = _summNearMissHeaders(workbook, "specimen_id");
             const recordingKey = _summRecordingKey(f.name);
+            // A workbook can hold several recordings (an STR export, a merged
+            // workbook): one per distinct source_file. Each then gets its own
+            // Specimen ID / Species on the card, read from its own rows,
+            // instead of the file showing only the first one it met.
+            const recMap = new Map();
+            Object.values(sheets).forEach((rows) =>
+              rows.forEach((r) => {
+                const src = r.source_file != null ? String(r.source_file).trim() : "";
+                if (!src) return;
+                if (!recMap.has(src)) recMap.set(src, { specimen_id: "", species: "" });
+                const m = recMap.get(src);
+                if (!m.specimen_id && r.specimen_id) m.specimen_id = String(r.specimen_id).trim();
+                if (!m.species && r.species) m.species = String(r.species).trim();
+              }),
+            );
+            const recs =
+              recMap.size > 1
+                ? [...recMap].map(([src, m]) => ({
+                    src,
+                    specimen_id: m.specimen_id || _summRecordingKey(src),
+                    guessed: !m.specimen_id,
+                    species: m.species,
+                  }))
+                : null;
+            // Species representatives only: nothing to tag per recording.
+            const repOnly = Object.keys(sheets).length === 1 && !!sheets.strRep;
             summFilesData.push({
               id: summNextFileId++,
               name: f.name,
               recordingKey,
+              recs,
+              repOnly,
               // Prefer the Specimen ID tagged in the file's own data; fall
               // back to the shared recording key (original audio file name,
               // export markers stripped) when the column is missing/blank,
@@ -16845,7 +17096,7 @@
             // Say it out loud too. A tooltip is only found by someone who
             // already suspects something is wrong, and pooling under a guessed
             // specimen id quietly merges or splits animals.
-            if (!fromFile)
+            if (!fromFile && !recs && !repOnly)
               log(
                 '"' +
                   f.name +
@@ -16863,6 +17114,19 @@
           }
         }
         summRenderFileList();
+        summAutoRun();
+      }
+
+      // Merging is not a step the user should have to remember: any change to
+      // the file list or its tags re-merges shortly after, so Summary Analysis
+      // always has current data. Debounced, so typing a Specimen ID does not
+      // re-merge on every keystroke.
+      let _summAutoTimer = null;
+      function summAutoRun() {
+        clearTimeout(_summAutoTimer);
+        _summAutoTimer = setTimeout(() => {
+          if (summFilesData.length) summRun({ quiet: true });
+        }, 400);
       }
 
       // What the ⚠ beside "Specimen ID" actually means for this file. The old
@@ -16912,6 +17176,48 @@
           const row = document.createElement("div");
           row.style.cssText =
             "display:flex;flex-direction:column;gap:2px;padding:5px;border:1px solid var(--border);border-radius:4px;background:var(--bg3)";
+          const esc = (s) => String(s || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+          if (f.repOnly) {
+            const sps = f.sheets.strRep.map((r) => r.species || "?");
+            row.innerHTML =
+              '<div style="display:flex;align-items:center;gap:5px">' +
+              '<span style="flex:1;font-size:11px;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(f.name) + '">' + esc(f.name) + "</span>" +
+              '<button data-remove="' + f.id + '" style="font-size:10px;padding:1px 6px">✕</button></div>' +
+              '<div style="color:var(--txt2);font-size:10px" title="One row per species, for describing and comparing species: tick STR rep. in Summary Analysis. Not pooled with the recordings.">' +
+              "STR representatives (" + sps.length + " species): " + esc(sps.join(", ")) + "</div>";
+            wrap.appendChild(row);
+            return;
+          }
+          if (f.recs) {
+            // Several recordings in one workbook: one line each.
+            row.innerHTML =
+              '<div style="display:flex;align-items:center;gap:5px">' +
+              '<span style="flex:1;font-size:11px;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(f.name) + '">' + esc(f.name) + "</span>" +
+              '<button data-remove="' + f.id + '" style="font-size:10px;padding:1px 6px">✕</button></div>' +
+              '<div style="color:var(--txt2);font-size:10px">' + f.recs.length + " recordings in this file. Specimen ID and Species are read from each one's rows; edit to correct.</div>" +
+              '<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1fr);gap:2px 4px;align-items:center;max-height:240px;overflow-y:auto">' +
+              '<span style="color:var(--txt3);font-size:10px">Recording</span><span style="color:var(--txt3);font-size:10px">🏷 Specimen ID</span><span style="color:var(--txt3);font-size:10px">Species</span>' +
+              f.recs
+                .map(
+                  (r, i) =>
+                    '<span style="font-size:10px;color:var(--txt2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(r.src) + '">' + esc(r.src) + "</span>" +
+                    '<input data-rec-spec="' + f.id + ":" + i + '" type="text" value="' + esc(r.specimen_id) + '"' +
+                    (r.guessed ? ' title="No specimen_id in this recording\'s rows: guessed from its name. Edit if wrong."' : "") +
+                    ' style="min-width:0;font-size:11px;padding:1px 4px' + (r.guessed ? ";border-color:#d29922" : "") + '" />' +
+                    '<input data-rec-sp="' + f.id + ":" + i + '" type="text" value="' + esc(r.species) + '" style="min-width:0;font-size:11px;padding:1px 4px" />',
+                )
+                .join("") +
+              "</div>" +
+              '<div style="display:flex;align-items:center;gap:4px" title="Applied only to recordings whose rows have no country of their own.">' +
+              '<span style="color:var(--txt2);font-size:10px;width:56px">Country</span>' +
+              '<input data-country="' + f.id + '" type="text" value="' + esc(f.country) + '" style="flex:1;font-size:11px;padding:1px 4px" /></div>' +
+              '<div style="display:flex;align-items:center;gap:4px" title="Applied only to recordings whose rows have no locality of their own.">' +
+              '<span style="color:var(--txt2);font-size:10px;width:56px">Locality</span>' +
+              '<input data-locality="' + f.id + '" type="text" value="' + esc(f.locality) + '" style="flex:1;font-size:11px;padding:1px 4px" /></div>' +
+              '<div style="color:var(--txt2);font-size:10px">' + (kinds || "no recognizable tables") + "</div>";
+            wrap.appendChild(row);
+            return;
+          }
           row.innerHTML =
             '<div style="display:flex;align-items:center;gap:5px">' +
             '<span style="flex:1;font-size:11px;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' +
@@ -16986,6 +17292,31 @@
             const id = +b.dataset.remove;
             summFilesData = summFilesData.filter((f) => f.id !== id);
             summRenderFileList();
+            if (summFilesData.length) summAutoRun();
+            else summResetResults();
+          };
+        });
+        const recOf = (inp, key) => {
+          const [fid, i] = inp.dataset[key].split(":").map(Number);
+          const f = summFilesData.find((x) => x.id === fid);
+          return f && f.recs ? f.recs[i] : null;
+        };
+        wrap.querySelectorAll("[data-rec-spec]").forEach((inp) => {
+          inp.oninput = () => {
+            const r = recOf(inp, "recSpec");
+            if (!r) return;
+            r.specimen_id = inp.value.trim() || _summRecordingKey(r.src);
+            r.guessed = false;
+            inp.style.borderColor = "";
+            summAutoRun();
+          };
+        });
+        wrap.querySelectorAll("[data-rec-sp]").forEach((inp) => {
+          inp.oninput = () => {
+            const r = recOf(inp, "recSp");
+            if (!r) return;
+            r.species = inp.value.trim();
+            summAutoRun();
           };
         });
         wrap.querySelectorAll("[data-copymeta]").forEach((b) => {
@@ -17017,7 +17348,9 @@
             f.species = summMetaClipboard.species;
             f.country = summMetaClipboard.country;
             f.locality = summMetaClipboard.locality;
+            summMarkEdited(f, "specimen_id", "species", "country", "locality");
             summRenderFileList();
+            summAutoRun();
           };
         });
         wrap.querySelectorAll("[data-indiv]").forEach((inp) => {
@@ -17029,6 +17362,8 @@
               // as a filename guess even if the box is cleared back to blank.
               f.specimenId = inp.value.trim() || f.recordingKey;
               f.fromData = true;
+              summMarkEdited(f, "specimen_id");
+              summAutoRun();
             }
           };
         });
@@ -17036,25 +17371,44 @@
           inp.oninput = () => {
             const id = +inp.dataset.species;
             const f = summFilesData.find((x) => x.id === id);
-            if (f) f.species = inp.value.trim();
+            if (f) {
+              f.species = inp.value.trim();
+              summMarkEdited(f, "species");
+            }
+            summAutoRun();
           };
         });
         wrap.querySelectorAll("[data-country]").forEach((inp) => {
           inp.oninput = () => {
             const id = +inp.dataset.country;
             const f = summFilesData.find((x) => x.id === id);
-            if (f) f.country = inp.value.trim();
+            if (f) {
+              f.country = inp.value.trim();
+              summMarkEdited(f, "country");
+            }
+            summAutoRun();
           };
         });
         wrap.querySelectorAll("[data-locality]").forEach((inp) => {
           inp.oninput = () => {
             const id = +inp.dataset.locality;
             const f = summFilesData.find((x) => x.id === id);
-            if (f) f.locality = inp.value.trim();
+            if (f) {
+              f.locality = inp.value.trim();
+              summMarkEdited(f, "locality");
+            }
+            summAutoRun();
           };
         });
         $("btnSummClear").disabled = false;
         $("btnSummRun").disabled = false;
+      }
+
+      // Fields the user corrected on a file's card; these override the
+      // value written in the file's rows when merging.
+      function summMarkEdited(f, ...cols) {
+        if (!f.edited) f.edited = new Set();
+        cols.forEach((c) => f.edited.add(c));
       }
 
       function summClearFiles() {
@@ -17386,18 +17740,23 @@
         summReportEdited = false;
         summRenderSelections();
         $("summCards").innerHTML =
-          '<div style="color:var(--txt2);font-size:11px">Add files and click Merge &amp; Summarize to see pooled counts and per-metric mean ± SD here.</div>';
+          '<div style="color:var(--txt2);font-size:11px">Add Excel files to see pooled counts and per-metric mean ± SD here.</div>';
         $("summTableHead").innerHTML = "";
         $("summTableBody").innerHTML = "";
+        summRenderBars();
         $("summReportText").value = "";
         $("summStatus").textContent = "";
         $("btnSummSaveXlsx").disabled = true;
         $("btnSummSaveReport").disabled = true;
+        if (typeof saOnDataChanged === "function") saOnDataChanged();
       }
 
-      function summRun() {
+      // opts.quiet: an automatic re-merge (files or tags changed), which
+      // should not add a log line for every keystroke.
+      function summRun(opts) {
+        const quiet = !!(opts && opts.quiet);
         if (!summFilesData.length) {
-          log("Add at least one Excel file first.", "warn");
+          if (!quiet) log("Add at least one Excel file first.", "warn");
           return;
         }
         // Several files (Temporal Analysis, Spectral Analysis exported per
@@ -17405,25 +17764,35 @@
         // distinct recording keys, not files, or re-importing Pulses and
         // Motifs spectral exports for one audio file would look like 2+
         // recordings.
-        // An STR export holds one fingerprint row per recording, so a file
-        // with nothing but that table counts its rows' recordings instead.
+        // A workbook holding several recordings (an STR export, a merged
+        // workbook) counts each of them.
         const nRecordings = new Set(
-          summFilesData.flatMap((f) =>
-            Object.keys(f.sheets).length === 1 && f.sheets.str
-              ? f.sheets.str.map((r) => _summRecordingKey(String(r.source_file || f.name)))
-              : [f.recordingKey],
-          ),
+          summFilesData.flatMap((f) => (f.repOnly ? [] : f.recs ? f.recs.map((r) => _summRecordingKey(r.src)) : [f.recordingKey])),
         ).size;
         // A row's own tag value (specimen_id/species/locality, tagged at
         // export time) wins; only fall back to this file's editable field
         // when the column is missing or blank — the "fill it in here" path.
+        // Except once the user has typed (or pasted) into a field on the
+        // card: that is a correction of the file's value, so it wins.
         const TAG_FIELDS = [
           ["specimen_id", "specimenId"],
           ["species", "species"],
           ["country", "country"],
           ["locality", "locality"],
         ];
-        const merged = { envPeaks: [], pulses: [], motifs: [], motseq: [], spectral: [], str: [] };
+        // strRep: species representatives. Kept out of SUMM_CATS on purpose: a
+        // species row is not a recording, so it takes no part in the pooled
+        // statistics, the temperature fits or the individual counts; only
+        // Summary Analysis reads it, as its own exclusive table.
+        const merged = { envPeaks: [], pulses: [], motifs: [], motseq: [], spectral: [], str: [], strRep: [] };
+        const repBySpecies = new Map(); // a later file's species replaces an earlier one
+        summFilesData.forEach((f) =>
+          (f.sheets.strRep || []).forEach((r) => {
+            const sp = String(r.species || "").trim() || "(no species)";
+            repBySpecies.set(sp, Object.assign({}, r, { species: sp, specimen_id: "", source_file: "representative: " + sp, source_workbook: f.name }));
+          }),
+        );
+        merged.strRep = [...repBySpecies.values()];
         summFilesData.forEach((f) => {
           SUMM_CATS.forEach((cat) => {
             const rows = f.sheets[cat];
@@ -17431,13 +17800,19 @@
             rows.forEach((r) => {
               const rest = Object.assign({}, r);
               const tags = {};
+              // In a several-recording workbook the card edits each
+              // recording's Specimen ID / Species; those values (read from the
+              // rows, then possibly corrected) are authoritative.
+              const rec = f.recs ? f.recs.find((x) => x.src === String(r.source_file ?? "").trim()) : null;
               TAG_FIELDS.forEach(([col, fileField]) => {
                 const rowKey = Object.keys(rest).find(
                   (k) => k.toLowerCase() === col,
                 );
                 const rowVal = rowKey ? String(rest[rowKey] ?? "").trim() : "";
                 if (rowKey) delete rest[rowKey];
-                tags[col] = rowVal || f[fileField] || "";
+                const recVal = rec && (col === "specimen_id" || col === "species") ? rec[col] : "";
+                const editVal = f.edited && f.edited.has(col) ? f[fileField] : "";
+                tags[col] = recVal || editVal || rowVal || f[fileField] || "";
               });
               merged[cat].push(
                 Object.assign(
@@ -17493,11 +17868,13 @@
           merged.motifs.length +
           " motifs" +
           (merged.str.length ? ", " + merged.str.length + " STR fingerprints" : "") +
+          (merged.strRep.length ? ", " + merged.strRep.length + " STR species representatives" : "") +
           " merged.";
-        log(
-          "Summarize: merged " + summFilesData.length + " file(s).",
-          "ok",
-        );
+        if (!quiet)
+          log(
+            "Summarize: merged " + summFilesData.length + " file(s).",
+            "ok",
+          );
       }
 
       // Everything downstream of the merge: pooled stats, one stats block per
@@ -17566,6 +17943,7 @@
         summUpdateTempNote();
         summRenderCards(summMerged, summIndividuals, summNRecordings);
         summRenderTable(stats);
+        summBarsChanged();
         // Deferred: the panel is inside a tab that may not be laid out yet,
         // and a canvas with zero width draws nothing.
         setTimeout(() => summRenderTempPlots(summMerged), 0);
@@ -17607,6 +17985,8 @@
           cards.push({ lbl: "Spectral rows", v: merged.spectral.length });
         if (merged.str.length)
           cards.push({ lbl: "STR fingerprints", v: merged.str.length });
+        if (merged.strRep && merged.strRep.length)
+          cards.push({ lbl: "STR species reps", v: merged.strRep.length });
         const pooledMean = (cat, key, digits) => {
           const row = summStatsRows.find(
             (s) =>
@@ -17986,6 +18366,18 @@
       // screen rather than re-deriving it from state that may have moved on.
       let summTempFigSvg = null;
 
+      // The figure starts folded: it is a side check, not the main output.
+      // The title and the download buttons stay visible either way.
+      function summToggleTempFigure() {
+        const fig = $("summTempFigure"),
+          btn = $("summTempToggle");
+        if (!fig || !btn) return;
+        const open = fig.style.display === "none";
+        fig.style.display = open ? "flex" : "none";
+        btn.textContent = open ? "▾" : "▸";
+        btn.title = open ? "Collapse" : "Expand";
+      }
+
       function summRenderTempPlots(merged) {
         const panel = $("summTempPlotsPanel");
         if (!panel) return;
@@ -18149,24 +18541,202 @@
         });
       }
 
+      // ── Summary plots ────────────────────────────────────────────────
+      // One small horizontal bar chart per metric: the mean of each chosen
+      // group (all rows pooled, each individual, or each species) with a ±1 SD
+      // whisker. Built from the merged rows themselves, so species can be
+      // grouped too; the numbers match the table (population SD, as there).
+      const SUMM_BAR_COLORS = ["#4e9be6", "#e69f00", "#2bb58f", "#e05d8c", "#b48be6", "#d6c34a", "#5bc4e8", "#e8743b"];
+      const summBarHidden = { specimen_id: new Set(), species: new Set() };
+
+      // The rows behind the current Table + Selection choice.
+      function summBarRows() {
+        const cat = $("summBarCat").value;
+        const sel = $("summBarSel").value;
+        if (sel === "") return summMerged ? summMerged[cat] || [] : [];
+        const res = summSelResults[+sel];
+        return res && res.ok && res.cat === cat ? res.rows : [];
+      }
+      function summBarGroupOf(r, by) {
+        if (by === "all") return "All";
+        return String(r[by] || "").trim() || (by === "species" ? "(no species)" : "(no ID)");
+      }
+
+      // Refill the Table and Selection menus after a merge, keeping the
+      // current choice when it still exists.
+      function summBarMenus() {
+        const catSel = $("summBarCat"),
+          selSel = $("summBarSel");
+        if (!catSel || !summMerged) return;
+        const cats = SUMM_CATS.filter((c) => summMerged[c] && summMerged[c].length);
+        const curCat = catSel.value;
+        catSel.innerHTML = cats.map((c) => '<option value="' + c + '">' + SUMM_LABEL[c] + "</option>").join("");
+        if (cats.includes(curCat)) catSel.value = curCat;
+        const curSel = selSel.value;
+        const opts = ['<option value="">' + SUMM_SEL_ALL + "</option>"];
+        summSelResults.forEach((res, i) => {
+          if (res.ok && res.rows.length && res.cat === catSel.value)
+            opts.push('<option value="' + i + '">' + String(res.sel.name).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]) + "</option>");
+        });
+        selSel.innerHTML = opts.join("");
+        if ([...selSel.options].some((o) => o.value === curSel)) selSel.value = curSel;
+        $("summBarSelWrap").style.display = opts.length > 1 ? "" : "none";
+        const adjT = _summAdjTarget();
+        $("summBarAdjWrap").style.display = adjT === null ? "none" : "";
+        if (adjT !== null) $("summBarAdjLbl").textContent = "corrected to " + adjT + " °C";
+      }
+
+      function summBarsChanged() {
+        summBarMenus();
+        summRenderBars();
+      }
+      function summBarPick(on) {
+        const by = $("summBarBy").value;
+        if (by === "all") return;
+        const groups = [...new Set(summBarRows().map((r) => summBarGroupOf(r, by)))];
+        if (on) summBarHidden[by].clear();
+        else groups.forEach((g) => summBarHidden[by].add(g));
+        summRenderBars();
+      }
+
+      function summRenderBars() {
+        const host = $("summBars");
+        if (!host) return;
+        if (!summMerged || !summFilesData.length || !$("summBarCat").value) {
+          host.innerHTML = '<div style="color: var(--txt2); font-size: 11px">Add Excel files to see the summaries here.</div>';
+          $("summBarGroups").innerHTML = "";
+          return;
+        }
+        const by = $("summBarBy").value;
+        let rows = summBarRows();
+        const adjT = _summAdjTarget();
+        if (adjT !== null && $("summBarAdj").checked) rows = _summAdjustRows(rows, adjT);
+
+        // group picker
+        const allGroups = [...new Set(rows.map((r) => summBarGroupOf(r, by)))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+        const colorOf = new Map(allGroups.map((g, i) => [g, SUMM_BAR_COLORS[i % SUMM_BAR_COLORS.length]]));
+        const gHost = $("summBarGroups");
+        $("summBarGroupsWrap").style.display = by === "all" ? "none" : "";
+        gHost.innerHTML = "";
+        if (by !== "all")
+          allGroups.forEach((g) => {
+            const lab = document.createElement("label");
+            lab.className = "chk";
+            const cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.checked = !summBarHidden[by].has(g);
+            cb.onchange = () => {
+              if (cb.checked) summBarHidden[by].delete(g);
+              else summBarHidden[by].add(g);
+              summRenderBars();
+            };
+            const sw = document.createElement("span");
+            sw.style.cssText = "display:inline-block;width:9px;height:9px;border-radius:2px;background:" + colorOf.get(g);
+            lab.append(cb, sw, " " + g);
+            gHost.appendChild(lab);
+          });
+        const groups = by === "all" ? allGroups : allGroups.filter((g) => !summBarHidden[by].has(g));
+
+        const keys = [];
+        rows.forEach((r) =>
+          Object.keys(r).forEach((k) => {
+            if (!_summIsCategoricalKey(k) && !keys.includes(k)) keys.push(k);
+          }),
+        );
+        const q = ($("summBarFilter").value || "").trim().toLowerCase();
+        const metrics = keys.filter((k) => !q || k.toLowerCase().includes(q));
+
+        host.innerHTML = "";
+        if (!groups.length || !metrics.length) {
+          host.innerHTML = '<div style="color: var(--txt2); font-size: 11px">' + (!groups.length ? "Tick at least one group." : "No metric matches the filter.") + "</div>";
+          return;
+        }
+        const fmt = (v) => (Math.abs(v) >= 100 ? v.toFixed(1) : Math.abs(v) >= 1 ? v.toFixed(2) : v.toPrecision(3));
+        const NS = "http://www.w3.org/2000/svg";
+        const el = (tag, attrs, text) => {
+          const e = document.createElementNS(NS, tag);
+          Object.keys(attrs).forEach((a) => e.setAttribute(a, attrs[a]));
+          if (text != null) e.textContent = text;
+          return e;
+        };
+        metrics.forEach((k) => {
+          const st = groups
+            .map((g) => {
+              const vals = rows
+                .filter((r) => summBarGroupOf(r, by) === g)
+                .map((r) => r[k])
+                .filter((v) => typeof v === "number" && isFinite(v));
+              if (!vals.length) return null;
+              const n = vals.length,
+                mean = vals.reduce((s, v) => s + v, 0) / n,
+                raw = n > 1 ? Math.sqrt(vals.reduce((s, v) => s + (v - mean) ** 2, 0) / n) : 0,
+                // identical values leave rounding noise (4e-16), not a spread
+                sd = raw < 1e-9 * Math.max(1, Math.abs(mean)) ? 0 : raw;
+              return { g, n, mean, sd, min: Math.min(...vals), max: Math.max(...vals) };
+            })
+            .filter(Boolean);
+          if (!st.length) return;
+          const lo = Math.min(0, ...st.map((s) => s.mean - s.sd)),
+            hi = Math.max(0, ...st.map((s) => s.mean + s.sd)) || 1;
+          const LW = by === "all" ? 34 : Math.min(110, 8 + 6.2 * Math.max(...st.map((s) => s.g.length))),
+            W = 260,
+            VW = 74,
+            PX0 = LW + 6,
+            PX1 = W - VW,
+            ROW = 16,
+            H = 22 + st.length * ROW + 6;
+          const x = (v) => PX0 + ((v - lo) / (hi - lo)) * (PX1 - PX0);
+          const card = document.createElement("div");
+          card.style.cssText = "background: var(--bg2, rgba(255,255,255,0.03)); border: 1px solid var(--border, #30363d); border-radius: 4px; padding: 4px 6px";
+          const svg = el("svg", { viewBox: "0 0 " + W + " " + H, width: "100%", style: "display:block;font-family:inherit" });
+          svg.appendChild(el("text", { x: 0, y: 11, "font-size": 11, "font-weight": 600, fill: "var(--txt, #e6edf3)" }, k));
+          svg.appendChild(el("line", { x1: x(0), x2: x(0), y1: 18, y2: H - 4, stroke: "var(--txt2, #8b949e)", "stroke-width": 0.8 }));
+          st.forEach((s, i) => {
+            const y = 20 + i * ROW;
+            const g = el("g", {});
+            g.appendChild(el("title", {}, s.g + "\n" + k + "\nn = " + s.n + "\nmean = " + fmt(s.mean) + " ± " + fmt(s.sd) + " (SD)\nmin " + fmt(s.min) + ", max " + fmt(s.max)));
+            g.appendChild(el("text", { x: LW, y: y + 10, "font-size": 10, "text-anchor": "end", fill: "var(--txt2, #c9d1d9)" }, s.g.length > 17 ? s.g.slice(0, 16) + "…" : s.g));
+            const x0 = x(Math.min(0, s.mean)),
+              x1 = x(Math.max(0, s.mean));
+            g.appendChild(el("rect", { x: x0, y: y + 2, width: Math.max(1, x1 - x0), height: ROW - 5, rx: 2, fill: colorOf.get(s.g), "fill-opacity": 0.85 }));
+            if (s.sd > 0) {
+              const ym = y + 2 + (ROW - 5) / 2;
+              g.appendChild(el("line", { x1: x(s.mean - s.sd), x2: x(s.mean + s.sd), y1: ym, y2: ym, stroke: "var(--txt, #e6edf3)", "stroke-width": 1 }));
+              [s.mean - s.sd, s.mean + s.sd].forEach((v) => g.appendChild(el("line", { x1: x(v), x2: x(v), y1: ym - 3, y2: ym + 3, stroke: "var(--txt, #e6edf3)", "stroke-width": 1 })));
+            }
+            g.appendChild(el("text", { x: W - 2, y: y + 10, "font-size": 9.5, "text-anchor": "end", fill: "var(--txt2, #c9d1d9)" }, fmt(s.mean) + (s.sd > 0 ? " ±" + fmt(s.sd) : "")));
+            svg.appendChild(g);
+          });
+          card.appendChild(svg);
+          host.appendChild(card);
+        });
+        if (!host.children.length) host.innerHTML = '<div style="color: var(--txt2); font-size: 11px">No values for the chosen groups.</div>';
+      }
+
       // Cross-recording narrative — pooled headline stats first, then a
       // one-liner per individual (only if more than one is present).
       function summBuildReportParagraphs(merged, individuals, nRecordings) {
         const paras = [];
         const nInd = individuals.length;
+        // Only the levels actually merged are counted: an STR-only merge has no
+        // peaks, pulses or motifs, and "0 envelope peaks across 0 pulses" reads
+        // like a failure.
+        const counts = [];
+        if (merged.envPeaks.length || merged.pulses.length || merged.motifs.length)
+          counts.push(
+            merged.envPeaks.length + " envelope peaks across " + merged.pulses.length + " pulses and " + merged.motifs.length + " motifs",
+          );
+        if (merged.str.length) counts.push(merged.str.length + " STR fingerprint" + (merged.str.length === 1 ? "" : "s"));
+        if (merged.strRep && merged.strRep.length)
+          counts.push(merged.strRep.length + " STR species representative" + (merged.strRep.length === 1 ? "" : "s") + " (described separately, not pooled)");
         paras.push(
           "This summary pools " +
             nRecordings +
             " recording" +
             (nRecordings === 1 ? "" : "s") +
             (nInd > 1 ? " from " + nInd + " individuals" : "") +
-            ", totaling " +
-            merged.envPeaks.length +
-            " envelope peaks across " +
-            merged.pulses.length +
-            " pulses and " +
-            merged.motifs.length +
-            " motifs.",
+            (counts.length ? ", totaling " + counts.join(", plus ") : "") +
+            ".",
         );
 
         // Stated up front, and unconditionally, because a song description
@@ -20374,6 +20944,7 @@
           [SUMM_SHEET_NAME.motseq, summMerged.motseq],
           [SUMM_SHEET_NAME.spectral, summMerged.spectral],
           [SUMM_SHEET_NAME.str, summMerged.str],
+          ["STR_rep_fingerprint", summMerged.strRep],
           ["Summary_Obs", _summWithFormulaCols(allStats)],
         ].filter(([, data]) => data && data.length);
 
