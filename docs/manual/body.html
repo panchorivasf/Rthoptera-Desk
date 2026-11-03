@@ -1,0 +1,847 @@
+<h1 id="c1">1. Introduction</h1>
+
+<p>Rthoptera Desk is a cross-platform desktop application for analysing insect sounds (crickets, katydids, grasshoppers, cicadas and others). It is the graphical counterpart of the Rthoptera R package (Rivas et al. 2025): the temporal and spectral measurements and the acoustic metrics it reports are those defined in that paper. No R installation is needed. Everything runs locally on your computer and no audio leaves it. The only features that use the internet are the map and elevation lookup in Recording metadata. The Clustering module also runs its neural network locally, from a model file you supply.</p>
+
+<p>The workflow follows the structure of insect song. You load recordings, clean them if needed, detect and group sound units (envelope peaks → pulses → motifs → motif sequences), measure their timing and spectrum, make figures, and finally pool the results of many recordings into a species-level summary. Three newer modules complement this route:</p>
+<ul>
+<li><b>Custom Workflow</b> records the steps you take so they can be replayed on other recordings.</li>
+<li><b>Clustering</b> groups recordings by sound with a pretrained network, without any measurements.</li>
+<li><b>STR</b> reduces a song to its dominant frequency and a barcode of its pulses, and to a fixed-length fingerprint that can be compared across songs and species.</li>
+</ul>
+
+<h2 id="s1-1">1.1 Status of this manual</h2>
+<p>This manual is a provisional edition written against version 0.9.0. The application is under active development: names of buttons, default values and some behaviours may change between releases. Sections marked <i>Provisional</i> are shorter than they will eventually be. The screenshots were taken with a synthetic demonstration recording (a made-up song of seven echemes), so the numbers in them are illustrative only. Where the manual and the program disagree, trust the program and please tell the author; a checklist for reporting is in Appendix B.</p>
+
+<h2 id="s1-2">1.2 Conventions used in this manual</h2>
+<table class="plain">
+<tr><td><b>Bold</b></td><td>The name of a button, menu, tab or box exactly as it appears in the program.</td></tr>
+<tr><td><code>Monospace</code></td><td>File names, file extensions, column names and keyboard keys.</td></tr>
+<tr><td>“Active” and “checked”</td><td>The two ways a recording can be selected (section 3.2).</td></tr>
+<tr><td>Figures</td><td>Numbered screenshots with a caption. All of them show the same synthetic demonstration recording and the dark colour theme.</td></tr>
+<tr><td>Tooltips</td><td>Hovering the pointer over almost any control explains it. The information icon (ⓘ) next to some headings gives longer hints. Tooltips are the most detailed reference for individual parameters; this manual explains how the pieces fit together.</td></tr>
+</table>
+
+<h2 id="s1-3">1.3 What changed since the 0.8.0 draft</h2>
+<ul>
+<li>Three new modules: <b>Custom Workflow</b> (section 12), <b>Clustering</b> with Google Perch (section 13) and <b>STR</b> (section 14), including the STR fingerprint and the Representative STR.</li>
+<li>Preprocessing rewritten (section 6): Vanish, Delete, Fix DC Offset, Normalize, Noise padding and Fade in <b>Edit audio</b>. Every tool has its own <b>Apply to selected files</b> button, which replaces the Batch Edit pane.</li>
+<li>Temporal Analysis (section 7): pulse levels measured in the audio and expressed relative to the median pulse; a rearranged tab with one editing strip between the envelope and the spectrogram; <b>Merge</b> and <b>Deselect</b> work on both peaks and detections; <b>Clear pulses</b>.</li>
+<li>Summarize (section 11.1) now shows summary plots instead of a table. Summary Analysis (section 11.2) has a new layout, radial labels, a variable-importance figure and an STR table.</li>
+<li>The Loaded Audio panel is now a list on the left of the window (section 3.1). New cursors and edge-resizing for time selections. Audio information has moved into the playback bar.</li>
+</ul>
+
+<h1 id="c2">2. Installation</h1>
+<p>Download the installer for your system from the project’s Releases page (<code>github.com/panchorivasf/Rthoptera-Desk/releases</code>).</p>
+<table>
+<thead><tr><th>System</th><th>File</th><th>Notes</th></tr></thead>
+<tr><td>Windows 64-bit</td><td><code>Rthoptera.Desk_0.9.0_x64-setup.exe</code></td><td>Recommended; double-click it. The <code>.msi</code> is for managed deployment.</td></tr>
+<tr><td>macOS, Apple Silicon (M1–M4)</td><td><code>…_aarch64.dmg</code></td><td>Apple menu → About This Mac shows “Apple M…”.</td></tr>
+<tr><td>macOS, Intel</td><td><code>…_x64.dmg</code></td><td>About This Mac shows an Intel processor.</td></tr>
+<tr><td>Linux x86_64</td><td><code>.AppImage</code> (run <code>chmod +x</code> first), <code>.deb</code>, <code>.rpm</code></td><td>The AppImage works on most distributions.</td></tr>
+</table>
+<p>Windows-on-ARM and ARM Linux are not currently supported. Files ending in <code>.app.tar.gz</code> are for the auto-updater and are not meant for manual installation.</p>
+<div class="note"><b>Security warning on first launch.</b> Your operating system may warn about an unrecognised publisher the first time you open the installer or the app. This is expected for software that is not commercially signed. Confirm only if you downloaded it from the official Releases page. <i>(Provisional: signing status may change.)</i></div>
+<p><b>Supported audio formats:</b> WAV, MP3, FLAC, OGG, AIFF. Use uncompressed WAV or FLAC for measurements whenever you can. Lossy formats (MP3, OGG) alter the spectrum, especially at high frequencies.</p>
+<p>Clustering additionally needs a Google Perch 2.0 model file in ONNX format (section 13). It is not bundled with the app.</p>
+
+<h1 id="c3">3. A tour of the window</h1>
+
+<h2 id="s3-1">3.1 Layout</h2>
+<ul>
+<li><b>Top bar:</b> the Preferences menu (gear, left), the <b>Audio</b> button (load files) and the <b>Recording metadata</b> button.</li>
+<li><b>Main tabs</b> (below the top bar): Preprocessing, Temporal Analysis, Spectral Analysis, Annotate, Plotting, Summarize, Custom Workflow, Clustering, STR. At the right end of the tab row, outside every module, is the <b>⏺ Record Workflow</b> button (section 12).</li>
+<li><b>Loaded Audio pane</b> (left edge of the window): a vertical list of the loaded recordings, one name per row. The pane is hidden by default; only a narrow strip labelled <i>Loaded audio</i> shows. Click the strip to show or hide the pane, or drag it to the right to open the pane and set its width. Click a name to make it the active recording. Each row has a checkbox and a ✕ that closes that recording. The buttons at the top are <b>Select all</b>, <b>Clear selection</b>, <b>Close checked</b> (removes every checked recording; unsaved edits are lost) and <b>Save edited files…</b> (writes every checked recording to a folder as <code>&lt;name&gt;_&lt;suffix&gt;.wav</code>).</li>
+<li><b>Landing view:</b> before any audio is loaded, a welcome page with a Quick Guide summarises the main steps.</li>
+</ul>
+<figure><img src="shots/final/f01_window.png" alt=""><figcaption>The main window with a recording loaded and the Loaded Audio pane opened on the left. The tab row, with <b>Record Workflow</b> at its right end, sits below the top bar.</figcaption></figure>
+
+
+<h2 id="s3-2">3.2 Active recording vs. checked recordings</h2>
+<p>Two ideas recur throughout.</p>
+<ul>
+<li>The <b>active recording</b> is the single file that Preprocessing, Temporal Analysis, Spectral Analysis and Annotate currently work on. Click its name in Loaded Audio to activate it.</li>
+<li>The <b>checked recordings</b> are those ticked in the Loaded Audio pane. They are used when an operation covers several files:
+<ul>
+<li>the <b>Apply to selected files</b> buttons in Preprocessing;</li>
+<li>Osc. Stack, Multi-Mean Spectra and Habitus;</li>
+<li><b>Run on checked</b> in Custom Workflow;</li>
+<li>Clustering and STR. When nothing is checked, these two use the active recording.</li>
+</ul></li>
+</ul>
+
+<h2 id="s3-3">3.3 Common interactions</h2>
+<table>
+<thead><tr><th style="width:30%">Action</th><th>Effect (most time-based plots)</th></tr></thead>
+<tr><td>Mouse wheel</td><td>Zoom in time</td></tr>
+<tr><td>Ctrl + wheel</td><td>Zoom in frequency (spectrograms)</td></tr>
+<tr><td>Shift + wheel</td><td>Zoom amplitude (Temporal Analysis) or pan (Auto-coded Oscillogram)</td></tr>
+<tr><td>Drag</td><td>Pan or draw a selection, depending on the active tool</td></tr>
+<tr><td>Shift / Ctrl + click or drag</td><td>Add to a selection, or toggle items</td></tr>
+<tr><td><code>Delete</code></td><td>Remove the selected detections or selections. In Preprocessing it cuts the time selection out of the recording (section 6.2).</td></tr>
+<tr><td><code>Ctrl+Z</code></td><td>Undo (where an Undo button exists)</td></tr>
+<tr><td><code>Ctrl+M</code></td><td>Merge the selected detections (Temporal Analysis)</td></tr>
+<tr><td><code>S</code> / <code>A</code> / <code>H</code></td><td>Select, Draw, Pan tools in Spectral Analysis (shown in tooltips)</td></tr>
+<tr><td>Hold <code>S</code> + click</td><td>Split the detection or selection under the pointer at that time (Temporal Analysis, section 7.4)</td></tr>
+<tr><td><code>Space</code></td><td>Play / pause in the Auto-coded Oscillogram</td></tr>
+</table>
+<p>Hovering over a tool shows its keyboard shortcut in the tooltip. Keyboard shortcuts are ignored while you are typing in a text or number box.</p>
+
+<h1 id="c4">4. Quick start: from a recording to a table</h1>
+<ol>
+<li>Load a recording with <b>Audio</b> (several files can be selected at once).</li>
+<li>Open <b>Recording metadata</b> and fill in at least Specimen ID and Species. Add the temperature if you will compare recordings.</li>
+<li>(Optional) In Preprocessing, trim silence, fix a DC offset, high-pass filter below the insect’s band, remove a disturbing sound with Vanish, or downsample.</li>
+<li>In Temporal Analysis press <b>Detect envelope peaks</b>. Inspect the result, and adjust Smooth, the thresholds and the gap parameters until pulses and motifs look right. Fix the remaining errors by hand.</li>
+<li>Press <b>Apply to Spectral Analysis</b>, switch to the Spectral Analysis tab and press <b>Spectral Metrics</b>.</li>
+<li>Export with <b>Export All (Excel)</b> from each tab.</li>
+<li>Repeat for the other recordings, then open Summarize, add all the Excel files and press <b>Merge &amp; Summarize</b>.</li>
+</ol>
+<div class="note">If your species has pulses that are poorly defined by envelope peaks (for example some grasshoppers), use the Amplitude Detector route instead of peak detection (section 7.5). It is faster to set up and can follow a changing noise floor.</div>
+<div class="note"><b>Many recordings analysed in the same way?</b> Press <b>⏺ Record Workflow</b> before step 3 and <b>⏹ Stop Workflow</b> after step 5. You can then replay the workflow on every checked recording and export only the metrics you chose (section 12).</div>
+
+<h1 id="c5">5. Loading audio and recording metadata</h1>
+
+<h2 id="s5-1">5.1 Loading audio</h2>
+<p>Click <b>Audio</b> in the top bar (or <b>Load Audio</b> on the landing page). The files appear in the Loaded Audio pane, and the first one becomes the active recording. The playback bar under the waveform and spectrogram shows the active recording’s duration, sample rate, Nyquist frequency and channels.</p>
+<p>Importing existing selections (Spectral Analysis tab, <b>Import selections</b>):</p>
+<ul>
+<li><b>Import Selections</b> reads a Raven selection table (<code>.txt</code> / <code>.csv</code>).</li>
+<li><b>Add Excel Selection Table</b> reads the Pulse or Motif table from a Temporal Analysis Excel export and turns it into selections.</li>
+</ul>
+
+<h2 id="s5-2">5.2 Recording metadata</h2>
+<figure class="narrow"><img src="shots/final/f02_metadata.png" alt=""><figcaption>The Recording metadata window: the recording session on top, the specimen below.</figcaption></figure>
+
+<p>The Recording metadata window has two parts, and it is applied to the active recording as you type. Everything entered is written into the tables you export.</p>
+<table>
+<thead><tr><th style="width:24%">Section</th><th>Fields</th></tr></thead>
+<tr><td>Recording session</td><td>Country, Locality, Date, Time, Temperature (°C), Elevation (m), Latitude and Longitude (optional), and equipment: Recorder, Microphone, Accessories.</td></tr>
+<tr><td>Specimen</td><td>Specimen ID, which is carried as the first column of every export and used by Summarize to count individuals correctly. Species.</td></tr>
+</table>
+<p><b>Temperature</b> matters, because stridulation rate depends strongly on it. Free text is accepted (<code>22.5</code> or <code>~23</code>).</p>
+<ul>
+<li><b>Extract from map</b> opens a Leaflet map (street or satellite). Click a point, then <b>Use this point</b> to fill latitude, longitude and elevation. Elevation is also looked up automatically if you type coordinates and leave it empty. Both need an internet connection.</li>
+<li><b>Remember</b> stores the current values for reuse. The drop-down fills the fields from a remembered entry, and the bin forgets it.</li>
+<li><b>Apply session to all loaded recordings</b> copies the session block to every recording in the list (useful for a field night with many files).</li>
+<li><b>Save to file / Load from file</b> writes or reads both sections as one <code>.json</code>. Older <code>specimen_metadata.json</code> files still load.</li>
+</ul>
+<p>Exported columns from metadata: <code>rec_date</code>, <code>rec_time</code>, <code>latitude</code>, <code>longitude</code>, <code>elevation_m</code>, <code>temp_c</code>, <code>recorder</code>, <code>microphone</code>, <code>accessories</code>, plus specimen ID and species.</p>
+
+<h2 id="s5-3">5.3 Xeno-canto upload helper</h2>
+<p>Inside the metadata window, the Xeno-canto upload helper lists the fields of xeno-canto’s two-page upload form in order, each with a copy button. Fields that are radio buttons or drop-downs on the site are shown as reminders. The helper does not send anything: you open the upload page from it and paste the values yourself. Text you type in the helper is remembered on this computer.</p>
+
+<h1 id="c6">6. Preprocessing</h1>
+<p>Two sub-tabs: <b>Edit audio</b> and <b>Merge recordings</b>. Edits apply to the active recording and are seen immediately by Temporal Analysis, Spectral Analysis and Annotate. The original file on disk is never modified.</p>
+
+<h2 id="s6-1">6.1 The viewer</h2>
+<p>The top of the tab shows the waveform and spectrogram of the active recording. Each has a Height slider and a drag handle; the waveform opens at 140 px.</p>
+<ul>
+<li><b>Centre line.</b> A thin line marks zero on the waveform. If the recording sits noticeably above or below it, a second line shows the mean, and the playback bar suggests <b>Fix DC Offset</b>.</li>
+<li><b>Cursors.</b> The I-beam is the default: click to place the playhead, drag to select a stretch of time. Near either edge of a selection the cursor becomes a double arrow; drag there to resize the selection while the other edge stays put. Inside a selection, the cursor becomes a hand; drag to move the whole selection, which keeps its length.</li>
+<li><b>Playback bar:</b> Play/Stop, jump to the selection edges, <b>Speed</b> and <b>Freq drop</b> (listening only; see section 8.1), plus the recording’s duration, sample rate, Nyquist frequency and channels.</li>
+</ul>
+
+<h2 id="s6-2">6.2 Edit audio</h2>
+<figure><img src="shots/final/f03_edit_audio.png" alt=""><figcaption>Preprocessing, <b>Edit audio</b>: waveform, spectrogram and playback bar on top; one box per tool in the Edit audio pane below, each with its own Apply buttons.</figcaption></figure>
+
+<p>The Edit audio pane can be collapsed
+ with the arrow in its title bar. The title bar also holds <b>Undo Edit</b>, which steps back the last edit of any kind, and <b>Save Edited Audio As…</b>. The second button offers a suffix reflecting the edits (for example <code>_1hpf_trimmed</code>). <b>Save (in app)</b> adds a new entry to Loaded Audio only; <b>Save &amp; Export to Disk</b> also writes a WAV.</p>
+<table>
+<thead><tr><th style="width:22%">Tool</th><th>What it does</th></tr></thead>
+<tr><td>Time selection</td><td>Shows the current selection. A <b>Duration</b> box resizes the selection from its start (handy for cutting clips of equal length). <b>Save selection</b> writes the selection as its own WAV (original name + <code>_1</code>, <code>_2</code>, …). <b>Vanish</b> replaces the selection with noise matched to this recording’s own background: the sound disappears but the length and timing stay the same. It needs a few hundred milliseconds of quiet material in the recording to learn the background from. <b>Delete</b> (or the <code>Delete</code> key) cuts the selection out and joins what came before and after it, so the recording gets shorter.</td></tr>
+<tr><td>Trim</td><td><b>Trim…</b>: drag the two handles (on the waveform or on the Spectral Analysis tab), then <b>Confirm Trim</b>. <b>Reset</b> restores the full duration. While Trim mode is open, dragging draws the trim range rather than a time selection, so Vanish and Delete are unavailable.</td></tr>
+<tr><td>Bandpass filter</td><td>High-pass and low-pass cut-offs in Hz (0 = off for the high-pass; the low-pass defaults to Nyquist). Use a high-pass just below the insect’s lowest frequency to remove wind and handling noise.</td></tr>
+<tr><td>DC offset</td><td><b>Fix DC Offset</b> subtracts the recording’s mean so the waveform is centred on zero. A DC offset is common with some recorders and distorts amplitude measurements.</td></tr>
+<tr><td>Normalize</td><td>Scales the recording so its peak reaches the <b>Target level</b> in dBFS (0 = full scale). It is applied after the filters and cuts, and before the noise padding and fades.</td></tr>
+<tr><td>Frequency drop</td><td>Scales every frequency down by a percentage while keeping the duration (25% moves 40 kHz to 30 kHz). A way to bring ultrasonic song into a convenient range.</td></tr>
+<tr><td>Downsample</td><td>Lowers the sampling rate; an anti-aliasing filter runs first. Rates are listed in kHz with their Nyquist frequency, and only rates lower than the current one are offered. Everything above the new Nyquist is lost permanently.</td></tr>
+<tr><td>Noise padding</td><td>Adds <b>Length</b> seconds of synthetic background noise before and after the recording. The noise is matched to the recording’s own quiet parts, which are found automatically, and the joins are crossfaded. Tick <b>Fade in/out</b> to fade the padded edges as well. Make sure no call is cut off at the very start or end of the recording.</td></tr>
+<tr><td>Fade</td><td>Fades the start and/or the end of the recording over <b>Length</b> seconds (default 1 s). Tick <b>Fade in</b>, <b>Fade out</b> or both (both are ticked by default). Fades are applied last, after the padding.</td></tr>
+</table>
+<p>Every tool except Time selection and Trim has an <b>Apply to current file</b> button and a <b>Reset</b> button on its own row. Reset removes that tool’s edit.</p>
+<div class="warn"><b>Edits that change the timeline.</b> Trim, Delete and Noise padding change the timeline. Detections, envelope peaks and annotations made earlier are therefore cleared, because their times would no longer point at the right sound. Changing the trim after Vanish or Delete edits removes those edits, after asking.</div>
+
+<h2 id="s6-3">6.3 Applying edits to several recordings</h2>
+<p>Every tool except Time selection and Trim also has an <b>Apply to selected files</b> button, which is enabled when more than one recording is checked in the Loaded Audio pane. The tool’s current settings are applied to each checked recording. If the active recording is among them, its existing edits are kept and the new one is added on top. A checked recording that is already at or below a chosen Downsample rate is left untouched.</p>
+<div class="warn">Edits applied to selected files act directly and in place on the checked entries. They cannot be undone; re-import the file to start over. To write the results to disk, use <b>Save edited files…</b> in the Loaded Audio pane.</div>
+
+<h2 id="s6-4">6.4 Merge recordings</h2>
+<p>Joins several recordings end to end (the equivalent of <code>merge_waves()</code> in the R package).</p>
+<ol>
+<li>Build the list with <b>Add</b> from Loaded Audio. The list order is the playing order (top first).</li>
+<li>If the sampling rates differ, a warning explains why concatenating as-is would be wrong: the odd ones would play at the wrong rate. Choose <i>resample to the highest / lowest / first</i>, or <i>must already match</i>.</li>
+<li>Set <b>Gap between</b> (milliseconds of silence inserted between the pieces only), and optionally <b>centre</b> (subtract the mean) and <b>normalize</b> to a dBFS peak.</li>
+<li>Name the result and press <b>Merge</b>. The join points are shown as dashed lines, and the merged recording becomes the active one.</li>
+<li><b>Export WAV</b> writes a 16-bit mono WAV. <b>Export piece boundaries</b> writes a Raven table of where each source landed.</li>
+</ol>
+<p>Normalizing scales the whole concatenation to one peak, so amplitudes are no longer comparable between the source recordings. Turn it off if that matters. Unlike in the R version, normalization is applied once, at the end.</p>
+
+<h1 id="c7">7. Temporal Analysis</h1>
+<p>This tab detects and groups the sound units of the song and measures their timing and amplitude. It works on the amplitude envelope of the active recording.</p>
+
+<h2 id="s7-1">7.1 The song hierarchy used by the program</h2>
+<table>
+<thead><tr><th style="width:20%">Level</th><th style="width:42%">Meaning</th><th>Defined by</th></tr></thead>
+<tr><td>Envelope peak</td><td>A local maximum of the smoothed envelope (for example one tooth impact).</td><td>Smooth, peak window, thresholds</td></tr>
+<tr><td>Pulse</td><td>A group of envelope peaks forming one sound burst.</td><td>Max envelope-peak gap, max amplitude difference, min peaks per pulse</td></tr>
+<tr><td>Motif (echeme / syllable group)</td><td>A group of pulses separated by short gaps (for example one wing stroke).</td><td>Max pulse gap</td></tr>
+<tr><td>Motif sequence</td><td>A group of motifs.</td><td>Max motif gap</td></tr>
+</table>
+<p>Results appear in five sub-tabs: <b>Envelope peaks</b>, <b>Pulses</b>, <b>Motifs</b>, <b>Motif Sequences</b> and <b>Summary</b>.</p>
+
+<h2 id="s7-2">7.2 The layout of the tab and the plot</h2>
+<figure><img src="shots/final/f04_temporal.png" alt=""><figcaption>Temporal Analysis after <b>Detect envelope peaks</b>: the envelope with its peaks (orange dots), pulses and motifs, the editing strip, the synchronised spectrogram and the overview strip.</figcaption></figure>
+
+<p>From top to bottom the tab contains the <b>Detection parameters</b> bar and the run buttons, the zoom controls, the plot area, the results tables, and the <b>Selections</b> and <b>Manual Echemes</b> boxes at the bottom.</p>
+<ul>
+<li><b>Plot area.</b> The main canvas shows the envelope, with detections drawn as semi-transparent fills above the line. Below it is a small synchronised spectrogram (tick <b>Spectrogram</b> to show or hide it), which helps distinguish real impacts from noise. Between the two plots sits the <b>editing strip</b> (section 7.4). The overview strip at the bottom lets you click or drag to navigate. Motif and sequence lines are drawn live above the pulses.</li>
+<li><b>Navigation.</b> The mouse wheel zooms time, <code>Shift</code>+wheel zooms amplitude (or use <b>Zoom X</b>, <b>Amp Y</b> and <b>Fit</b>), and dragging pans.</li>
+</ul>
+
+<h2 id="s7-3">7.3 Detecting envelope peaks (route A)</h2>
+<ol>
+<li>Press <b>Detect envelope peaks</b> in the Detection parameters bar (the first time, with the defaults).</li>
+<li>Tune the parameters below. After the first Detect, changing any detection parameter re-runs detection automatically after a short pause. Note that re-detection replaces manual peak edits.</li>
+</ol>
+
+<h3>Envelope peak detection</h3>
+<table>
+<thead><tr><th style="width:28%">Parameter</th><th>Role</th></tr></thead>
+<tr><td>Smooth (ms)</td><td>Smoothing window of the envelope. Larger values merge nearby bumps.</td></tr>
+<tr><td>Envelope peak window (ms)</td><td>Window used to decide that a point is a local maximum.</td></tr>
+<tr><td>Envelope peak threshold (%)</td><td>Minimum prominence of a peak.</td></tr>
+<tr><td>Detection thr. (%) and Auto</td><td>Minimum level for a peak to count. <b>Auto</b> sets it from the background noise: the median plus 3 spreads of the quiet part of the envelope, below 25% of the peak. Typing a value switches Auto off.</td></tr>
+</table>
+
+<h3>Grouping</h3>
+<table>
+<thead><tr><th style="width:28%">Parameter</th><th>Role</th></tr></thead>
+<tr><td>Max envelope peak gap (ms)</td><td>Largest gap between peaks inside one pulse.</td></tr>
+<tr><td>Max amp diff (%)</td><td>Largest amplitude difference between neighbouring peaks of one pulse.</td></tr>
+<tr><td>Min envelope peaks/pulse</td><td>Pulses with fewer peaks are dropped, and their peaks are left unassigned.</td></tr>
+<tr><td>Edge pad (ms/side)</td><td>Expands every pulse on each side to capture the true onset and offset. Pulse rate and peak-timing metrics are unaffected.</td></tr>
+<tr><td>Max pulse gap (ms)</td><td>Pulses closer than this belong to the same motif.</td></tr>
+<tr><td>Max motif gap (ms)</td><td>Motifs closer than this belong to the same motif sequence.</td></tr>
+</table>
+
+<h3>Arch detection</h3>
+<p>In some species the pulses run back to back: the silence between pulses is no longer than the spacing of peaks within one pulse, so gap rules cannot separate them. Tick <b>Split on arches</b> to cut at the valley between amplitude arches.</p>
+<ul>
+<li><b>Valley depth (%)</b> sets how deep a valley must be relative to the crests. Lower values give more splits.</li>
+<li><b>Min pulse (ms)</b> refuses cuts that would make a pulse too short. Blank means it is derived automatically.</li>
+</ul>
+<p>Arch detection runs after the gap rule and only subdivides what that rule produced.</p>
+
+<h3>Spectral parameters</h3>
+<p>These are target frequency resolutions for the spectra of envelope peaks, pulses and motifs. They are in Hz, so they are identical across sampling rates, and they do not affect detection or grouping. Keep them constant across a study. Where a unit is too short for the requested resolution, the coarser resolution actually achieved is reported in <code>spec_res_hz</code>.</p>
+
+<h3>Learn from edits</h3>
+<ol>
+<li>Correct a few pulses by hand.</li>
+<li>Select their peaks (<code>Shift</code>-drag).</li>
+<li>Press <b>Fit to selection</b>. The program searches for the grouping parameters that best reproduce your boundaries.</li>
+<li>Press <b>Apply</b>. Nothing changes until you do.</li>
+</ol>
+<p>Tick <b>incl. envelope peak detection</b> to fit the detection parameters too. It is slower, and Apply then re-runs detection over the whole recording, replacing manual edits.</p>
+
+<h2 id="s7-4">7.4 Editing by hand</h2>
+<figure><img src="shots/final/f05_strip.png" alt=""><figcaption>The editing strip in a narrow window, where the buttons wrap onto several lines: Edit mode buttons first, then the Envelope peak actions. Two envelope peaks are selected, so the actions that apply to them are enabled.</figcaption></figure>
+
+<p>All editing tools are in one narrow, untitled strip of centred buttons between the envelope and the spectrogram, so you can work on the plot without scrolling. Reading left to right, the strip has two groups separated by a thin divider.</p>
+
+<h3>Edit mode (left group)</h3>
+<ul>
+<li><b>↖ Select</b>: click a marker to select it; <code>Shift</code>-drag selects several.</li>
+<li><b>⇔ Merge</b>, next to Select (see below).</li>
+<li><b>➕ Add Envelope peak</b>: click to add a peak snapped to the envelope.</li>
+<li><b>✏ Draw Selections</b>: draw your own temporal selection, independent of peak detection. Choose its type in the menu beside the button (Envelope peak, Pulse (train), Echeme (motif), Motif sequence or Other) and optionally type a label. Pulse-type selections feed the Manual Echemes table. Drag a selection’s edge to resize it.</li>
+<li><b>🗑 Clear draws</b> removes all drawn selections (it can be undone).</li>
+<li><b>↶ Undo</b> steps back the last edit (<code>Ctrl+Z</code>).</li>
+<li><b>🗑 Drop unassigned peaks</b> deletes peaks that belong to no retained pulse.</li>
+<li>The ⓘ icon shows a hint for the current mode.</li>
+</ul>
+<p><b>Split a detection or selection:</b> hold <code>S</code> while the pointer is over the plot. The cursor changes, and a red line shows where the cut would fall. Click to split the item under the pointer at that time. The two halves are separated by a 2 ms gap, and a split that would leave either half shorter than 1 ms is refused. Release <code>S</code> to return to the current tool.</p>
+
+<h3>Envelope peak actions (right group)</h3>
+<p>These buttons act on the selected envelope peaks and are enabled only when they apply.</p>
+<ul>
+<li><b>◀ Assign left / ▶ Assign right</b> move the selected peak(s) to the neighbouring pulse.</li>
+<li><b>⇤ Merge left / ⇥ Merge right</b> close the gap beside one selected peak; <b>✂ Split left / ✂ Split right</b> open it.</li>
+<li><b>▭ Isolate</b> makes the selected peaks into a single pulse.</li>
+<li><b>✕ Remove</b> deletes the selected peak(s).</li>
+<li><b>○ Deselect</b> clears the selection, both the envelope peaks and any detection or drawn selection.</li>
+</ul>
+
+<h3>Merge and Deselect</h3>
+<p><b>⇔ Merge</b> works on both kinds of selection:</p>
+<ul>
+<li>With two or more <b>envelope peaks</b> selected, it joins them into one pulse by closing the gaps between them.</li>
+<li>With two or more <b>detections or drawn selections</b> selected (<code>Ctrl</code>/<code>Shift</code>-click the rows in the Selections list, or <code>Ctrl</code>-click on the plot), it merges them into one. Detections and drawn selections cannot be merged with each other.</li>
+<li>If both kinds are selected, it does both. <code>Ctrl+M</code> still merges detections only.</li>
+</ul>
+<p><b>○ Deselect</b> clears both selections at once and updates the Selections list.</p>
+<div class="note"><b>Going back.</b> Boundary edits cannot be reset to the detected segmentation with one button. Use <b>↶ Undo</b> (<code>Ctrl+Z</code>), or press <b>Detect envelope peaks</b> again to start over (which also discards manual peak edits).</div>
+
+<h3>The Selections and Manual Echemes boxes</h3>
+<p>At the bottom of the tab, the <b>Selections</b> box lists the amplitude detections and the drawn or imported selections. The <b>Manual Echemes</b> box tabulates the Pulse (train) annotations, and <b>Export Temporal Selections</b> saves them (section 7.9). Both belong to the Amplitude Detector and Draw Selections route and are independent of the envelope-peak layer.</p>
+
+<p>Other buttons near the run controls: <b>Clear peaks</b> removes the peaks but keeps the envelope on screen (section 7.6).</p>
+<figure><img src="shots/final/f06b_temporal_selections.png" alt=""><figcaption>The lower part of Temporal Analysis: the results tables and, below them, the <b>Selections</b> list (here filled by the Amplitude Detector) and the <b>Manual Echemes</b> box.</figcaption></figure>
+
+
+<h2 id="s7-5">7.5 Amplitude Detector (route B)</h2>
+<p>Thresholds the envelope directly, with no peaks involved. The parameters are <b>Floor %</b>, <b>Min dur. (ms)</b> and <b>Min gap (ms)</b>. Press <b>Amplitude Detector</b>, in the Detection parameters bar to the right of <b>Detect envelope peaks</b>.</p>
+<p>A dashed light-blue line on the plot marks the Floor % level, and a detection is any stretch where the envelope rises above it. With <b>Detect local minima</b> on, the line becomes a curve, the noise floor plus Floor %. The line appears once there are detections or while the Floor % box is active, and it moves as you type, so you can see the effect before the detector re-runs. The detections can be edited by dragging their edges, merged (<b>Merge</b> or <code>Ctrl+M</code>), split (hold <code>S</code>) and deleted.</p>
+
+<h3>Local noise floor</h3>
+<p><b>Detect local minima</b> finds the lowest points of the envelope within a window (<b>Floor win., ms</b>). Choose a window longer than the spacing between pulses. The minima are joined and smoothed into a bright green curve.</p>
+<ul>
+<li>Afterwards, Floor % becomes an offset above this curve. Reverberation under loud passages then no longer merges elements, while faint parts are still caught.</li>
+<li>The ✕ button removes the curve and returns to a fixed level.</li>
+<li>Changing the window rebuilds the curve.</li>
+</ul>
+
+<h2 id="s7-6">7.6 Computing metrics</h2>
+<table>
+<thead><tr><th style="width:26%">Button</th><th>Use when</th></tr></thead>
+<tr><td>Compute Metrics from Peaks</td><td>You used peak detection (route A). Gives full per-peak, pulse and motif columns.</td></tr>
+<tr><td>Compute Metrics from Pulses</td><td>You have amplitude detections, or drawn or imported selections of type Pulse. Pulses are grouped into motifs by Max pulse gap. Dynamic excursion and maximum amplitude come from the envelope, sampled every 1 ms inside each pulse. Temporal excursion and the per-peak columns are not calculated.</td></tr>
+<tr><td>Clear peaks</td><td>Removes the envelope peaks and the metrics computed from them.</td></tr>
+<tr><td>Clear pulses</td><td>Removes the pulses that Compute Metrics from Pulses uses (amplitude detections, and drawn or imported selections of type Pulse), plus the metrics computed from them. Other selections and the envelope peaks stay. <code>Ctrl+Z</code> undoes it.</td></tr>
+</table>
+
+<h3>Pulse level (both compute buttons)</h3>
+<p>The envelope is used to find the pulses and to time them. The level of each pulse is then measured in the audio samples themselves, between its start and end. It is expressed relative to the <b>median pulse</b> of the same recording, not to the recording’s loudest moment.</p>
+<table>
+<thead><tr><th style="width:20%">Column</th><th style="width:11%">Sheet</th><th>Meaning</th></tr></thead>
+<tr><td><code>rms_db_rel</code></td><td>Pulses</td><td>The pulse’s RMS level relative to the median pulse RMS of the recording, in dB. 0 = a typical pulse, +3 = an accented one, −6 = a pulse at half the amplitude.</td></tr>
+<tr><td><code>peak_db_rel</code></td><td>Pulses</td><td>The pulse’s largest sample relative to the median pulse peak, in dB.</td></tr>
+<tr><td><code>crest_db</code></td><td>Pulses</td><td>Peak ÷ RMS within the pulse, in dB. Low for an even, sustained pulse (a pure tone gives 3 dB), high for an impulsive one.</td></tr>
+<tr><td><code>peak_dbfs</code></td><td>Pulses</td><td>The absolute peak in dB re full scale (0 = the loudest value the file can hold). A check for clipping only: it depends on gain and distance, so Summarize and Summary Analysis ignore it.</td></tr>
+<tr><td><code>level_sd_db</code></td><td>Motifs</td><td>How unevenly loud the motif’s pulses are: the standard deviation of their <code>rms_db_rel</code>. Empty for a motif of one pulse.</td></tr>
+<tr><td><code>level_range_db</code></td><td>Motifs</td><td>Loudest minus quietest pulse of the motif, in dB.</td></tr>
+</table>
+
+<p><b>Why this is more robust than</b> <code>mean_amp</code> <b>and</b> <code>max_amp</code>:</p>
+<ul>
+<li><code>mean_amp</code> and <code>max_amp</code> are read from the envelope, which is scaled so that the recording’s single loudest point is 1. A click, a louder neighbour or the animal moving closer to the microphone therefore lowers every pulse’s value, although the song has not changed.</li>
+<li>The median of all pulses hardly moves with one such event. Because each value is a ratio within the recording, recorder gain and microphone distance cancel out.</li>
+<li>RMS uses every sample of the pulse, so one clipped sample or click inside a pulse changes it little.</li>
+<li>The values do not depend on the Smooth setting.</li>
+</ul>
+<p><code>mean_amp</code> and <code>max_amp</code> are still exported, for compatibility with earlier workbooks. For comparing recordings or species, use <code>level_sd_db</code> and <code>level_range_db</code> (Motifs), which are in Summary Analysis’s suggested set.</p>
+
+<h2 id="s7-7">7.7 Importing earlier work</h2>
+<ul>
+<li><b>Import Peaks</b> loads the Envelope peaks sheet of an earlier export and restores the peaks and pulse boundaries exactly, including hand edits, without re-running detection. It needs the matching audio.</li>
+<li><b>Import Pulses</b> loads the Pulses sheet (<code>pulse_start</code>, <code>pulse_end</code>) as Pulse selections. Then use Compute Metrics from Pulses.</li>
+</ul>
+
+<h2 id="s7-8">7.8 Parameter presets</h2>
+<p><b>Parameter Presets</b> offers a built-in Acrididae preset (Smooth 50 ms, Floor win. 50 ms) and ten user slots stored on this machine (<b>Save</b>, <b>Load</b>, <b>Delete</b>). <b>Export file…</b> / <b>Import file…</b> use a <code>.json</code> that can be copied to another computer. Presets include the Amplitude Detector settings, and loading one recomputes the envelope immediately.</p>
+
+<h2 id="s7-9">7.9 Sending results on, and exporting</h2>
+<ul>
+<li><b>Apply to Spectral Analysis</b> sends pulses or motifs (choose with <b>Apply as</b>) as selections to the Spectral tab, however they were found. If some detections are selected, only those are sent. A repeated Apply replaces the previous one.</li>
+<li><b>Apply motifs to Annotate</b> sends one selection per motif, labelled with the recording’s Species and delimited in frequency by the power-spectrum threshold.</li>
+<li><b>Export CSV</b> exports the current table. <b>Export All (Excel)</b> exports one workbook with the sheets Envelope peaks, Pulses, Motifs, MotifSeqs and Summary.</li>
+<li><b>Export Temporal Selections</b> (Manual Echemes) exports the amplitude detections and manual annotations as one chronologically numbered list. It includes echeme statistics (TE/DE/PCI) from any Pulse (train) annotations.</li>
+</ul>
+<p>Short notices appear at the bottom-right of the window for problems such as no peaks detected, no pulses with enough peaks, or a failed import.</p>
+
+<h1 id="c8">8. Spectral Analysis</h1>
+<p>Shows the waveform and spectrogram of the active recording, lets you create and edit selections, and measures their frequency content.</p>
+
+<h2 id="s8-1">8.1 Display</h2>
+<figure><img src="shots/final/f07_spectral.png" alt=""><figcaption>Spectral Analysis: the selection tools and import buttons on top, then the waveform, the spectrogram, the playback bar and the measurement controls.</figcaption></figure>
+
+<ul>
+<li><b>Playback bar:</b>
+<ul>
+<li>Play/Stop, and jumps between selection edges.</li>
+<li><b>Speed:</b> 1–400% of real time. Slowing playback lowers the pitch, bringing ultrasonic song into hearing range. At 1%, a 120 kHz carrier plays at about 1.2 kHz, but playback takes 100× as long.</li>
+<li><b>Freq drop:</b> lowers the pitch for listening only, without stretching time.</li>
+<li>The recording’s duration, sample rate, Nyquist frequency and channels.</li>
+</ul></li>
+<li><b>Drop-down menus:</b>
+<ul>
+<li><b>Spectrogram:</b> contrast in dB, brightness, FFT size 128–8192, and colour map (Inferno, Viridis, Hot, Cyan-Magenta, Gray).</li>
+<li><b>Grid.</b></li>
+<li><b>Envelope &amp; Floor:</b> RMS window, Floor %.</li>
+<li><b>Show:</b> envelope, spectrogram, waveform, selections, detections.</li>
+</ul></li>
+</ul>
+<p>Neither Speed nor Freq drop changes the stored audio, measurements or exports. Waveform and spectrogram heights are adjustable by dragging their handles. Scroll zooms time; <code>Ctrl</code>+scroll zooms frequency.</p>
+
+<h2 id="s8-2">8.2 Selections</h2>
+<p>The collapsible <b>Detection &amp; selection tools</b> row contains:</p>
+<ul>
+<li>the tools <b>Select</b> (<code>S</code>), <b>Draw Selections</b> (<code>A</code>) and <b>Pan</b> (<code>H</code>);</li>
+<li><b>Temporal only</b>, which ignores vertical drag so selections cover the whole frequency axis;</li>
+<li><b>Undo</b>, <b>Selections</b> (download a Raven table) and <b>Clear Spectrogram</b>;</li>
+<li>the import buttons (section 5.1) and the selections list.</li>
+</ul>
+<p>Selections created elsewhere (in Temporal Analysis) arrive here as well.</p>
+
+<h2 id="s8-3">8.3 Measuring</h2>
+<ol>
+<li>Set <b>Measure res. (Hz)</b>, the frequency resolution used for measurements, independent of the display FFT. The program picks the next power-of-two FFT that reaches at least this resolution.</li>
+<li>Press <b>Spectral Metrics</b>. A table of per-selection (or per-detection) values appears under Detections &amp; Measurements, with summary statistics.</li>
+<li>Save or inspect the results:
+<ul>
+<li><b>Export All (Excel)</b> saves the workbook.</li>
+<li><b>Export Text Report</b> saves a plain-language narrative (DOCX).</li>
+<li><b>Explain Metrics</b> shows a description of every column, also downloadable as DOCX.</li>
+<li><b>Clear Measurements</b> empties the table.</li>
+</ul></li>
+</ol>
+<p><b>Export detections</b> writes the amplitude detections and manual selections to a workbook. <b>Apply motifs to Annotate</b> is also available here.</p>
+<p>The frequency features and their definitions (peak frequency, bandwidth, centroid, entropy, flatness, etc.) are documented in the Rthoptera paper and in the in-app Explain Metrics window. <i>(Provisional: a complete column dictionary will be added to this manual.)</i></p>
+
+<h1 id="c9">9. Annotate</h1>
+<p>Annotate labels the motifs of one species at a time with a time span and a frequency band, then exports them in Raven or Xeno-canto formats. The idea is to mark the time span on the waveform, set the frequency band on the power spectrum of that span, and add a selection.</p>
+
+<h2 id="s9-1">9.1 Defining a selection</h2>
+<figure><img src="shots/final/f08_annotate.png" alt=""><figcaption>Annotate: the waveform, the spectrogram and the power spectrum of the marked span, with the readout, band and detection controls on the right.</figcaption></figure>
+
+<ol>
+<li>Type the <b>Species</b>. You type it once; afterwards it is offered from a list.</li>
+<li>On the waveform, drag to set the time span. <code>Shift</code>+drag pans, the wheel zooms, and a click clears the span.</li>
+<li>On the power spectrum, drag horizontally to set the band, or let it be derived automatically:
+<ul>
+<li><b>Search Hz:</b> set it above wind and handling rumble, or the band will collapse towards DC.</li>
+<li><b>Threshold:</b> the band edges lie this many dB below the spectrum peak. 20 dB is the usual convention.</li>
+<li><b>Edges:</b> <i>outer</i> uses the outermost crossings, harmonics included; <i>around peak</i> uses one lobe around the carrier.</li>
+<li><b>auto</b> re-derives the band when the selection changes. <b>lock</b> freezes it for every later selection and recording.</li>
+<li>To set exact edges, type them in <b>Band Hz</b> and press <b>Apply</b>.</li>
+</ul></li>
+<li>Press <b>Add selection</b> (or <code>Enter</code> / <code>A</code>). Other controls: <b>Undo</b>, <b>Clear span</b> (<code>Esc</code>), <b>Delete</b> (<code>Del</code>), <b>Zoom to span</b>.</li>
+</ol>
+<p>The spectrogram shows the boxes, but they are not drawn there. Click a box to select it and adopt its label and band. Drag a box’s left or right edge to change its start or end. The Spectrum window size is deliberately not the finest available, because the band should describe the species, not one individual or microphone.</p>
+
+<h2 id="s9-2">9.2 Saving bands</h2>
+<p><b>Save band</b> writes a <code>.band.json</code>. It is refused when the band was derived from the whole view: in a recording holding two species, that band belongs to neither. <b>Load band…</b> adopts a saved band, locked.</p>
+
+<h2 id="s9-3">9.3 Detect motifs in the band</h2>
+<p>With a band defined, <b>Detect in view</b> or <b>Detect in span</b> finds motifs in the band-limited envelope. A second species elsewhere in the spectrum therefore cannot fuse its sounds into these motifs. The parameters are:</p>
+<ul>
+<li><b>Smooth (ms)</b></li>
+<li><b>Threshold %</b>, relative to the loudest moment in the stretch searched</li>
+<li><b>Gap (ms)</b>, the silence that splits one motif from the next</li>
+<li><b>Min dur (ms)</b></li>
+</ul>
+<p>Re-running skips any motif that is already more than half covered by an existing selection of the same species.</p>
+
+<h2 id="s9-4">9.4 Managing selections</h2>
+<ul>
+<li><b>Rename all</b> renames a species. This is also how selections that arrived from Spectral Analysis or a Raven import get a real name.</li>
+<li>In the Selections list: <b>check all</b>, <b>Delete checked</b>, <b>Relabel checked</b> (set the species of the checked items), <b>Apply band</b> (set the current band on the checked items).</li>
+</ul>
+
+<h2 id="s9-5">9.5 Export</h2>
+<p>Choose a format:</p>
+<ul>
+<li>Raven selection table (<code>.txt</code>)</li>
+<li>Raven + Begin File / File Offset</li>
+<li>Xeno-canto annotation set (<code>.json</code>)</li>
+<li>Generic CSV (s / Hz)</li>
+</ul>
+<p>For Xeno-canto, enter the recording number (digits only; it is filled in from a file name containing <code>XC…</code>), the annotator name, and the optional fields applied to every annotation. Tick <b>checked only</b> to export a subset. The defaults come from Preferences → Default metadata.</p>
+
+<h1 id="c10">10. Plotting</h1>
+<p>Six sub-tabs produce publication figures. Most have Draw/Render plus SVG and PNG downloads. SVG is vector, editable in Illustrator or Inkscape, and what most journals prefer. Presets save layout settings.</p>
+
+<h2 id="s10-1">10.1 Multiplot</h2>
+<figure><img src="shots/final/f09_plotting.png" alt=""><figcaption>Plotting, <b>Multiplot</b>, after <b>Render</b>: waveform, spectrogram and power spectrum of one window. The settings are in the panel on the right.</figcaption></figure>
+
+<p>Waveform + spectrogram + power spectrum for one time/frequency window.</p>
+<ul>
+<li><b>Window and axes:</b> Tmin/Tmax and Fmin/Fmax (<b>↔ view</b> and <b>↕ view</b> copy the current analyser view), time unit and tick steps.</li>
+<li><b>Image:</b> colormap, contrast, brightness, and scale (dB or linear).</li>
+<li><b>Figure:</b> width, height and DPI (72–288), title and font.</li>
+<li><b>Sections:</b> Figure Layout (spectrogram/waveform ratio, power-spectrum width, noise floor), FFT (automatic window length, or an override of 256–16384, with overlap 75/87.5/93.75%), Colors, Power Spectrum, Grid, Typography, and a Parameters stamp.</li>
+</ul>
+<p>Press <b>Render</b>, then <b>PNG</b>. Presets: 10 slots, plus Export/Import of a <code>.json</code> file.</p>
+
+<h2 id="s10-2">10.2 Osc. Stack</h2>
+<p>Stacks the oscillograms of several recordings: tick them in Loaded Audio, then press <b>Add selected</b>.</p>
+<ul>
+<li><b>Controls:</b> axis buffer, time axis (defaults to the longest wave plus the buffer), scale bar, trace colour and width, row height, trace labels, and per-wave normalization.</li>
+<li><b>Extras:</b> Add letters (panel letters), Add annotation, and symbols (♂ / ♀).</li>
+<li><b>Labels:</b> click a label to select it; use <code>Shift</code>/<code>Ctrl</code> or a rectangle drag to select several. Drag or use the arrow keys to move labels, and double-click to edit their text. A <b>Selected label style</b> box sets the font, size, thickness and colour.</li>
+</ul>
+
+<h2 id="s10-3">10.3 Osc. Zoom</h2>
+<p>Shows one wave with zoomed panels. Drag across any panel to open that slice below it, up to <b>Maximum panels</b>. The options are:</p>
+<ul>
+<li>panel height;</li>
+<li><b>Context padding (%)</b>, the extra audio shown on each side of a selection;</li>
+<li>time reference (scale bar or axis);</li>
+<li>scale-bar length per panel (Set, Auto, All panels);</li>
+<li><b>Rescale each panel to its own peak</b>.</li>
+</ul>
+<p><b>Reset zoom</b> clears the panels. Presets store the sidebar settings only; panel ranges and label text belong to the recording.</p>
+
+<h2 id="s10-4">10.4 Auto-coded Oscillogram (CETPE)</h2>
+<p>An oscillogram whose colour marks where chosen frequency bands rise above a pressure threshold (after Brizio 2023). Please cite Brizio (2023) for any figure made here; a <b>Copy citation</b> button is provided.</p>
+<ol>
+<li><b>Analysis:</b> FFT size (time resolution is nfft/fs) and overlap. <b>Rendering:</b> 2-colour (one contrasting colour) or Multicolour with 6/12/24 bands, each band mapped to one bit of the 24-bit RGB triplet. Press <b>Analyze</b>.</li>
+<li><b>Frequency window:</b>
+<ul>
+<li><b>FRB</b> and <b>FRT</b> (Frequency Range Bottom/Top, Hz). <b>Full recorded band</b> resets them.</li>
+<li><b>FRPT</b> (dBFS) is the pressure threshold at which a band counts as present. Changing it recolours instantly.</li>
+<li>Changes to FRB, FRT or the FFT need a new Analyze.</li>
+</ul></li>
+<li><b>Pressure range</b> (optional): restrict colour to columns whose overall level lies between PRB and PRT.</li>
+<li><b>Figure:</b> toggle the reference oscillogram, reference spectrogram, band→colour legend and parameter caption; set heights, colours and spectrogram options.</li>
+<li><b>Redraw.</b> Export SVG/PNG (with a scale factor) or <b>Coloured regions (CSV)</b>, a table of contiguous coloured intervals with the bands that lit them.</li>
+</ol>
+<p>On the figure: drag to zoom, and use the wheel to zoom or <code>Shift</code>+wheel to pan. Click to place the playhead, and press <code>Space</code> to play. A live indicator lights when the playhead is over a highlighted column. Double-click or press <code>Home</code> to show the whole recording. Presets can be exported and imported as <code>.json</code>.</p>
+
+<h2 id="s10-5">10.5 Habitus</h2>
+<p>Combines a photo of the animal with a waveform, a spectrum and labelled selections:</p>
+<ol>
+<li>Pick the wave, the window length and the opacity.</li>
+<li>Drag on the oscillogram to brush a stretch.</li>
+<li>Name it (closing, opening, male, female or custom) and press <b>Add selection</b>.</li>
+</ol>
+<p>Export a PNG, an SVG or the spectra as CSV, and set a file prefix. <i>(Provisional: this module is documented only briefly.)</i></p>
+
+<h2 id="s10-6">10.6 Multi-Mean Spectra</h2>
+<p>Tick the recordings to average in Loaded Audio; there is no separate add step.</p>
+<ul>
+<li><b>Spectrum options:</b> window length (128–8192), overlap, window function (hanning, hamming, blackman, bartlett, flattop, rectangle), scale (linear, dB, dBFS), frequency limits and step, minimum amplitude, and <b>Normalize each recording before averaging</b>.</li>
+<li><b>Contour + Band</b> draws the central statistic (mean or median) with a band of ± N×SD, in the colours and opacity you choose.</li>
+<li>An optional habitus photo can be added, and the A/B letters dragged.</li>
+</ul>
+<p>All recordings must share the same sampling rate. Exports: PNG, SVG, spectra CSV.</p>
+
+<h1 id="c11">11. Summarize and Summary Analysis</h1>
+<p>This tab needs no audio. It pools the Excel exports of many recordings into species-level statistics.</p>
+
+<h2 id="s11-1">11.1 Summary sub-tab</h2>
+<figure><img src="shots/final/f10_summarize.png" alt=""><figcaption>Summarize, <b>Summary</b> sub-tab before any files are added: source files and options on the left, pooled summary, summary plots and text report on the right.</figcaption></figure>
+
+<ol>
+<li><b>Source files:</b> <b>Add Excel Files</b> loads the Temporal and/or Spectral Analysis <code>.xlsx</code> exports of each recording (and the STR export, section 14). The Specimen ID tagged at export is read automatically. If it is missing or wrong, edit it on the file’s card: this is what groups recordings by animal. <b>Clear all</b> empties the list.</li>
+<li>(Optional) <b>Temperature regression:</b> enter a reference temperature in °C. Every metric is regressed on the temperatures actually recorded (least squares) and expressed at the reference temperature. This adds a corrected mean/SD beside each observed one, a bracketed figure in the report and <code>Temp_Regression</code> sheets in the workbook. The <b>Temperature response</b> section starts collapsed, since it is not the main output.</li>
+<li><b>Range brackets:</b> choose ( ) or [ ] for the min–max ranges in the LaTeX/Word convenience columns. These columns are Excel formulas, so to switch, change the setting and save again.</li>
+<li>(Optional) <b>Structure selections:</b> summarize a named subset of structures separately, such as the first pulse of every echeme, odd-numbered strokes or the last pulse.
+<ul>
+<li>Positions are counted inside each parent structure, per recording.</li>
+<li>Gap levels (for example 1-2, 3-4, or odd/even on “Gaps between pulses within each echeme”) select silences.</li>
+<li>Run levels treat several structures as one sound. For example, a disyllabic species is “Syllables (runs of pulses)” with runs of 2, measured from the first onset to the last offset. Runs must be complete; leftovers are reported as left over.</li>
+<li>Each selection gets its own rows, sheets and report paragraph. With none defined, everything is summarized together.</li>
+</ul></li>
+<li>Press <b>Merge &amp; Summarize</b>. The outputs are a pooled summary (counts and mean ± SD per metric), summary plots, a summary table by specimen, temperature response plots (SVG, PNG 300 dpi) and a text report.</li>
+<li><b>Save Merged Workbook</b> writes the merged <code>.xlsx</code>. <b>Save Text Report (DOCX)</b> writes a draft narrative.</li>
+</ol>
+
+<h3>Summary plots</h3>
+<p>Summary plots replace the former summary table. Pick a table and a variable to see one bar chart per measurement: mean ± SD for <b>All rows</b>, for each <b>individual</b> (Specimen ID) or for each <b>species</b>. Tick or untick groups to show, filter the variables, and optionally show values corrected to a common temperature. The numbers are still available under <i>Numbers as a table</i>.</p>
+
+<h3>Corrections and what is summarized</h3>
+<ul>
+<li><b>Corrections on the file cards win.</b> A Specimen ID, Species, Country or Locality typed on a card (or pasted as metadata) overrides the value in the file’s rows. Fixing a typo such as <code>CHAO35</code> → <code>CHA035</code> merges the two specimens.</li>
+<li><b>Only song measurements are summarized.</b> Recording metadata (latitude, longitude, elevation, date, time, recorder, microphone) and the spectral settings (<code>spec_signal_ms</code>, <code>spec_res_hz</code>, <code>spec_bin_hz</code>) are not treated as variables, in Summarize or in Summary Analysis.</li>
+<li>In older workbooks, the <code>props_ent</code>, <code>props_cv</code> and <code>pci</code> columns of the Manual Echemes sheet are automatically renamed <code>props_ent_syl</code>, <code>props_cv_syl</code> and <code>pci_syl</code> on import.</li>
+</ul>
+
+<h2 id="s11-2">11.2 Summary Analysis sub-tab (compare species)</h2>
+<p>Run Merge &amp; Summarize first, then open Summary Analysis. Every section has a ▾ button to fold it.</p>
+
+<h3>Variables and species</h3>
+<p>There is one observation per recording or specimen. Each observation is the mean of every chosen variable over its rows.</p>
+<ul>
+<li><b>Tables</b> (Motifs, Pulses, EnvPeaks, Spectral, MotifSeqs, STR, STR rep.) set where the variables come from. The default is the motif level, because the same measurement averaged at several levels is nearly the same number repeated, which over-weights it. Add Pulses or EnvPeaks for things the motif row lacks, such as pulse gaps.</li>
+<li><b>Drop near-duplicates</b> (correlated above a threshold) keeps, of each group of correlated variables, the one that separates species best. <b>Suggested set</b>, <b>All</b> and <b>None</b> are shortcuts. <b>All spectral</b> / <b>all temporal</b> tick or untick every spectral (frequencies, bandwidths, Q, <code>spec_*</code>) or temporal variable at once, across all tables.</li>
+<li><b>Species shown</b> (All / First 6 / None), and <b>Names and labels</b> to rename recordings or species.</li>
+<li><b>Adjust for temperature</b> to a reference °C, within species, optionally only for variables with a significant slope (p &lt; 0.05). The variable ranking has a Temp. R² column.</li>
+<li><b>Reload from merged data</b>, <b>Reset analysis</b>, <b>Save settings / Load settings…</b> (<code>.json</code>).</li>
+</ul>
+
+<h3>Analyses</h3>
+<table>
+<thead><tr><th style="width:24%">Output</th><th>What it shows</th></tr></thead>
+<tr><td>Run analysis</td><td>Computes everything below. <b>Scores, loadings &amp; relevance (CSV)</b> exports the numbers.</td></tr>
+<tr><td>PCA biplot</td><td>Choose the X/Y components, with optional 1σ/1.5σ/2σ ellipses and loadings. Labels are spread so they do not overlap each other or sit behind the axis labels, with leader lines where a label had to move. A menu shows only the 5, 10, 15 or 20 longest arrows. PNG/SVG.</td></tr>
+<tr><td>3D PCA</td><td>PC1–PC3 with 1.5σ ellipsoid outlines (needs 3+ variables). A species ellipsoid is drawn from 3 recordings, matching the 2D plot. Hover over or click points for recording IDs. Export a PNG or an interactive HTML page that works offline. The biplot and the 3D PCA sit side by side.</td></tr>
+<tr><td>Radar profiles</td><td>Each variable is scaled 0–1. The line is the species mean and the band is ±1 SD. <b>Radial labels</b> (also on the Compare radar) turns each variable name along its spoke, so long or many names do not overlap.</td></tr>
+<tr><td>Which variables separate the species?</td><td>η² (the share of variance explained by species, from a one-way ANOVA) and F for each variable. Variables are tested one at a time, so correlated variables rank similarly. The ranking sits to the right of the radar profiles and can be saved as a figure (PNG or SVG): a ranked bar chart of η² with F for each variable.</td></tr>
+<tr><td>Compare recordings or species</td><td>Pick 2–6 items for a side-by-side radar and a table of real values and ratios, no taller than the radar and with its own scrollbar. PNG / SVG save the radar; <b>Table (Excel)</b> saves the table as <code>compare_table.xlsx</code>, with each item’s mean, SD and number of recordings in separate columns at full precision, plus the ratio column and a sheet naming the items.</td></tr>
+<tr><td>Leave-one-out test</td><td>Classifies each observation from all the others, using Mahalanobis distance and LDA. Leaving out the whole specimen is the stricter, more honest test.</td></tr>
+<tr><td>Species profiles and knowledge base</td><td>(1) <b>Extract species profiles</b> (mean and spread per species). (2) Save them to, or load, a knowledge base file. (3) <b>Compare with knowledge base:</b> place a new song among the known species and see the closest by LDA or Mahalanobis distance.</td></tr>
+</table>
+
+<h3>The STR tables</h3>
+<p>The <b>STR</b> table holds the 52-number STR fingerprint of each recording (section 14.4), which Summarize reads from the <code>STR_fingerprint</code> sheet of an STR export. The <b>STR rep.</b> table holds the species representatives from the STR module, one row per species, so the species themselves are the observations. Use them to describe and compare species (radar, Compare, PCA, Compare with knowledge base). The leave-one-out test and species profiles need several recordings per species and explain this instead of running on STR rep.</p>
+
+<div class="prov"><b>Provisional.</b> Summary Analysis is new (0.7.3) and still being refined. Treat classification accuracy from small samples with caution, and avoid pseudo-replication: several recordings of one animal are not independent observations.</div>
+
+<h1 id="c12">12. Custom Workflow <span class="tag">NEW</span></h1>
+<figure><img src="shots/final/f11_workflow.png" alt=""><figcaption>The Custom Workflow tab with no saved workflows. Each saved workflow appears here as a card.</figcaption></figure>
+
+<p>A workflow is a recorded sequence of analysis steps plus the list of metrics you want. Once saved, it can be replayed on the active recording or on every checked recording. The export then contains only the metrics you ticked, not every default column of Temporal and Spectral Analysis.</p>
+
+<h2 id="s12-1">12.1 Recording a workflow</h2>
+<ol>
+<li>Load and activate a representative recording.</li>
+<li>Press <b>⏺ Record Workflow</b> at the right end of the main tab row. The button changes to <b>⏹ Stop Workflow (n)</b>, where <i>n</i> counts the steps stored so far.</li>
+<li>Work as usual in Preprocessing, Temporal Analysis and Spectral Analysis. Include at least one metrics step (Compute Metrics or Spectral Metrics), so there are metrics to choose from.</li>
+<li>Press <b>Stop Workflow</b>. The Save workflow window opens:
+<ul>
+<li><b>Workflow name</b> (default “Workflow 1”, “Workflow 2”, …).</li>
+<li>A summary of the recorded steps.</li>
+<li><b>Metrics to calculate:</b> every column of the tables computed during recording, grouped under Temporal Analysis (Envelope peaks, Pulses, Motifs, MotifSeqs, Summary) and Spectral Analysis. Each table has <i>all / none</i> shortcuts. At least one metric must be ticked.</li>
+</ul></li>
+<li>Confirm to save it, or close the window to discard it. Saving under an existing name asks before replacing it.</li>
+</ol>
+<p>Steps that are recorded are the parameter-driven actions:</p>
+<ul>
+<li><b>Preprocessing:</b> Bandpass filter, Fix DC offset, Normalize, Frequency drop, Downsample, Noise padding, Fade.</li>
+<li><b>Temporal Analysis:</b> Detect local minima, Detect envelope peaks, Amplitude Detector, Clear detections, Apply to Spectral Analysis, Compute metrics from peaks / pulses.</li>
+<li><b>Spectral Analysis:</b> Spectral metrics.</li>
+</ul>
+<p>With each step, the parameter boxes that changed since the previous step are stored too, so a replay reproduces the settings as well as the clicks.</p>
+<div class="warn">Anything that depends on drawing or dragging on a plot is not replayed: Trim, time selections, Vanish/Delete, hand-edited peaks and drawn selections. Use parameter-driven steps when you want a workflow to transfer to other recordings.</div>
+
+<h2 id="s12-2">12.2 Running a workflow</h2>
+<p>Open the Custom Workflow tab. Each saved workflow is shown as a card with its date, its steps and the number of metrics kept per table.</p>
+<ul>
+<li><b>▶ Run on active recording</b> replays the steps on the active recording.</li>
+<li><b>▶ Run on checked (n)</b> replays them on every recording checked in Loaded Audio, one after another.</li>
+<li><b>Rename</b> and the delete button manage the list.</li>
+</ul>
+<p>When the run finishes, one Excel workbook is saved as <code>Rthoptera_&lt;workflow name&gt;_&lt;date-time&gt;.xlsx</code>. It has one sheet per table, and the rows of all the recordings are stacked. Every row keeps the identifying columns (<code>source_file</code>, specimen ID, species and the recording metadata) besides the ticked metrics.</p>
+<p>Workflows are stored on this computer, in the app’s own storage. <i>(Provisional: there is no export/import of workflows yet.)</i></p>
+
+<h1 id="c13">13. Clustering <span class="tag">NEW</span></h1>
+<p>Groups recordings by how they sound to Google Perch 2.0, a neural network trained on a very large collection of animal sounds, without using any of the usual acoustic metrics. Perch turns each 5-second stretch of audio into a list of 1536 numbers (an <i>embedding</i>). Sounds that are similar get similar lists. The module compares these lists, groups the units that resemble each other, and draws the result as a 3D map. This is useful for sorting a large, unlabelled set of recordings, or for checking whether recordings assigned to one species really sound alike.</p>
+
+<h2 id="s13-1">13.1 Loading the model</h2>
+<figure><img src="shots/final/f12_cluster.png" alt=""><figcaption>The Clustering tab before a model is loaded.</figcaption></figure>
+
+<p>Press <b>Load Perch model (.onnx)</b> and choose a single-file Perch 2.0 export in ONNX format. The model runs locally, inside the app, and no audio is sent anywhere. The status line shows the loaded file. The model must be loaded again after the app restarts.</p>
+
+<h2 id="s13-2">13.2 What gets clustered</h2>
+<ul>
+<li>The units are the <b>selections</b> of a recording, when it has any. Selections exist only on the active recording, because they are cleared when another one is opened. Every other recording is cut into consecutive 5 s windows. A selection shorter than 5 s is repeated to fill the window.</li>
+<li>The <b>checked</b> recordings are used; if none is checked, the active one is used.</li>
+<li>Perch reads audio at 32 kHz, so it hears up to 16 kHz only. For ultrasonic insects, set <b>Slow-down ×</b>: the recording is treated as if it had been recorded N times slower, shifting the sound into Perch’s range. 1 means no slow-down (plain resampling to 32 kHz). Use the same value for every recording you want to compare.</li>
+<li>At most 2500 units can be clustered in one run.</li>
+</ul>
+
+<h2 id="s13-3">13.3 Running</h2>
+<ol>
+<li>Optionally set <b>Clusters (k)</b>. Leave it empty to let the program choose the number of clusters, up to <b>Max k</b> (default 12), by the best silhouette score.</li>
+<li>Press <b>▶ Cluster checked recordings</b>. The units are grouped by agglomerative clustering (average linkage, cosine distance). The status line reports the number of units, the number of clusters and the silhouette score.</li>
+</ol>
+
+<h2 id="s13-4">13.4 Reading the result</h2>
+<ul>
+<li><b>3D map:</b> each dot is one unit. Dots that are close together sound alike to Perch.
+<ul>
+<li>Drag to rotate, use the wheel to zoom, and double-click (or press <b>Reset view</b>) to reset the view.</li>
+<li><b>Projection:</b> PCA is instant and preserves the overall layout. UMAP and t-SNE separate groups more clearly but take longer. All three work offline.</li>
+<li><b>Colour by:</b> Cluster, Recording, Sample rate or Species. If a cluster coincides with one recording or one sample rate rather than with a species, it may reflect recording conditions rather than the animal.</li>
+</ul></li>
+<li>Click a point (or a row of the table) to play the unit and show its spectrogram beside the map. The page does not scroll.</li>
+<li>The table lists every unit with its recording, start and end, cluster, sample rate and species.</li>
+<li><b>Label selections</b> writes “cluster N” into the label of each selection of the active recording.</li>
+<li><b>⬇ Export (Excel)</b> saves one row per unit (recording, unit type, start, end, cluster, sample rate, species and the 3D coordinates of the current projection), plus a sheet with the model, the number of clusters, the silhouette score, the slow-down and the clustering method.</li>
+</ul>
+<div class="prov"><b>Provisional.</b> Clusters are groups of sounds that resemble each other to the network; they are not species identifications. Check them by listening and with the spectrogram before drawing conclusions.</div>
+
+<h1 id="c14">14. STR (Simplified Temporal Representation) <span class="tag">NEW</span></h1>
+<p>STR reduces each recording to two things:</p>
+<ol>
+<li>its <b>dominant frequency</b>, measured with a long analysis window and averaged over all the pulses, so a single noisy moment cannot move it;</li>
+<li>a <b>barcode of its pulses</b>: one bar per pulse, placed at its true time. The bar’s width is the pulse duration, its height is the pulse’s maximum amplitude, and the gaps between bars are the silences.</li>
+</ol>
+<p>Together these form the <b>STR vector</b>: <code>[dominant frequency, duration₁, amplitude₁, gap₁, duration₂, amplitude₂, …]</code>. The vector has a variable length (it grows with the number of pulses). It is a compact description of a song’s rhythm and pitch. From it the module also computes a <b>fixed-length fingerprint</b>, for comparing and pooling songs, and a <b>Representative STR</b>, one consensus song per species.</p>
+
+<h2 id="s14-1">14.1 Parameters</h2>
+<table>
+<thead><tr><th style="width:30%">Parameter</th><th>Role</th></tr></thead>
+<tr><td colspan="2" class="subhead">Dominant frequency</td></tr>
+<tr><td>Window (ms)</td><td>Length of each spectrum window (default 50). Longer windows give a finer, steadier peak.</td></tr>
+<tr><td>Smoothing (Hz)</td><td>The averaged spectrum is smoothed over this width (default 1000) before the peak is taken, so the result follows the main band rather than a single spike.</td></tr>
+<tr><td>Search from (kHz)</td><td>Ignore everything below this frequency (default 1), such as wind and handling noise.</td></tr>
+<tr><td colspan="2" class="subhead">Pulses</td></tr>
+<tr><td>Band-limit ± (kHz)</td><td>Before looking for pulses, keep only this much on either side of the dominant frequency (default 3), so noise outside the song does not count. 0 = use the whole band.</td></tr>
+<tr><td>Envelope step (ms)</td><td>Time resolution of the amplitude envelope (default 0.25). Pulse starts and ends are accurate to about this much.</td></tr>
+<tr><td>Threshold (dB below peak)</td><td>A pulse is any stretch whose envelope stays above this level, measured down from the loud end of the recording (default 20).</td></tr>
+<tr><td>Min pulse (ms)</td><td>Shorter blips are discarded (default 1).</td></tr>
+<tr><td>Join gaps shorter than (ms)</td><td>Two stretches separated by less than this are one pulse (default 0.5).</td></tr>
+<tr><td colspan="2" class="subhead">Grouping and display (changing these redraws instantly, without recomputing)</td></tr>
+<tr><td>Echeme gap (ms)</td><td>Pulses closer together than this belong to the same echeme (default 100).</td></tr>
+<tr><td>Normalise per</td><td><i>echeme</i> or <i>song</i>: bar heights are divided by the loudest pulse of each echeme, or of the whole song.</td></tr>
+</table>
+
+<h2 id="s14-2">14.2 Running and reading the result</h2>
+<figure><img src="shots/final/f13_str.png" alt=""><figcaption>STR after <b>Compute STR</b>: the parameters on top, the barcode of pulses, the averaged spectrum with the dominant frequency, the STR vector and, at the bottom, the STR fingerprint.</figcaption></figure>
+
+<ol>
+<li>Check the recordings in Loaded Audio. If none is checked, the active one is used.</li>
+<li>Press <b>▶ Compute STR for checked recordings</b>.</li>
+<li>The table on the right lists each recording with its dominant frequency (kHz), number of pulses and number of echemes. Click a row to show that recording.</li>
+<li>The barcode plot shows the pulses. <b>View</b> switches between the whole song and one echeme at a time.</li>
+<li>Below the barcode, the averaged spectrum shows the dominant frequency as the marked peak, and the STR vector box shows the vector. <b>Copy</b> puts it on the clipboard.</li>
+<li>Below that, the STR fingerprint is drawn as a strip of bars (section 14.4).</li>
+<li><b>⬇ Export (Excel)</b> saves <code>Rthoptera_STR_&lt;date-time&gt;.xlsx</code> with the sheets <code>STR_summary</code>, <code>Pulses</code> (one row per pulse), <code>STR_vectors</code>, <code>STR_fingerprint</code> and <code>Info</code> (the parameters used).</li>
+</ol>
+
+<h2 id="s14-3">14.3 Building an STR from a Temporal Analysis export</h2>
+<p>An STR does not need audio. Press <b>Add Temporal Analysis tables (.xlsx)…</b> and pick one or more Excel exports of Temporal Analysis (Ctrl+click or Shift+click for several). The STR is built from the <code>Pulses</code> sheet (<code>pulse_start</code>, <code>pulse_end</code>, amplitude and peak frequency), so the pulses and motifs are exactly the ones you checked and edited there; the motifs of the table become the echemes. A workbook holding several recordings (for example one merged in Summarize) gives one STR per <code>source_file</code>. Each import <i>adds</i> to the list, so recordings computed from audio and imported tables can be pooled. <b>Clear</b> empties the list and the representatives built from it.</p>
+
+<h2 id="s14-4">14.4 The STR fingerprint</h2>
+<p>The vector grows with the number of pulses, so two songs cannot be compared directly. The <b>STR fingerprint</b> turns the barcode into <b>52 numbers, always in the same order</b>:</p>
+<ul>
+<li>the pulse rate and the duty cycle;</li>
+<li>echeme values;</li>
+<li>histograms of pulse durations and of onset-to-onset intervals (shares of pulses or intervals);</li>
+<li>the amplitude and duration shape along the echeme (relative profiles, so recording length and gain do not matter).</li>
+</ul>
+<p>Because its length does not depend on the number of pulses, fingerprints of different songs can be compared, pooled and used in statistics. The Excel export includes an <code>STR_fingerprint</code> sheet. Summarize reads it as a new <b>STR</b> table, which can be ticked in Summary Analysis for the PCA, the leave-one-out test and the species knowledge base (section 11.2).</p>
+
+<h2 id="s14-5">14.5 The Representative STR</h2>
+<p>The <b>Representative STR</b> pools every loaded STR into one consensus song per species.</p>
+<ul>
+<li>Time is expressed as a proportion of each echeme, so faster and slower renditions (temperature, individuals) line up. <b>Normalise by</b> chooses the unit: <i>echeme period</i> (onset to the next echeme’s onset, so the silence after the echeme is part of the shape; the last echeme of each recording has no period and is left out) or <i>echeme duration</i> (first pulse onset to last pulse offset: the internal pattern only). Continuous trills fall back to the pulse cycle.</li>
+<li>The tempo is kept apart as one number, the median period, with its quartiles.</li>
+<li>Each 1% of the echeme shows how many renditions have sound there (occupancy) and how loud it is (amplitude). Echemes with different pulse counts blend instead of being discarded.</li>
+<li><b>Species</b> picks the representative to show. <b>Compare with</b> overlays a second species on both plots in pink: its amplitude as an outline and its occupancy as a dashed line on the barcode, its fingerprint as outlined bars.</li>
+<li><b>Load representatives…</b> opens representatives saved earlier (the representative Excel, or the main STR export), any number of files and species, to view and compare them even with no STR in the list.</li>
+<li><b>⬇ PNG</b> saves both plots of the species shown, with a caption. <b>⬇ Excel</b> saves every species’ representative: <code>STR_representative</code> (tempo, consensus bars, occupancy and amplitude per 1% of the unit) and <code>STR_rep_fingerprint</code> (median and quartiles of the 52 numbers). Both sheets are also in the main Export (Excel).</li>
+</ul>
+<div class="prov"><b>Provisional.</b> STR is experimental. Treat its fingerprints and representatives as descriptive tools and check them against the barcode and the audio before using them for classification.</div>
+
+<h1 id="c15">15. Preferences, language and text size</h1>
+<p>The Preferences menu (gear, top left) contains:</p>
+<ul>
+<li><b>Home:</b> returns to the landing view.</li>
+<li><b>Default metadata…:</b> values you reuse, all stored on this computer.
+<ul>
+<li>Country and the default equipment (recorder, microphone, accessories; one per line, with a default for each) are filled into every newly loaded recording. Equipment typed in a recording’s metadata joins these lists automatically.</li>
+<li>Recordist name and License are used by the Xeno-canto helper.</li>
+<li>Annotation author is used by the Annotate export.</li>
+</ul></li>
+<li><b>Language:</b> English, Español, Italiano, Português.</li>
+<li><b>Text Size:</b> Small (90%), Normal, Large (115%), Extra large (130%).</li>
+<li><b>Version:</b> shows the installed version (please include it in bug reports).</li>
+</ul>
+<p>Presets, saved workflows, remembered metadata and preferences are stored locally by the app. They are not part of your recordings or exports, so copy preset <code>.json</code> files if you want to move them between computers. The width of the Loaded Audio pane is also remembered.</p>
+
+<h1 id="c16">16. Output files and column names</h1>
+<table>
+<thead><tr><th style="width:20%">Where</th><th style="width:24%">File</th><th>Contents</th></tr></thead>
+<tr><td>Preprocessing</td><td><code>.wav</code>, Raven <code>.txt</code></td><td>Edited recordings, saved selections, merged recordings, piece boundaries</td></tr>
+<tr><td>Temporal Analysis</td><td>Excel workbook</td><td>Sheets Envelope peaks, Pulses, Motifs, MotifSeqs, Summary (plus Manual echemes and Info where applicable)</td></tr>
+<tr><td>Spectral Analysis</td><td>Excel workbook, DOCX report</td><td>Per-selection spectral metrics, summary statistics, narrative</td></tr>
+<tr><td>Annotate</td><td><code>.txt</code>, <code>.json</code>, <code>.csv</code>, <code>.band.json</code></td><td>Raven, Xeno-canto and generic selections; saved bands</td></tr>
+<tr><td>Plotting</td><td>SVG, PNG, CSV, <code>.json</code></td><td>Figures, coloured-region intervals, mean spectra, presets</td></tr>
+<tr><td>Summarize</td><td>Excel workbook, DOCX, CSV, HTML, PNG/SVG</td><td>Merged workbook with statistics and temperature sheets, text report, PCA outputs, interactive 3D plot, knowledge base</td></tr>
+<tr><td>Custom Workflow</td><td>Excel workbook</td><td>One sheet per table, only the ticked metrics plus identifying columns, the rows of every recording stacked</td></tr>
+<tr><td>Clustering</td><td>Excel workbook</td><td>One row per unit (recording, start, end, cluster, sample rate, species, 3D coordinates) and run information</td></tr>
+<tr><td>STR</td><td>Excel workbook, PNG</td><td><code>STR_summary</code>, <code>Pulses</code>, <code>STR_vectors</code>, <code>STR_fingerprint</code>, <code>STR_representative</code>, <code>STR_rep_fingerprint</code>, <code>Info</code></td></tr>
+</table>
+<p>Every table starts with the Specimen ID and carries the recording metadata columns listed in section 5.2.</p>
+<p>Columns containing <code>_pulse_mean</code> in the motif table are averages of that motif’s pulse rows, which contain no silence. Compare them with the whole-motif spectral values, which include the gaps and therefore tend to raise entropy and flatness on low duty-cycle songs. The pulse-based complexity columns are <code>pci_syl</code>, <code>props_ent_syl</code> and <code>props_cv_syl</code> in both the Motifs and Manual Echemes tables. Scripts of your own that read the old Manual Echemes names (<code>props_ent</code>, <code>props_cv</code>, <code>pci</code>) need updating.</p>
+<p><i>(Provisional: a full column dictionary will be added. Until then, use Explain Metrics in Spectral Analysis and the Rthoptera paper.)</i></p>
+
+<h1 id="c17">17. Tips, troubleshooting and known limits</h1>
+
+<h2 id="s17-1">17.1 Good practice</h2>
+<ul>
+<li>Keep the spectral-resolution parameters, smoothing and presets identical across all recordings of a study. A recorded workflow (section 12) is an easy way to guarantee this.</li>
+<li>Always record the temperature and tag the Specimen ID and Species before exporting. Fixing them afterwards means re-exporting (or correcting them on the file cards in Summarize).</li>
+<li>Work on a copy of your recordings. Edits never overwrite the originals, but Apply to selected files cannot be undone inside the app.</li>
+<li>Save presets as <code>.json</code> files next to the recordings they were used for, so the analysis can be reproduced.</li>
+<li>Check detection visually in every recording. Automatic thresholds are a starting point, not a guarantee.</li>
+<li>Fix a visible DC offset before measuring amplitudes or normalizing.</li>
+</ul>
+
+<h2 id="s17-2">17.2 Common problems</h2>
+<table>
+<thead><tr><th style="width:28%">Symptom</th><th>Try</th></tr></thead>
+<tr><td>No peaks detected / notice at bottom right</td><td>Lower Detection thr. or tick Auto; reduce Smooth; check that you are on the right recording; try the Amplitude Detector.</td></tr>
+<tr><td>Pulses merged together</td><td>Lower Max envelope peak gap. For back-to-back pulses, tick Split on arches. With the Amplitude Detector, use Detect local minima and a smaller Min gap.</td></tr>
+<tr><td>Pulses split too much</td><td>Raise Max envelope peak gap or Max amp diff; raise Valley depth; raise Smooth.</td></tr>
+<tr><td>My manual edits disappeared</td><td>Changing a detection parameter, pressing Detect again, or pressing Apply in Learn from Edits re-derives the peaks and replaces manual edits. Make manual edits last. Trim, Delete and Noise padding also clear detections and annotations (section 6.2).</td></tr>
+<tr><td>Merge is greyed out in Temporal Analysis</td><td>Select two or more envelope peaks, or two or more detections or drawn selections of the same kind (section 7.4).</td></tr>
+<tr><td>Delete or Vanish does nothing</td><td>Read the notice at the bottom right. Usually Trim mode is still open (confirm or cancel it), there is no time selection, or the selection lies entirely in the added noise padding. Vanish needs some quiet material in the recording.</td></tr>
+<tr><td>Apply to selected files is greyed out</td><td>Check at least two recordings in the Loaded Audio pane.</td></tr>
+<tr><td>Annotate band collapses to low frequencies</td><td>Raise Search Hz above the wind and handling rumble.</td></tr>
+<tr><td>Merge (recordings) refuses or warns</td><td>The recordings differ in sampling rate; choose a resampling option or remove the odd one.</td></tr>
+<tr><td>Mean Spectra will not draw</td><td>All checked recordings must share one sampling rate.</td></tr>
+<tr><td>Map or elevation does not load</td><td>These need an internet connection; type the values manually otherwise.</td></tr>
+<tr><td>Export All (Excel) is greyed out</td><td>Run Spectral Metrics (Spectral tab) or Compute Metrics (Temporal tab) first.</td></tr>
+<tr><td>Stop Workflow says there are no metrics</td><td>Run a metrics step (Compute Metrics or Spectral Metrics) while recording, then press Stop Workflow again.</td></tr>
+<tr><td>Clustering model does not load</td><td>Use a single-file Perch 2.0 ONNX export. Models split into several files, or other model formats, are not accepted.</td></tr>
+<tr><td>Clusters follow recordings, not species</td><td>Colour the map by Recording or Sample rate to check. For ultrasonic species, set a Slow-down so the song falls within Perch’s 0–16 kHz range, and use the same value for every recording. Prefer selections around the calls over whole 5 s windows.</td></tr>
+<tr><td>Interface too small or too large</td><td>Preferences → Text Size.</td></tr>
+</table>
+
+<h2 id="s17-3">17.3 Known limits (version 0.9.0)</h2>
+<ul>
+<li>Pulses-only metrics (no peaks) omit temporal excursion and the per-peak columns.</li>
+<li>Boundary edits made by hand cannot be reset in one step; use Undo.</li>
+<li>Custom Workflow does not replay steps that depend on drawing on a plot (trim, selections, hand edits). Workflows cannot yet be exported or moved to another computer.</li>
+<li>Clustering needs a user-supplied Perch 2.0 ONNX file, handles at most 2500 units per run, and only the active recording can contribute selections.</li>
+<li>STR is experimental; the fingerprint and the Representative STR are descriptive and have not been validated for classification.</li>
+<li>Builds exist only for x86_64 Windows and Linux, and for Intel and Apple Silicon Macs.</li>
+<li>The software is under active development; behaviours described as Provisional may change.</li>
+</ul>
+
+<h1 id="c18">18. Citing the software and licence</h1>
+<p>Please cite the paper when you publish results obtained with Rthoptera Desk:</p>
+<p class="cite">Rivas, F., Brizio, C., Buzzetti, F. M., &amp; Pijanowski, B. (2025). Rthoptera: Standardised insect bioacoustics in R. <i>Methods in Ecology and Evolution, 16</i>(6), 1084–1094. https://doi.org/10.1111/2041-210X.70045</p>
+<p>To state which software version you used:</p>
+<p class="cite">Rivas, F. (2026). <i>Rthoptera Desk</i> (Version 0.9.0) [Computer software]. https://github.com/panchorivasf/Rthoptera-Desk</p>
+<p>Work using the Auto-coded Oscillogram should also cite:</p>
+<p class="cite">Brizio, C. (2023). Colour Enhanced Time/Pressure Envelope (CETPE), a novel on-screen rendering of digital sound. <i>Rivista Italiana di Acustica, 48</i>(2), 63–71.</p>
+<p>Work using the Clustering module should also cite Google’s Perch 2.0 model as its authors request. <i>(Provisional: the full reference will be added.)</i></p>
+
+<h2 id="s18-1">18.1 Licence</h2>
+<p><b>PolyForm Noncommercial License 1.0.0.</b> The software is free to use, modify and share for any noncommercial purpose. Use by educational institutions, public research organisations, charities, environmental-protection organisations and government institutions counts as noncommercial, regardless of funding. Commercial use requires a separate licence. This is a source-available licence, not an open-source one.</p>
+
+<h1 id="ca">Appendix A: Glossary</h1>
+<table>
+<thead><tr><th style="width:24%">Term</th><th>Meaning in this program</th></tr></thead>
+<tr><td>Envelope</td><td>Smoothed amplitude (RMS) curve of the recording over time.</td></tr>
+<tr><td>Envelope peak</td><td>A local maximum of the envelope that passes the detection thresholds.</td></tr>
+<tr><td>Pulse (train)</td><td>A group of envelope peaks forming one sound burst. In drawn selections, also a user-labelled pulse.</td></tr>
+<tr><td>Motif / echeme</td><td>A group of pulses separated by gaps no longer than Max pulse gap.</td></tr>
+<tr><td>Motif sequence</td><td>A group of motifs separated by gaps no longer than Max motif gap.</td></tr>
+<tr><td>Syllable</td><td>In Summarize, a run of consecutive pulses treated as one sound (measured from the onset of the first to the offset of the last).</td></tr>
+<tr><td>TE / DE / PCI</td><td>Temporal excursion, dynamic excursion and pulse complexity index (see the Rthoptera paper).</td></tr>
+<tr><td>Duty cycle</td><td>Proportion of time occupied by sound within a unit.</td></tr>
+<tr><td>Floor %</td><td>Amplitude-detector threshold as a percentage of the envelope range (an offset above the local noise floor when that is active).</td></tr>
+<tr><td>FRB / FRT / FRPT</td><td>Frequency Range Bottom / Top and Frequency Range Pressure Threshold (Auto-coded Oscillogram).</td></tr>
+<tr><td>Nyquist</td><td>Half the sampling rate; the highest frequency that can be represented.</td></tr>
+<tr><td>dBFS</td><td>Decibels relative to digital full scale (0 dBFS = maximum).</td></tr>
+<tr><td>Pulse level (dB rel.)</td><td>A pulse’s RMS level measured in the audio, in dB relative to the median pulse of the same recording (section 7.6). Unaffected by gain, distance and single loud events.</td></tr>
+<tr><td>DC offset</td><td>A constant shift of the whole waveform away from zero, usually caused by the recorder. Removed by Fix DC Offset.</td></tr>
+<tr><td>Dominant frequency</td><td>In STR, the peak of the spectrum averaged over all the pulses with a long window.</td></tr>
+<tr><td>STR vector</td><td>Dominant frequency followed by the duration, amplitude and following gap of every pulse. Its length varies.</td></tr>
+<tr><td>STR fingerprint</td><td>The 52 fixed-order numbers that summarise a song’s STR, comparable across recordings.</td></tr>
+<tr><td>Representative STR</td><td>One consensus song per species, pooled from many STRs with time expressed as a proportion of the echeme.</td></tr>
+<tr><td>Embedding</td><td>In Clustering, the list of 1536 numbers that Perch 2.0 produces for 5 s of audio; similar sounds give similar embeddings.</td></tr>
+<tr><td>Silhouette score</td><td>How well separated the clusters are, from −1 to 1; higher is better. Used to choose the number of clusters automatically.</td></tr>
+<tr><td>UMAP / t-SNE / PCA</td><td>Methods that fold the embeddings into three dimensions for display. They do not change the clusters.</td></tr>
+</table>
+
+<h1 id="cb">Appendix B: Feedback checklist for testers</h1>
+<p>Because this manual and the program are both provisional, your notes are very valuable. When something is unclear or wrong, please send:</p>
+<ol>
+<li>The version (Preferences → Version) and your operating system.</li>
+<li>The tab and the exact buttons you pressed, in order. If you recorded a workflow, its steps are a good summary.</li>
+<li>What you expected and what happened. A screenshot helps, and the text of the bottom-right notice is useful.</li>
+<li>If possible, a short recording (a few seconds) that reproduces it, and the preset <code>.json</code> you used.</li>
+<li>Any place where this manual disagrees with the program, or where a term was not understood.</li>
+</ol>
+<p>Also welcome:</p>
+<ul>
+<li>suggestions for the sections marked Provisional (column dictionary, Habitus, worked examples for your taxa);</li>
+<li>your experience with Clustering and STR on your own groups.</li>
+</ul>
