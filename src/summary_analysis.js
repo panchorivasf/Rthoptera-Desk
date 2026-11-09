@@ -246,7 +246,11 @@
         }
       });
       const vals = {};
-      s.acc.forEach((a, id) => (vals[id] = a[0] / a[1]));
+      const cnt = {};
+      s.acc.forEach((a, id) => {
+        vals[id] = a[0] / a[1];
+        cnt[id] = a[1];
+      });
       let specimen = "",
         bestSp = 0;
       s.spec.forEach((c, id) => {
@@ -255,7 +259,7 @@
           specimen = id;
         }
       });
-      return { key: s.key, raw: species, species, specimen, n: s.n, vals, temp: s.tn ? s.tsum / s.tn : null };
+      return { key: s.key, raw: species, species, specimen, specimens: [...s.spec.keys()], n: s.n, vals, cnt, temp: s.tn ? s.tsum / s.tn : null };
     });
     applyLabels();
     // Keep a variable if any observation has a value for it. PCA and the
@@ -1786,7 +1790,13 @@
     }
     const stat = (it, f) => {
       const v = it.samples.filter((s) => f.id in s.vals).map((s) => valOf(s, f.id));
-      return { m: mean(v), sd: v.length > 1 ? sdev(v) : null };
+      // N behind the mean: distinct specimens, and the rows (motifs, pulses…)
+      // that were averaged. A recording with no specimen tag counts as one.
+      const have = it.samples.filter((s) => f.id in s.vals);
+      const sp = new Set();
+      have.forEach((s) => (s.specimens && s.specimens.length ? s.specimens.forEach((x) => sp.add(x)) : sp.add("rec:" + s.key)));
+      const nObs = have.reduce((a, s) => a + ((s.cnt && s.cnt[f.id]) || 0), 0);
+      return { m: mean(v), sd: v.length > 1 ? sdev(v) : null, nSpec: sp.size, nObs };
     };
     const data = feats.map((f) => items.map((it) => stat(it, f)));
     sa.cmp = { items, feats, data }; // kept for saSaveRecXlsx
@@ -1794,7 +1804,7 @@
     const fmt = (v) => (v == null ? "—" : String(+Number(v).toPrecision(4)));
     const ratioHead = items.length === 2 ? "<th>" + items[1].short + " ÷ " + items[0].short + "</th>" : "<th>largest ÷ smallest</th>";
     tbl.innerHTML =
-      '<table class="dtable"><thead><tr><th>Variable</th>' + items.map((it) => "<th>" + it.short + "</th>").join("") + ratioHead + "</tr></thead><tbody>" +
+      '<table class="dtable"><thead><tr><th>Variable</th>' + items.map((it) => "<th>" + it.short + "</th><th title=\"Distinct specimens behind the mean\">N specimens</th><th title=\"Rows (motifs, pulses…) averaged\">N rows</th>").join("") + ratioHead + "</tr></thead><tbody>" +
       feats
         .map((f, j) => {
           const ms = data[j].map((d) => d.m);
@@ -1805,7 +1815,7 @@
               mn = Math.min(...ms.map(Math.abs));
             r = mn > 0 ? mx / mn : null;
           }
-          return "<tr><td>" + f.label + "</td>" + data[j].map((d) => "<td>" + fmt(d.m) + (d.sd != null ? " ± " + fmt(d.sd) : "") + "</td>").join("") + "<td>" + (r == null ? "—" : fmt(r) + "×") + "</td></tr>";
+          return "<tr><td>" + f.label + "</td>" + data[j].map((d) => "<td>" + fmt(d.m) + (d.sd != null ? " ± " + fmt(d.sd) : "") + "</td><td>" + d.nSpec + "</td><td>" + d.nObs + "</td>").join("") + "<td>" + (r == null ? "—" : fmt(r) + "×") + "</td></tr>";
         })
         .join("") +
       "</tbody></table>";
@@ -1982,7 +1992,9 @@
         const d = c.data[j][i];
         row[it.short + " mean"] = d.m;
         row[it.short + " sd"] = d.sd == null ? "" : d.sd;
-        row[it.short + " n"] = it.samples.filter((s) => f.id in s.vals).length;
+        row[it.short + " n recordings"] = it.samples.filter((s) => f.id in s.vals).length;
+        row[it.short + " n specimens"] = d.nSpec;
+        row[it.short + " n rows"] = d.nObs;
       });
       const ms = c.data[j].map((d) => d.m);
       let r = null;
