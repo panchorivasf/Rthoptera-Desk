@@ -58,6 +58,15 @@
     "motifs::peak_freq_khz",
     "motifs::bw_20db_khz",
   ];
+  // Variables eligible for the temperature adjustment: the ones that the
+  // orthopteran bioacoustics literature routinely reports as temperature-
+  // dependent and corrects to a reference temperature (Walker 1962; Gerhardt &
+  // Huber 2002): the timing of pulses
+  // (duration, gap, period, rate), of motifs (duration, gap, period, rate),
+  // the duty cycle, and the peak (carrier) frequency. Matched on the column
+  // name, so the mean/SD columns of the summary tables are covered as well.
+  // Counts, levels, entropy and pattern-complexity indices are left alone.
+  const TEMP_VARS = /^(pulse_(dur|gap|period|rate)|motif_(dur|gap|period|rate)|echeme_(dur|gap|period|rate)|duty_cycle|peak_freq)/i;
   const BASE_COLORS = [
     "#0072B2", "#E69F00", "#009E73", "#CC79A7", "#D55E00", "#56B4E9",
     "#7B3294", "#999999", "#8C564B", "#17BECF",
@@ -96,6 +105,33 @@
   //   sp     species (after the per-recording override) -> display name;
   //          giving two species one name merges them everywhere
   const lab = { obs: new Map(), obsSp: new Map(), sp: new Map() };
+
+  // What the labels on the PCA points show: ticked in the "Point labels"
+  // row above the plots. The name (edited or the file name) is the default.
+  const LBL_PARTS = [
+    ["id", "Name"],
+    ["species", "Species"],
+    ["specimen", "Specimen"],
+    ["country", "Country"],
+    ["locality", "Locality"],
+    ["date", "Date"],
+    ["temp", "Temp."],
+  ];
+  function dispLabel(s) {
+    const val = {
+      id: s.label,
+      species: s.species,
+      specimen: s.specimen,
+      country: s.meta && s.meta.country,
+      locality: s.meta && s.meta.locality,
+      date: s.meta && s.meta.date,
+      temp: s.temp == null ? "" : s.temp.toFixed(1) + " °C",
+    };
+    const out = LBL_PARTS.filter(([k]) => $("saLbl_" + k) && $("saLbl_" + k).checked)
+      .map(([k]) => val[k])
+      .filter((v) => v != null && String(v).trim() !== "");
+    return out.length ? out.join(" · ") : s.label;
+  }
 
   function applyLabels() {
     sa.samples.forEach((s) => {
@@ -180,7 +216,7 @@
     const touch = (key) => {
       let s = bySample.get(key);
       if (!s) {
-        s = { key, acc: new Map(), sp: new Map(), spec: new Map(), n: 0, tsum: 0, tn: 0 };
+        s = { key, acc: new Map(), sp: new Map(), spec: new Map(), n: 0, tsum: 0, tn: 0, meta: {} };
         bySample.set(key, s);
       }
       return s;
@@ -205,6 +241,10 @@
         if (sp) s.sp.set(sp, (s.sp.get(sp) || 0) + 1);
         const sid = String(r.specimen_id || "").trim();
         if (sid) s.spec.set(sid, (s.spec.get(sid) || 0) + 1);
+        // descriptive fields for the point labels: the first one filled in
+        [["country", "country"], ["locality", "locality"], ["date", "rec_date"]].forEach(([k, col]) => {
+          if (!s.meta[k] && r[col] != null && String(r[col]).trim() !== "") s.meta[k] = String(r[col]).trim();
+        });
         // temperature may be typed as "22.5" or "~23": take the first number
         const tm = r.temp_c == null ? null : String(r.temp_c).match(/-?\d+(\.\d+)?/);
         if (tm) {
@@ -259,7 +299,7 @@
           specimen = id;
         }
       });
-      return { key: s.key, raw: species, species, specimen, specimens: [...s.spec.keys()], n: s.n, vals, cnt, temp: s.tn ? s.tsum / s.tn : null };
+      return { key: s.key, raw: species, species, specimen, specimens: [...s.spec.keys()], meta: s.meta, n: s.n, vals, cnt, temp: s.tn ? s.tsum / s.tn : null };
     });
     applyLabels();
     // Keep a variable if any observation has a value for it. PCA and the
@@ -585,6 +625,7 @@
     if (withT.length < 4) return;
     const fit = new Map();
     sa.features.forEach((f) => {
+      if (!TEMP_VARS.test(f.col)) return;
       const groups = new Map();
       withT.forEach((s) => {
         if (!(f.id in s.vals)) return;
@@ -1021,7 +1062,7 @@
     rows.forEach((o) => {
       const col = specColor(speciesIdx(o.s.species));
       const c = svgEl("circle", { cx: X(P.scores[o.i][cx]), cy: Y(P.scores[o.i][cy]), r: 4, fill: col, "fill-opacity": 0.75, stroke: "#fff", "stroke-width": 0.6 });
-      c.appendChild(svgEl("title", {}, o.s.label + " — " + o.s.species));
+      c.appendChild(svgEl("title", {}, dispLabel(o.s) + " — " + o.s.species));
       c.style.cursor = "pointer";
       c.addEventListener("click", () => {
         if (sa.pin2d.has(o.s.key)) sa.pin2d.delete(o.s.key);
@@ -1031,7 +1072,7 @@
       svg.appendChild(c);
       if (sa.pin2d.has(o.s.key))
         svg.appendChild(
-          svgEl("text", { x: X(P.scores[o.i][cx]) + 7, y: Y(P.scores[o.i][cy]) - 6, "font-size": 10, "font-weight": 600, fill: "#111", stroke: "#fff", "stroke-width": 3, "paint-order": "stroke" }, o.s.label),
+          svgEl("text", { x: X(P.scores[o.i][cx]) + 7, y: Y(P.scores[o.i][cy]) - 6, "font-size": 10, "font-weight": 600, fill: "#111", stroke: "#fff", "stroke-width": 3, "paint-order": "stroke" }, dispLabel(o.s)),
         );
     });
     names.forEach((nm) => {
@@ -1259,7 +1300,7 @@
     const D = { points: [], cent: [], rings: [], legend: [], axes: [], maxAbs: 1e-9 };
     rows.forEach((o) => {
       const sc = P.scores[o.i];
-      D.points.push({ x: sc[0], y: sc[1], z: sc[2], sp: o.s.species, label: o.s.label, key: o.s.key, color: specColor(speciesIdx(o.s.species)) });
+      D.points.push({ x: sc[0], y: sc[1], z: sc[2], sp: o.s.species, label: dispLabel(o.s), key: o.s.key, color: specColor(speciesIdx(o.s.species)) });
       sc.slice(0, 3).forEach((v) => (D.maxAbs = Math.max(D.maxAbs, Math.abs(v))));
     });
     names.forEach((nm) => {
@@ -1629,9 +1670,12 @@
     set("saLoadTop", (e) => (e.value = ""));
     set("saCvLeave", (e) => (e.value = "recording"));
     set("saShowIds", (e) => (e.checked = false));
+    LBL_PARTS.forEach(([k]) => set("saLbl_" + k, (e) => (e.checked = k === "id")));
     ["saPcX", "saPcY"].forEach((id) => set(id, (e) => (e.innerHTML = "")));
     ["saPcaFig", "saRadarFig", "saRelFig", "saRecTable", "saRecFig"].forEach((id) => set(id, (e) => (e.innerHTML = "")));
     set("saCvOut", (e) => (e.textContent = "Not run yet."));
+    set("saPermOut", (e) => (e.textContent = "Not run yet."));
+    if (typeof window.saClustReset === "function") window.saClustReset();
     const cv = $("saPca3d");
     if (cv) {
       const g = cv.getContext("2d");
@@ -1651,7 +1695,7 @@
   // merge of the data. Names are matched by recording file name and species.
   const SETTINGS_KIND = "rthoptera-summary-analysis-settings";
   const OPT_IDS = ["saPcX", "saPcY", "saSigma", "saCvLeave", "saLoadTop"];
-  const OPT_CHECKS = ["saEllipse", "saLoadings", "saRadarRadial", "saRecRadial"];
+  const OPT_CHECKS = ["saEllipse", "saLoadings", "saRadarRadial", "saRecRadial", ...LBL_PARTS.map(([k]) => "saLbl_" + k)];
 
   async function saSettingsSave() {
     const obj = {

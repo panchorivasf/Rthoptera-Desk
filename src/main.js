@@ -1714,7 +1714,12 @@
         }
         if (!selected) return true; // user cancelled — handled, don't fall back
         const paths = Array.isArray(selected) ? selected : [selected];
+        await loadAudioPaths(paths);
+        return true;
+      }
 
+      // Load audio files from filesystem paths (dialog result or drag-and-drop).
+      async function loadAudioPaths(paths) {
         await withBusy("Loading audio…", async (progress) => {
           let firstEntry = null;
           for (let i = 0; i < paths.length; i++) {
@@ -1754,8 +1759,50 @@
             selectLibraryAudio(firstEntry.id);
           }
         });
-        return true;
       }
+
+      // Drag-and-drop: drop audio files anywhere on the window (landing page,
+      // file list, or any tab). Tauri intercepts OS file drops, so paths come
+      // from the webview drag-drop event; a plain browser uses HTML5 events.
+      (function setupAudioDrop() {
+        const AUDIO_RE = /\.(wav|mp3|flac|ogg|aiff?|m4a)$/i;
+        const setHot = (on) => {
+          if (on) document.body.setAttribute("data-drop-text", t("Drop audio files to load"));
+          document.body.classList.toggle("drop-hot", on);
+        };
+        const wv = window.__TAURI__?.webview?.getCurrentWebview?.();
+        if (wv && typeof wv.onDragDropEvent === "function") {
+          wv.onDragDropEvent((ev) => {
+            const p = ev.payload || {};
+            if (p.type === "enter" || p.type === "over") setHot(true);
+            else if (p.type === "leave") setHot(false);
+            else if (p.type === "drop") {
+              setHot(false);
+              const paths = (p.paths || []).filter((x) => AUDIO_RE.test(x));
+              if (!paths.length) {
+                log(t("Dropped files contain no supported audio (wav, mp3, flac, ogg, aiff)."), "warn");
+                return;
+              }
+              loadAudioPaths(paths);
+            }
+          }).catch((e) => log("Drag-and-drop unavailable: " + e.message, "warn"));
+          return;
+        }
+        let depth = 0;
+        window.addEventListener("dragenter", (e) => { e.preventDefault(); depth++; setHot(true); });
+        window.addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; setHot(false); } });
+        window.addEventListener("dragover", (e) => e.preventDefault());
+        window.addEventListener("drop", async (e) => {
+          e.preventDefault(); depth = 0; setHot(false);
+          const files = Array.from(e.dataTransfer?.files || []).filter((f) => AUDIO_RE.test(f.name));
+          if (!files.length) return;
+          const inp = $("audioFile");
+          const dt = new DataTransfer();
+          files.forEach((f) => dt.items.add(f));
+          inp.files = dt.files;
+          inp.dispatchEvent(new Event("change"));
+        });
+      })();
 
       // Wired to the toolbar's 📂 Audio button: try the native dialog first
       // (correct file names, see openAudioFilesNative), and only fall back
@@ -1978,6 +2025,7 @@
         }
         const smoothMs = Math.max(0.5, parseFloat($("pkSmooth")?.value) || 1);
         pkEnv = pkComputeEnv(smoothMs);
+        if (typeof pkEnsureFloor === "function") pkEnsureFloor(true);
         if (typeof pkApplyAutoDetThr === "function") pkApplyAutoDetThr();
         if (typeof pkDrawEnvelope === "function") pkDrawEnvelope();
       }
@@ -4818,6 +4866,85 @@
       // ═══════════════════════════════════════════════════════════════════
       // VIEW CONTROLS
       // ═══════════════════════════════════════════════════════════════════
+      // Shortest visible window: ~24 samples, so the waveform can be inspected
+      // sample by sample (drawn as a real oscillogram, not min/max bins).
+      function minViewDur() {
+        return sampleRate > 0 ? Math.max(24 / sampleRate, 1e-5) : 0.005;
+      }
+      // Zoom buttons / shortcuts. factor < 1 zooms in, > 1 zooms out; each
+      // keeps the centre of the current view fixed.
+      function zoomTime(factor) {
+        if (!rawSamples) return;
+        const c = viewStart + viewDur / 2;
+        viewDur = Math.min(duration, Math.max(minViewDur(), viewDur * factor));
+        viewStart = Math.max(0, Math.min(c - viewDur / 2, duration - viewDur));
+        render();
+      }
+      function zoomFreq(factor) {
+        if (!rawSamples) return;
+        const nyq = sampleRate / 2;
+        const mid = (fvMin + fvMax) / 2;
+        const nr = Math.min(nyq, Math.max(nyq * 0.005, (fvMax - fvMin) * factor));
+        const lo = Math.max(0, Math.min(mid - nr / 2, nyq - nr));
+        fvMin = lo;
+        fvMax = lo + nr;
+        render();
+      }
+      function zoomAmp(factor) {
+        if (!rawSamples) return;
+        // factor < 1 zooms in (trace grows)
+        waveAmpZoom = Math.max(0.25, Math.min(256, waveAmpZoom / factor));
+        render();
+      }
+      function zoomReset(panel) {
+        if (!rawSamples) return;
+        viewStart = 0;
+        viewDur = duration;
+        if (panel === "wave") waveAmpZoom = 1;
+        else {
+          fvMin = 0;
+          fvMax = sampleRate / 2;
+        }
+        render();
+      }
+      // Magnifier-with-sign buttons, filled into the panel headers.
+      (function buildZoomButtons() {
+        const icon = (sign) =>
+          '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">' +
+          '<circle cx="6.5" cy="6.5" r="4.5"/><path d="M10 10l4.5 4.5"/><path d="M4.5 6.5h4"/>' +
+          (sign === "+" ? '<path d="M6.5 4.5v4"/>' : "") +
+          "</svg>";
+        const group = (label, fn) =>
+          '<span data-i18n style="font-size:10px;color:var(--txt3)">' + label + "</span>" +
+          '<button type="button" class="zoom-btn" data-i18n-title title="Zoom in (' + label + ')" onclick="' + fn + '(0.7)">' + icon("+") + "</button>" +
+          '<button type="button" class="zoom-btn" data-i18n-title title="Zoom out (' + label + ')" onclick="' + fn + '(1/0.7)">' + icon("-") + "</button>";
+        const reset = (panel) =>
+          '<button type="button" class="zoom-btn" data-i18n-title title="Show everything (reset zoom)" onclick="zoomReset(\'' + panel + '\')">&#8634;</button>';
+        const w = document.getElementById("waveZoomBtns");
+        if (w) w.innerHTML = group("Time", "zoomTime") + group("Amplitude", "zoomAmp") + reset("wave");
+        const s = document.getElementById("specZoomBtns");
+        if (s) s.innerHTML = group("Time", "zoomTime") + group("Frequency", "zoomFreq") + reset("spec");
+      })();
+
+      // Spectral resolution on the fly: step the FFT size one option up/down.
+      // Larger FFT = finer frequency resolution (coarser in time).
+      let _fftBusy = false;
+      async function stepSpecResolution(dir) {
+        const sel = $("fftSize");
+        if (!sel || !rawSamples || _fftBusy) return;
+        const i = Math.max(0, Math.min(sel.options.length - 1, sel.selectedIndex + dir));
+        if (i === sel.selectedIndex) return;
+        sel.selectedIndex = i;
+        _fftBusy = true;
+        try {
+          const n = Number(sel.value);
+          log(t("Spectral resolution") + ": FFT " + n + " (" + (sampleRate / n).toFixed(1) + " " + t("Hz per bin") + ")", "info");
+          await reprocessSpec();
+        } finally {
+          _fftBusy = false;
+        }
+      }
+
       function setViewStart(vs) {
         viewStart = Math.max(0, Math.min(vs, Math.max(0, duration - viewDur)));
         render();
@@ -4960,6 +5087,17 @@
         b.style.display = "";
       }
 
+      // What a full-height trace stands for. By default the waveform is scaled
+      // to its own loudest sample, so removing a loud click (Vanish) or changing
+      // the level (Normalize) re-scales the picture and looks like nothing, or
+      // something else, happened. With "Waveform at full scale" ticked, the
+      // height is fixed at 0 dBFS, so level changes show.
+      let waveAmpZoom = 1; // vertical zoom of the waveform (1 = fit)
+      function wfRef() {
+        const el = $("wfFullScale");
+        return (el && el.checked ? 1 : peakAmp || 1) / waveAmpZoom;
+      }
+
       function renderWave() {
         const wrap = $("wWrap");
         const W = wrap.clientWidth,
@@ -5001,7 +5139,7 @@
           mid = H / 2;
         const thr = (peakAmp * parseFloat($("threshPct").value)) / 100;
         if (peakAmp > 0) {
-          const ty = mid * (1 - thr / peakAmp);
+          const ty = mid * (1 - thr / wfRef());
           ctx.strokeStyle = "rgba(210,153,34,.45)";
           ctx.setLineDash([4, 4]);
           ctx.lineWidth = 1;
@@ -5016,27 +5154,55 @@
           ctx.setLineDash([]);
         }
         ctx.beginPath();
-        for (let x = 0; x < W; x++) {
-          const s = Math.floor(si + x * spp),
-            e = Math.min(rawSamples.length, s + Math.max(1, Math.ceil(spp)));
-          let mn = 0,
-            mx = 0;
-          for (let i = s; i < e; i++) {
-            const v = rawSamples[i];
-            if (v > mx) mx = v;
-            if (v < mn) mn = v;
+        if (spp < 3) {
+          // Zoomed in far enough that columns hold only a few samples: min/max
+          // bars would look like bins, so draw the actual waveform — samples
+          // joined by lines, with a dot on each sample once they are well apart.
+          const pxPerSamp = 1 / spp;
+          const i0 = Math.max(0, si - 1),
+            i1 = Math.min(rawSamples.length - 1, ei + 1);
+          const ref = wfRef();
+          for (let i = i0; i <= i1; i++) {
+            const x = ((i / sampleRate - viewStart) / viewDur) * W;
+            const y = mid * (1 - rawSamples[i] / ref);
+            i === i0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
           }
-          ctx.moveTo(x + 0.5, mid * (1 - mx / peakAmp));
-          ctx.lineTo(x + 0.5, mid * (1 - mn / peakAmp));
+          ctx.strokeStyle = "#388bfd";
+          ctx.lineWidth = 1.25;
+          ctx.stroke();
+          if (pxPerSamp >= 6) {
+            ctx.fillStyle = "#79b8ff";
+            for (let i = i0; i <= i1; i++) {
+              const x = ((i / sampleRate - viewStart) / viewDur) * W;
+              const y = mid * (1 - rawSamples[i] / ref);
+              ctx.beginPath();
+              ctx.arc(x, y, 2, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        } else {
+          for (let x = 0; x < W; x++) {
+            const s = Math.floor(si + x * spp),
+              e = Math.min(rawSamples.length, s + Math.max(1, Math.ceil(spp)));
+            let mn = 0,
+              mx = 0;
+            for (let i = s; i < e; i++) {
+              const v = rawSamples[i];
+              if (v > mx) mx = v;
+              if (v < mn) mn = v;
+            }
+            ctx.moveTo(x + 0.5, mid * (1 - mx / wfRef()));
+            ctx.lineTo(x + 0.5, mid * (1 - mn / wfRef()));
+          }
+          ctx.strokeStyle = "#388bfd";
+          ctx.lineWidth = 1;
+          ctx.stroke();
         }
-        ctx.strokeStyle = "#388bfd";
-        ctx.lineWidth = 1;
-        ctx.stroke();
         if ($("showEnv").checked && envelope) {
           ctx.beginPath();
           for (let x = 0; x < W; x++) {
             const s = Math.min(envelope.length - 1, Math.floor(si + x * spp));
-            const y = mid * (1 - envelope[s] / peakAmp);
+            const y = mid * (1 - envelope[s] / wfRef());
             x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
           }
           ctx.strokeStyle = "rgba(137,87,229,.85)";
@@ -5045,7 +5211,7 @@
           ctx.beginPath();
           for (let x = 0; x < W; x++) {
             const s = Math.min(envelope.length - 1, Math.floor(si + x * spp));
-            const y = mid * (1 + envelope[s] / peakAmp);
+            const y = mid * (1 + envelope[s] / wfRef());
             x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
           }
           ctx.strokeStyle = "rgba(137,87,229,.85)";
@@ -5065,7 +5231,7 @@
         // When there is a noticeable offset, also mark where the average
         // really is, so the gap between the two lines is the offset.
         if (dcNoticeable() && peakAmp > 0) {
-          const dy = mid * (1 - dcValue / peakAmp);
+          const dy = mid * (1 - dcValue / wfRef());
           ctx.strokeStyle = "rgba(210,153,34,.9)";
           ctx.setLineDash([5, 3]);
           ctx.beginPath();
@@ -5477,8 +5643,8 @@
             if (v > mx) mx = v;
             if (v < mn) mn = v;
           }
-          ctx.moveTo(x + 0.5, mid * (1 - mx / peakAmp));
-          ctx.lineTo(x + 0.5, mid * (1 - mn / peakAmp));
+          ctx.moveTo(x + 0.5, mid * (1 - mx / wfRef()));
+          ctx.lineTo(x + 0.5, mid * (1 - mn / wfRef()));
         }
         ctx.strokeStyle = "rgba(56,139,253,.6)";
         ctx.lineWidth = 1;
@@ -5636,15 +5802,15 @@
         // rest act on selections and would otherwise fire invisibly from
         // Preprocessing (or Temporal Analysis), silently switching the tool
         // or deleting a selection the user cannot see.
-        if (e.key === " ") {
+        if (kbMatch("playPause", e)) {
           e.preventDefault();
           togglePlay();
           return;
         }
         if (!isAnalyzerTabActive()) return;
-        if (e.key === "s" || e.key === "S") setTool("select");
-        if (e.key === "a" || e.key === "A") setTool("annotate");
-        if (e.key === "h" || e.key === "H") setTool("pan");
+        if (kbMatch("toolSelect", e)) setTool("select");
+        if (kbMatch("toolAnnotate", e)) setTool("annotate");
+        if (kbMatch("toolPan", e)) setTool("pan");
         if ((e.key === "Delete" || e.key === "Backspace") && selAid !== null) {
           deleteAnnot(selAid);
           selAid = null;
@@ -5993,7 +6159,7 @@
               const W = getVizWidth();
               const { t: tc } = pixToTF(e.offsetX, e.offsetY, src);
               const factor = e.deltaY > 0 ? 1.3 : 0.77;
-              viewDur = Math.min(duration, Math.max(0.005, viewDur * factor));
+              viewDur = Math.min(duration, Math.max(minViewDur(), viewDur * factor));
               viewStart = Math.max(
                 0,
                 Math.min(tc - (viewDur * e.offsetX) / W, duration - viewDur),
@@ -9700,12 +9866,13 @@
         clearTimeout(pkAmpLiveTimer);
         pkAmpLiveTimer = setTimeout(() => {
           if (!pkEnv) return;
-          if (pkFloor) pkDetectFloor(true);
+          pkEnsureFloor();
           if (pkAmpDetections.length) pkRunAmpDetector();
+          if ($("pkFloorUseEnv").checked && pkHasDetected) pkScheduleRedetect(0);
         }, 250);
       }
       pkOnReady(() => {
-        ["pkSmooth", "pkWin", "pkThresh", "pkDetThr"].forEach((id) => {
+        ["pkSmooth", "pkWin", "pkDetThr"].forEach((id) => {
           const el = $(id);
           if (el) el.addEventListener("input", () => pkScheduleRedetect());
         });
@@ -9724,17 +9891,30 @@
           });
         const auto = $("pkDetThrAuto");
         if (auto) auto.addEventListener("change", () => pkScheduleRedetect(0));
-        // The Floor % line on the plot follows the box as it is typed or
+        // The threshold line on the plot follows the box as it is typed or
         // focused, before any re-detection.
-        const ampThrBox = $("pkAmpThreshPct");
+        const ampThrBox = $("pkDetThr");
         if (ampThrBox)
           ["input", "focus", "blur"].forEach((ev) =>
             ampThrBox.addEventListener(ev, () => pkDrawEnvelope()),
           );
-        ["pkAmpThreshPct", "pkAmpMinDurMs", "pkAmpMinGapMs", "pkFloorWinMs"].forEach((id) => {
+        ["pkDetThr", "pkAmpMinDurMs", "pkAmpMinGapMs", "pkFloorWinMs"].forEach((id) => {
           const el = $(id);
           if (el) el.addEventListener("input", pkScheduleAmpRedetect);
         });
+        // Switching a detector's use of the floor on or off re-runs that detector.
+        const useAmp = $("pkFloorUseAmp");
+        if (useAmp)
+          useAmp.addEventListener("change", () => {
+            if (pkAmpDetections.length) pkRunAmpDetector();
+            else pkDrawEnvelope();
+          });
+        const useEnv = $("pkFloorUseEnv");
+        if (useEnv)
+          useEnv.addEventListener("change", () => {
+            if (pkHasDetected) pkScheduleRedetect(0);
+            else pkDrawEnvelope();
+          });
       });
 
       // ── Envelope computation ────────────────────────────────────────────
@@ -9814,7 +9994,10 @@
         detThrPct,
         linkThrPct,
         linkMs,
+        floorCurve,
       ) {
+        // floorCurve (optional, Float32Array): local noise floor. When given,
+        // the detection threshold is an offset ABOVE it instead of a fixed level.
         const winSamp = Math.max(1, Math.round((sampleRate * winMs) / 1000));
         const env_peakThr = env_peakThrPct / 100;
         const detThr = detThrPct / 100;
@@ -9837,7 +10020,7 @@
         let i = winSamp;
         while (i < n - winSamp) {
           const cv = env[i];
-          if (cv < floor) {
+          if (cv < floor + (floorCurve ? floorCurve[i] : 0)) {
             i++;
             continue;
           }
@@ -9895,7 +10078,7 @@
               idx: centre,
               time: centre / sampleRate,
               amp: cv,
-              strong: cv >= detThr,
+              strong: cv >= detThr + (floorCurve ? floorCurve[centre] : 0),
             });
           }
           // Skip past the plateau AND its window so the same top isn't re-detected.
@@ -10342,31 +10525,36 @@
         return { env, curve, minima, winMs };
       }
 
-      function pkDetectFloor(skipRerun) {
-        if (!pkEnv) {
-          log("Load audio first", "warn");
-          return;
-        }
-        const winMs = parseFloat($("pkFloorWinMs").value);
-        if (!(winMs > 0)) {
-          log("Floor window must be above 0 ms.", "warn");
-          return;
-        }
-        pkFloor = pkComputeFloor(pkEnv, winMs);
-        log(
-          "Local noise floor: " + pkFloor.minima.length + " minima (window " + winMs + " ms)",
-          "ok",
-        );
-        // The detector now follows the floor: refresh any detections it made.
-        if (!skipRerun && pkAmpDetections.length) pkRunAmpDetector();
-        else pkDrawEnvelope();
+      // The local floor is shared by two detectors, each opting in with its own
+      // checkbox (pkFloorUseAmp / pkFloorUseEnv). Returns the curve to use for
+      // one of them, or null when the floor is off or that detector did not opt
+      // in. Rebuilds the curve if the envelope or the window has changed.
+      function pkFloorCurveFor(useId) {
+        const cb = $(useId);
+        if (!cb || !cb.checked) return null;
+        const f = pkEnsureFloor();
+        return f ? f.curve : null;
       }
 
-      function pkClearFloor() {
-        pkFloor = null;
-        // Back to the fixed Floor % level.
-        if (pkAmpDetections.length) pkRunAmpDetector();
-        else pkDrawEnvelope();
+      // The local floor is always computed (no Detect button): it is built for
+      // the current envelope and window, and rebuilt whenever either changes.
+      // Called when audio is selected and whenever the envelope is refreshed.
+      function pkEnsureFloor(announce) {
+        if (!pkEnv) {
+          pkFloor = null;
+          return null;
+        }
+        const winMs = parseFloat($("pkFloorWinMs").value);
+        if (!(winMs > 0)) return null;
+        if (!pkFloor || pkFloor.env !== pkEnv || pkFloor.winMs !== winMs) {
+          pkFloor = pkComputeFloor(pkEnv, winMs);
+          if (announce)
+            log(
+              "Local noise floor: " + pkFloor.minima.length + " minima (window " + winMs + " ms)",
+              "ok",
+            );
+        }
+        return pkFloor;
       }
 
       function pkRunAmpDetector() {
@@ -10375,7 +10563,7 @@
           return;
         }
         pkSnapshot("run amplitude detector");
-        const thr = parseFloat($("pkAmpThreshPct").value) / 100;
+        const thr = parseFloat($("pkDetThr").value) / 100;
         const minDurSamp = Math.round(
           (parseFloat($("pkAmpMinDurMs").value) / 1000) * sampleRate,
         );
@@ -10388,17 +10576,11 @@
         // curve instead of a fixed level, so faint passages are still caught
         // while the raised floor under loud passages (reverberation) no longer
         // merges their elements.
-        let floorCurve = null;
-        if (pkFloor) {
-          const winMs = parseFloat($("pkFloorWinMs").value);
-          if (!(winMs > 0)) {
-            log("Floor window must be above 0 ms.", "warn");
-            return;
-          }
-          if (!pkFloor || pkFloor.env !== pkEnv || pkFloor.winMs !== winMs)
-            pkFloor = pkComputeFloor(pkEnv, winMs);
-          floorCurve = pkFloor.curve;
+        if (!(parseFloat($("pkFloorWinMs").value) > 0)) {
+          log("Floor window must be above 0 ms.", "warn");
+          return;
         }
+        const floorCurve = pkFloorCurveFor("pkFloorUseAmp");
         const segs = [];
         let inSeg = false,
           ss = 0;
@@ -11001,7 +11183,6 @@
       const PK_PRESET_FIELDS = [
         "pkSmooth",
         "pkWin",
-        "pkThresh",
         "pkDetThr",
         "pkDetThrAuto",
         "pkSpecResEnvPeak",
@@ -11017,10 +11198,11 @@
         "pkMotifSeq",
         "pkMaxMotifGap",
         // Amplitude Detector
-        "pkAmpThreshPct",
         "pkAmpMinDurMs",
         "pkAmpMinGapMs",
         "pkFloorWinMs",
+        "pkFloorUseAmp",
+        "pkFloorUseEnv",
       ];
       // Presets shipped with the app. They only list the fields they set, so
       // loading one leaves every other parameter as it is. Not stored in a
@@ -11329,7 +11511,6 @@
         return {
           smoothMs: Math.max(0.5, parseFloat($("pkSmooth").value) || 1),
           winMs: Math.max(0.05, parseFloat($("pkWin").value) || 1),
-          env_peakThr: parseFloat($("pkThresh").value) || 1,
           detThr: parseFloat($("pkDetThr").value) || 5,
           // The Onset threshold box was removed in 0.9.0; the hysteresis in
           // pkFindEnvPeaks stays available but is always off.
@@ -11687,7 +11868,6 @@
             Math.max(0.1, Math.round(msSpac * f * 100) / 100),
           ),
         )];
-        const promCands = [0.1, 0.25, 0.5, 1, 2, 4];
         // Detection threshold: thresholds between observed reference
         // amplitudes enumerate the distinct behaviours, same trick as Stage 1.
         const detCands = pkCandidateThresholds(
@@ -11697,12 +11877,13 @@
 
         let best = null;
         let done = 0;
-        const total = winCands.length * promCands.length * detCands.length;
+        const total = winCands.length * detCands.length;
         for (const winMs of winCands) {
-          for (const env_peakThr of promCands) {
+          {
             for (const detThr of detCands) {
               {
                 const linkThr = null; // Onset threshold is no longer offered
+                const env_peakThr = detThr; // one Threshold % drives both
                 await busyYield();
                 const found = pkFindEnvPeaks(
                   slice,
@@ -11985,9 +12166,7 @@
               (det.f1 * 100).toFixed(0) +
               "% (win " +
               det.params.winMs +
-              "ms, prom " +
-              det.params.env_peakThr +
-              "%, det " +
+              "ms, thr " +
               det.params.detThr.toFixed(1) +
               "%)",
           );
@@ -12060,7 +12239,6 @@
         if (p.detection) {
           const d = p.detection;
           $("pkWin").value = String(d.winMs);
-          $("pkThresh").value = String(d.env_peakThr);
           $("pkDetThr").value = String(Math.round(d.detThr * 100) / 100);
           if ($("pkDetThrAuto")) $("pkDetThrAuto").checked = false;
           // Detection changed, so the envelope peak list itself has to be rebuilt —
@@ -12485,7 +12663,12 @@
         progress("Computing envelope…", 0.05);
         await busyTick();
         pkEnv = pkComputeEnv(P.smoothMs);
-        const autoThr = pkApplyAutoDetThr();
+        // With the local floor on for peak detection, the detection threshold
+        // is an offset above that curve, so the noise-based Auto threshold
+        // (an absolute level) would count the noise twice: the typed value is used.
+        const floorCurve = pkFloorCurveFor("pkFloorUseEnv");
+        const autoThr = floorCurve ? null : pkApplyAutoDetThr();
+        if (floorCurve) pkAutoNote = " · threshold above local floor";
         if (autoThr != null) P.detThr = autoThr;
 
         progress("Finding envelope peaks…", 0.4);
@@ -12493,10 +12676,11 @@
         const rawEnvPeaks = pkFindEnvPeaks(
           pkEnv,
           P.winMs,
-          P.env_peakThr,
+          P.detThr, // prominence = the one Threshold %
           P.detThr,
           P.linkThr,
           P.maxGapMs,
+          floorCurve,
         );
         pkEnvPeaks = rawEnvPeaks;
 
@@ -12784,8 +12968,7 @@
         // The curve belongs to one envelope. If the envelope was recomputed
         // (new smoothing, preset, re-detection) while the floor is on, rebuild
         // it for the new envelope instead of letting it vanish.
-        if (pkFloor && pkFloor.env !== pkEnv)
-          pkFloor = pkComputeFloor(pkEnv, pkFloor.winMs);
+        pkEnsureFloor();
 
         // Local noise floor: bright green, over a dark edge so it reads on
         // both the dark background and the pale envelope line.
@@ -12823,9 +13006,10 @@
         // when that curve is on. Shown while the detector is in use (it has
         // detections, the floor curve is on, or the Floor % box has focus) so
         // the effect of a new value can be seen before re-running.
-        const ampThrEl = $("pkAmpThreshPct");
+        const ampThrEl = $("pkDetThr");
         const ampThr = ampThrEl ? parseFloat(ampThrEl.value) / 100 : NaN;
-        const ampFloorOn = pkFloor && pkFloor.env === pkEnv;
+        const ampFloorOn =
+          pkFloor && pkFloor.env === pkEnv && $("pkFloorUseAmp") && $("pkFloorUseAmp").checked;
         if (
           ampThr >= 0 &&
           (pkAmpDetections.length || ampFloorOn || document.activeElement === ampThrEl)
@@ -12859,7 +13043,7 @@
           ctx.textAlign = "right";
           ctx.fillStyle = "#7cc7f0";
           ctx.fillText(
-            (ampFloorOn ? "floor + " : "Floor ") + ampThrEl.value + "%",
+            (ampFloorOn ? "floor + " : "Thr ") + ampThrEl.value + "%",
             padL + pw - 4,
             Math.max(padT + 10, ly - 3),
           );

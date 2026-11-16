@@ -2,15 +2,15 @@ import re, subprocess, sys, os, html
 HERE = os.path.dirname(os.path.abspath(__file__))
 body = open(os.path.join(HERE,'body.html'),encoding='utf-8').read()
 CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-OUT = os.path.join(HERE,'..','..','Rthoptera_Desk_User_Manual_v0.9.0.pdf')
+OUT = os.path.join(HERE,'..','..','Rthoptera_Desk_User_Manual_v0.9.1.pdf')
 
 css = """
 :root{--teal:#156082;--dark:#0c3347;--mid:#0e75a0;--pale:#e8f1f5;--line:#c9d8e0;--txt:#1b2a33;--muted:#5b6b75}
 @page{size:A4;margin:24mm 20mm 24mm 20mm;
- @top-right{content:"Rthoptera Desk 0.9.0 — User Manual";font:8pt 'Segoe UI',Arial,sans-serif;color:#7a8a94;padding-bottom:4mm;border-bottom:.4pt solid #c9d8e0;width:100%;text-align:right}
+ @top-right{content:"Rthoptera Desk 0.9.1 — User Manual";font:8pt 'Segoe UI',Arial,sans-serif;color:#7a8a94;padding-bottom:4mm;border-bottom:.4pt solid #c9d8e0;width:100%;text-align:right}
  @bottom-center{content:counter(page);font:9pt 'Segoe UI',Arial,sans-serif;color:#5b6b75}}
 @page :first{margin:0;@top-right{content:none;border:0}@bottom-center{content:none}}
-@page toc{@top-right{content:"Rthoptera Desk 0.9.0 — User Manual"}}
+@page toc{@top-right{content:"Rthoptera Desk 0.9.1 — User Manual"}}
 *{box-sizing:border-box}
 html{font-size:10pt}
 body{font-family:'Segoe UI','Helvetica Neue',Arial,sans-serif;color:var(--txt);line-height:1.5;margin:0;orphans:3;widows:3}
@@ -92,11 +92,11 @@ def toc_html(pages):
 cover = """<div class="cover"><div class="band"></div><img src="logo.png">
 <h1><b>Rthoptera</b> Desk</h1><div class="sub">User Manual</div>
 <div class="tag2">Desktop application for insect bioacoustics analysis</div>
-<div class="ver">Version 0.9.0 &nbsp;&middot;&nbsp; November 2026</div>
+<div class="ver">Version 0.9.1 &nbsp;&middot;&nbsp; November 2026</div>
 <div class="fine">Provisional edition for colleagues&rsquo; testing and feedback. Not for citation or redistribution.<br>Rthoptera Desk project &nbsp;&middot;&nbsp; github.com/panchorivasf/Rthoptera-Desk</div></div>"""
 
 def page(pages):
-    return f"<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Rthoptera Desk 0.9.0 — User Manual</title><style>{css}</style></head><body>{cover}{toc_html(pages)}{body}</body></html>"
+    return f"<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Rthoptera Desk 0.9.1 — User Manual</title><style>{css}</style></head><body>{cover}{toc_html(pages)}{body}</body></html>"
 
 def render(pages):
     p = os.path.join(HERE,'manual.html')

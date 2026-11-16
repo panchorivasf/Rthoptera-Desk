@@ -37,6 +37,7 @@
         <div class="dd-menu panel" style="min-width: 170px; padding: 4px; gap: 1px">
           <button type="button" class="menu-item" onclick="goHome(); ddCloseAll()">&#127968; Home</button>
           <button type="button" class="menu-item" onclick="openDefaults()">&#127991; Default metadata&hellip;</button>
+          <button type="button" class="menu-item" onclick="openShortcuts(); ddCloseAll()">&#9000; <span data-i18n>Keyboard shortcuts…</span></button>
           <div class="sub">
             <button type="button" class="menu-item" onclick="subToggle(this)">&#127760; Language <span class="arrow">&#9656;</span></button>
             <div class="sub-menu panel">
@@ -1809,9 +1810,11 @@
                       text-transform: uppercase;
                       letter-spacing: 0.06em;
                     "
+                    data-i18n
                     >Waveform</span
                   >
                   <div style="flex: 1"></div>
+                  <span id="waveZoomBtns" style="display: inline-flex; align-items: center; gap: 3px"></span>
                   <span style="font-size: 10px; color: var(--txt2)"
                     >Height:</span
                   >
@@ -1879,9 +1882,11 @@
                       text-transform: uppercase;
                       letter-spacing: 0.06em;
                     "
+                    data-i18n
                     >Spectrogram</span
                   >
                   <div style="flex: 1"></div>
+                  <span id="specZoomBtns" style="display: inline-flex; align-items: center; gap: 3px"></span>
                   <span style="font-size: 10px; color: var(--txt2)"
                     >Height:</span
                   >
@@ -2165,6 +2170,7 @@
                       <label class="chk"><input type="checkbox" id="showEnv" checked onchange="render()" /> Envelope</label>
                       <label class="chk"><input type="checkbox" id="showSpec" checked onchange="onPanelVis()" /> Spectrogram</label>
                       <label class="chk"><input type="checkbox" id="showWave" checked onchange="onPanelVis()" /> Waveform</label>
+                      <label class="chk" title="Off: the waveform is stretched so its loudest sample fills the height, so Vanish or Normalize can seem to change nothing. On: full height is 0 dBFS, so the real level shows."><input type="checkbox" id="wfFullScale" onchange="render()" /> Waveform at full scale (0 dBFS)</label>
                       <label class="chk"><input type="checkbox" id="showAnnots" checked onchange="render()" /> Selections</label>
                       <label class="chk"><input type="checkbox" id="showDets" checked onchange="render()" /> Detections</label>
                     </div>
@@ -2495,9 +2501,9 @@
                 margin-bottom: 6px;
               "
             >
-              <!-- Envelope peak Detection -->
+              <!-- Peak Detection -->
               <div class="panel" style="min-width: 210px">
-                <h2 data-i18n>Envelope peak Detection</h2>
+                <h2 data-i18n>Peak Detection</h2>
                 <div class="pk-cols pk-cols-env" style="display: flex; flex-direction: column; gap: 4px">
                   <div class="row">
                     <span
@@ -2507,7 +2513,7 @@
                     <input
                       type="number"
                       id="pkSmooth"
-                      value="1"
+                      value="2"
                       min="0.5"
                       max="50"
                       step="0.5"
@@ -2518,55 +2524,17 @@
                   <div class="row">
                     <span
                       style="color: var(--txt2); font-size: 11px; width: 110px"
-                      >Envelope peak window (ms)</span
+                      >Peak Detection Window (ms)</span
                     >
                     <input
                       type="number"
                       id="pkWin"
-                      value="1"
+                      value="3"
                       min="0.1"
                       max="200"
                       step="0.1"
                       style="width: 52px"
                     />
-                  </div>
-                  <div class="row">
-                    <span
-                      style="color: var(--txt2); font-size: 11px; width: 110px"
-                      >Envelope peak threshold (%)</span
-                    >
-                    <input
-                      type="number"
-                      id="pkThresh"
-                      value="1"
-                      min="0"
-                      max="20"
-                      step="0.1"
-                      style="width: 52px"
-                    />
-                  </div>
-                  <div class="row">
-                    <span
-                      style="color: var(--txt2); font-size: 11px; width: 110px"
-                      >Detection thr. (%)</span
-                    >
-                    <input
-                      type="number"
-                      id="pkDetThr"
-                      value="5"
-                      min="0"
-                      max="90"
-                      step="0.1"
-                      style="width: 52px"
-                    />
-                    <label
-                      class="chk"
-                      style="font-size: 10px; color: var(--txt2)"
-                      data-i18n-title
-                      title="Set the Detection threshold automatically from the background noise: the quiet part of the envelope (below 25% of the peak), as its median + 3 spread. The box shows the value that was used. Typing in the box switches Auto off; tick it again to go back."
-                    >
-                      <input type="checkbox" id="pkDetThrAuto" checked /> Auto
-                    </label>
                   </div>
                 </div>
               </div>
@@ -2601,7 +2569,7 @@
                     <input
                       type="number"
                       id="pkMaxGap"
-                      value="8"
+                      value="15"
                       min="1"
                       max="500"
                       step="1"
@@ -2869,6 +2837,37 @@
                 </div>
               </div>
 
+              <!-- Local floor — the local minima of the envelope, joined and smoothed
+                   into a noise-floor curve. Shared by the Amplitude Detector and
+                   Peak Detection; each opts in with its own checkbox. -->
+              <div class="panel" style="min-width: 190px">
+                <h2 data-i18n>Local floor</h2><!-- one Threshold (%) shared by the Amplitude Detector and Peak Detection -->
+                <div style="display: flex; flex-direction: column; gap: 4px">
+                  <div class="row">
+                    <span style="color: var(--txt2); font-size: 11px; width: 90px" data-i18n>Threshold (%)</span>
+                    <input type="number" id="pkDetThr" value="2.5" min="0" max="90" step="0.1" style="width: 52px" onchange="pkDrawEnvelope()" />
+                    <label
+                      class="chk"
+                      style="font-size: 10px; color: var(--txt2)"
+                      data-i18n-title
+                      title="Set the threshold automatically from the background noise (envelope peak detection): the quiet part of the envelope (below 25% of the peak), as its median + 3 spread. The box shows the value that was used. Typing in the box switches Auto off; tick it again to go back. Not used while the local floor is applied to peak detection."
+                    >
+                      <input type="checkbox" id="pkDetThrAuto" /> Auto
+                    </label>
+                  </div>
+                  <div class="row" title="Local noise floor: the lowest points of the envelope within this window, joined and smoothed. Pick a window longer than the spacing between pulses.">
+                    <span style="color: var(--txt2); font-size: 11px; width: 90px">Floor win. (ms)</span>
+                    <input type="number" id="pkFloorWinMs" value="10" min="1" max="10000" step="10" style="width: 60px" />
+                  </div>
+                  <label class="chk" style="font-size: 11px; color: var(--txt2)" data-i18n-title title="The Amplitude Detector's threshold becomes an offset above the local floor curve.">
+                    <input type="checkbox" id="pkFloorUseAmp" checked /> <span data-i18n>Use in Amplitude Detector</span>
+                  </label>
+                  <label class="chk" style="font-size: 11px; color: var(--txt2)" data-i18n-title title="Envelope peak detection's threshold becomes an offset above the local floor curve. The Auto threshold is not used while this is on.">
+                    <input type="checkbox" id="pkFloorUseEnv" checked /> <span data-i18n>Use in Peak Detection</span>
+                  </label>
+                </div>
+              </div>
+
               <!-- Amplitude Detector — the same simple threshold detector as
                    Spectral Analysis, independent of envelope peak detection.
                    Produces its own editable "detections" layer (see the
@@ -2879,22 +2878,6 @@
               >
                 <h2 data-i18n>Amplitude Detector</h2>
                 <div class="pk-cols pk-cols-amp" style="display: flex; flex-direction: column; gap: 4px">
-                  <div class="row">
-                    <span
-                      style="color: var(--txt2); font-size: 11px; width: 90px"
-                      >Floor %</span
-                    >
-                    <input
-                      type="number"
-                      id="pkAmpThreshPct"
-                      value="5"
-                      min="0.1"
-                      max="90"
-                      step="0.1"
-                      style="width: 60px"
-                      onchange="pkDrawEnvelope()"
-                    />
-                  </div>
                   <div class="row">
                     <span
                       style="color: var(--txt2); font-size: 11px; width: 90px"
@@ -2918,22 +2901,12 @@
                     <input
                       type="number"
                       id="pkAmpMinGapMs"
-                      value="2"
+                      value="10"
                       min="0"
                       max="10000"
                       step="0.5"
                       style="width: 60px"
                     />
-                  </div>
-                  <div class="row" title="Local noise floor: the lowest points of the envelope within this window, joined and smoothed. Pick a window longer than the spacing between pulses.">
-                    <span style="color: var(--txt2); font-size: 11px; width: 90px">Floor win. (ms)</span>
-                    <input type="number" id="pkFloorWinMs" value="150" min="1" max="10000" step="10" style="width: 60px" />
-                  </div>
-                  <div class="row" style="gap: 4px">
-                    <button onclick="pkDetectFloor()" id="btnPkFloor" style="font-size: 10px; padding: 2px 8px; flex: 1" data-i18n-title title="Find the local minima of the envelope and plot the smoothed noise-floor curve (bright green). The Amplitude Detector then thresholds relative to this curve (Floor % becomes an offset above it) until you press the X.">
-                      &#128260; Detect local minima
-                    </button>
-                    <button onclick="pkClearFloor()" style="font-size: 10px; padding: 2px 8px" title="Clear the noise-floor curve; the Amplitude Detector goes back to a fixed Floor % level.">&#10005;</button>
                   </div>
                   <div
                     id="pkAmpDetCount"
@@ -7764,7 +7737,7 @@
                     <span
                       class="info-icon"
                       data-i18n-title
-                      title="Temperature (the temp_c metadata) changes many temporal variables in crickets and katydids. When ticked, every variable is regressed on temperature WITHIN species (so species living at different temperatures do not tilt the slope) and each value is moved to the chosen reference temperature before the PCA, radar, tests and profiles. Observations without a temperature are left as they are. The Temp. R² column in the variable ranking shows how much each variable depends on temperature. A knowledge base keeps its reference temperature and slopes, and comparisons adjust the unknown with them."
+                      title="Temperature (the temp_c metadata) changes many temporal variables in crickets and katydids. When ticked, the temperature-dependent variables (pulse and motif duration, gap, period and rate, duty cycle, peak frequency) are regressed on temperature WITHIN species (so species living at different temperatures do not tilt the slope) and each value is moved to the chosen reference temperature before the PCA, radar, tests and profiles. All other variables are never adjusted: temporal ones such as pulse counts, levels, entropy and the PCI (pattern complexity, built from proportions of the motif, so largely independent of tempo), and spectral ones such as bandwidth and the spectrum shape. Observations without a temperature are left as they are. The Temp. R² column in the variable ranking shows how much each variable depends on temperature. A knowledge base keeps its reference temperature and slopes, and comparisons adjust the unknown with them."
                       >&#9432;</span
                     >
                   </div>
@@ -7845,6 +7818,16 @@
 
               <div class="panel">
                 <h2 data-i18n>PCA (biplot and 3D)</h2>
+                <div class="row" style="gap: 10px; flex-wrap: wrap; margin-bottom: 6px">
+                  <span style="font-size: 11px; color: var(--txt2)">Point labels show:</span>
+                  <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="saLbl_id" checked onchange="saRedraw()" /> name</label>
+                  <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="saLbl_species" onchange="saRedraw()" /> species</label>
+                  <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="saLbl_specimen" onchange="saRedraw()" /> specimen</label>
+                  <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="saLbl_country" onchange="saRedraw()" /> country</label>
+                  <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="saLbl_locality" onchange="saRedraw()" /> locality</label>
+                  <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="saLbl_date" onchange="saRedraw()" /> date</label>
+                  <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="saLbl_temp" onchange="saRedraw()" /> temperature</label>
+                </div>
                 <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start">
                 <div style="flex: 1 1 480px; min-width: 0">
                 <h3 style="font-size: 11px; margin: 0 0 4px; color: var(--txt2)" data-i18n>PCA biplot</h3>
@@ -7947,6 +7930,71 @@
                   <div id="saRecFig" style="flex: 1 1 560px; min-width: 0; overflow: auto; background: #fff; border-radius: 4px"></div>
                   <div id="saRecTable" style="flex: 1 1 380px; min-width: 0; overflow: auto"></div>
                 </div>
+              </div>
+
+              <div class="panel">
+                <h2 data-i18n>
+                  Clustering (k-means, DBSCAN, hierarchical)
+                  <span
+                    class="info-icon"
+                    data-i18n-title
+                    title="Groups the observations without looking at the species names, on the same data as the PCA (ticked variables, temperature-adjusted if ticked, Z-scored). The tables show how the clusters fall across the species, with the adjusted Rand index (1 = clusters equal species, about 0 = chance). This is a way of looking at the data, not a test: the result depends on k, eps and the linkage, so report the settings. Use the PERMANOVA and the leave-one-out test for evidence."
+                    >&#9432;</span
+                  >
+                </h2>
+                <div class="row" style="gap: 8px; flex-wrap: wrap; margin-bottom: 6px; align-items: center">
+                  <span style="font-size: 11px; color: var(--txt2)">k</span>
+                  <input type="number" id="saClustK" min="2" max="12" value="3" style="width: 48px; font-size: 11px" title="Number of clusters for k-means and for the cut of the dendrogram" />
+                  <span style="font-size: 11px; color: var(--txt2)">linkage</span>
+                  <select id="saClustLink" style="font-size: 11px">
+                    <option value="ward" selected>Ward</option>
+                    <option value="average">average</option>
+                    <option value="complete">complete</option>
+                    <option value="single">single</option>
+                  </select>
+                  <span style="font-size: 11px; color: var(--txt2)">DBSCAN: minPts</span>
+                  <input type="number" id="saClustMin" min="2" max="20" value="3" style="width: 48px; font-size: 11px" />
+                  <span style="font-size: 11px; color: var(--txt2)">eps</span>
+                  <input type="number" id="saClustEps" min="0" step="0.1" placeholder="auto" style="width: 66px; font-size: 11px" title="Leave empty to use the value suggested from the k-distance plot" />
+                  <button class="pri" onclick="saClustRun()">▶ Run</button>
+                  <span style="font-size: 11px; color: var(--txt2)">colour plot by</span>
+                  <select id="saClustBy" onchange="saClustRedraw()" style="font-size: 11px">
+                    <option value="kmeans" selected>k-means</option>
+                    <option value="dbscan">DBSCAN</option>
+                    <option value="hier">hierarchical</option>
+                  </select>
+                </div>
+                <div id="saClustOut" style="font-size: 12px; color: var(--txt2)">Not run yet.</div>
+                <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start; margin-top: 8px">
+                  <div id="saClustFig" style="overflow: auto; background: #fff; border-radius: 4px"></div>
+                  <div style="display: flex; flex-direction: column; gap: 8px">
+                    <div id="saClustKd" style="overflow: auto; background: #fff; border-radius: 4px"></div>
+                  </div>
+                </div>
+                <div id="saClustDend" style="overflow: auto; background: #fff; border-radius: 4px; margin-top: 8px"></div>
+              </div>
+
+              <div class="panel">
+                <h2 data-i18n>
+                  Do the species differ? (PERMANOVA)
+                  <span
+                    class="info-icon"
+                    data-i18n-title
+                    title="Tests whether the ticked species differ in the ticked variables, using the same data as the PCA (temperature-adjusted if that box is ticked, each variable Z-scored). Pseudo-F and R² come from the distances between recordings; p comes from shuffling the species labels. PERMDISP checks that the species do not merely differ in spread. Every pair of species is also tested, with Holm-corrected p. With 'whole specimens' ticked, the recordings of one animal are always shuffled together, which avoids counting them as independent."
+                    >&#9432;</span
+                  >
+                </h2>
+                <div class="row" style="gap: 8px; flex-wrap: wrap; margin-bottom: 6px">
+                  <span style="font-size: 11px; color: var(--txt2)">Permutations</span>
+                  <select id="saPermN" style="font-size: 11px">
+                    <option value="999">999</option>
+                    <option value="9999" selected>9999</option>
+                    <option value="49999">49999</option>
+                  </select>
+                  <label class="chk" style="font-size: 11px; color: var(--txt2)"><input type="checkbox" id="saPermSpec" checked /> shuffle whole specimens</label>
+                  <button class="pri" onclick="saPermRun()">▶ Run test</button>
+                </div>
+                <div id="saPermOut" style="font-size: 12px; color: var(--txt2)">Not run yet.</div>
               </div>
 
               <div class="panel">
@@ -8295,6 +8343,21 @@
       </div>
     </div>
 
+    <!-- ═══ KEYBOARD SHORTCUTS (Preferences) ═════════════════════════════════ -->
+    <div id="shortcutsOverlay" class="modal-overlay" onclick="if (event.target === this) closeShortcuts();">
+      <div class="modal-box" style="width: min(620px, 94vw)">
+        <div class="modal-header">
+          <h2 data-i18n>Keyboard shortcuts</h2>
+          <button onclick="closeShortcuts()" style="font-size: 11px; padding: 2px 8px">✕</button>
+        </div>
+        <div class="modal-body" style="overflow-y: auto; display: flex; flex-direction: column; gap: 10px">
+          <div data-i18n style="font-size: 11px; color: var(--txt2); line-height: 1.5">Click a shortcut, then press the new key combination (Esc cancels). Left and right Ctrl/Shift/Alt are told apart. Assigning a combination that is already used moves it to the new action. Shortcuts are kept on this computer.</div>
+          <div id="shortcutsList" style="display: flex; flex-direction: column; gap: 4px"></div>
+          <div><button type="button" data-i18n onclick="kbResetAll()">Reset all to defaults</button></div>
+        </div>
+      </div>
+    </div>
+
     <!-- ═══ DEFAULT METADATA (Preferences) ═════════════════════════════════════ -->
     <div
       id="defaultsOverlay"
@@ -8433,6 +8496,7 @@
     </div>
 
     <script src="main.js"></script>
+    <script src="shortcuts.js"></script>
     <script src="oscillogram_stack.js"></script>
     <script src="oscillogram_zoom.js"></script>
     <script src="auto_coded_oscillogram.js"></script>
@@ -8441,6 +8505,8 @@
     <script src="annotate.js"></script>
     <script src="summary_analysis.js"></script>
     <script src="summary_analysis_kb.js"></script>
+    <script src="summary_analysis_perm.js"></script>
+    <script src="summary_analysis_clust.js"></script>
     <script src="merge_waves.js"></script>
     <script src="custom_workflow.js"></script>
     <script src="vendor/ort/ort.wasm.min.js"></script>

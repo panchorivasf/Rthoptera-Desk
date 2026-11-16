@@ -27,7 +27,6 @@ const WF_TRACKED = {
   applyDownsampleEdit: "Downsample",
   applyNormalizeEdit: "Normalize",
   fixDcOffset: "Fix DC offset",
-  pkDetectFloor: "Detect local minima",
   pkDetect: "Detect envelope peaks",
   pkRunAmpDetector: "Amplitude Detector",
   pkClearAmpDetections: "Clear detections",

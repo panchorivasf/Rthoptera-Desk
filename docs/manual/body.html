@@ -10,7 +10,7 @@
 </ul>
 
 <h2 id="s1-1">1.1 Status of this manual</h2>
-<p>This manual is a provisional edition written against version 0.9.0. The application is under active development: names of buttons, default values and some behaviours may change between releases. Sections marked <i>Provisional</i> are shorter than they will eventually be. The screenshots were taken with a synthetic demonstration recording (a made-up song of seven echemes), so the numbers in them are illustrative only. Where the manual and the program disagree, trust the program and please tell the author; a checklist for reporting is in Appendix B.</p>
+<p>This manual is a provisional edition written against version 0.9.1. The application is under active development: names of buttons, default values and some behaviours may change between releases. Sections marked <i>Provisional</i> are shorter than they will eventually be. The screenshots were taken with a synthetic demonstration recording (a made-up song of seven echemes), so the numbers in them are illustrative only. Where the manual and the program disagree, trust the program and please tell the author; a checklist for reporting is in Appendix B.</p>
 
 <h2 id="s1-2">1.2 Conventions used in this manual</h2>
 <table class="plain">
@@ -21,7 +21,16 @@
 <tr><td>Tooltips</td><td>Hovering the pointer over almost any control explains it. The information icon (ⓘ) next to some headings gives longer hints. Tooltips are the most detailed reference for individual parameters; this manual explains how the pieces fit together.</td></tr>
 </table>
 
-<h2 id="s1-3">1.3 What changed since the 0.8.0 draft</h2>
+<h2 id="s1-3">1.3 What changed in 0.9.1</h2>
+<ul>
+<li><b>Drag and drop</b> of audio files onto the window (section 5.1).</li>
+<li>The waveform is drawn as a true <b>oscillogram</b> when zoomed in, and the waveform and spectrogram have <b>zoom buttons</b> (time, amplitude, frequency). <b>Right Ctrl + Right Shift + ↑ / ↓</b> changes the spectral resolution on the fly (section 6.1).</li>
+<li>Preferences → <b>Keyboard shortcuts…</b> lets you change the shortcuts (section 15).</li>
+<li>Temporal Analysis: a new <b>Local floor</b> pane holds a single <b>Threshold (%)</b> and the local noise floor, shared by peak detection and the Amplitude Detector. The envelope-peak threshold, <i>Floor %</i> and the <b>Detect local minima</b> button are gone, and several defaults changed (sections 7.3 and 7.5).</li>
+<li>Summary Analysis: <b>PERMANOVA</b>, <b>clustering</b> (k-means, DBSCAN, hierarchical), choosable <b>point labels</b>, a temperature adjustment limited to timing variables and the peak frequency, and the number of specimens and rows behind each mean (section 11.2).</li>
+</ul>
+
+<h2 id="s1-4">1.4 What changed in 0.9.0 (since the 0.8.0 draft)</h2>
 <ul>
 <li>Three new modules: <b>Custom Workflow</b> (section 12), <b>Clustering</b> with Google Perch (section 13) and <b>STR</b> (section 14), including the STR fingerprint and the Representative STR.</li>
 <li>Preprocessing rewritten (section 6): Vanish, Delete, Fix DC Offset, Normalize, Noise padding and Fade in <b>Edit audio</b>. Every tool has its own <b>Apply to selected files</b> button, which replaces the Batch Edit pane.</li>
@@ -34,7 +43,7 @@
 <p>Download the installer for your system from the project’s Releases page (<code>github.com/panchorivasf/Rthoptera-Desk/releases</code>).</p>
 <table>
 <thead><tr><th>System</th><th>File</th><th>Notes</th></tr></thead>
-<tr><td>Windows 64-bit</td><td><code>Rthoptera.Desk_0.9.0_x64-setup.exe</code></td><td>Recommended; double-click it. The <code>.msi</code> is for managed deployment.</td></tr>
+<tr><td>Windows 64-bit</td><td><code>Rthoptera.Desk_0.9.1_x64-setup.exe</code></td><td>Recommended; double-click it. The <code>.msi</code> is for managed deployment.</td></tr>
 <tr><td>macOS, Apple Silicon (M1–M4)</td><td><code>…_aarch64.dmg</code></td><td>Apple menu → About This Mac shows “Apple M…”.</td></tr>
 <tr><td>macOS, Intel</td><td><code>…_x64.dmg</code></td><td>About This Mac shows an Intel processor.</td></tr>
 <tr><td>Linux x86_64</td><td><code>.AppImage</code> (run <code>chmod +x</code> first), <code>.deb</code>, <code>.rpm</code></td><td>The AppImage works on most distributions.</td></tr>
@@ -82,9 +91,10 @@
 <tr><td><code>Ctrl+M</code></td><td>Merge the selected detections (Temporal Analysis)</td></tr>
 <tr><td><code>S</code> / <code>A</code> / <code>H</code></td><td>Select, Draw, Pan tools in Spectral Analysis (shown in tooltips)</td></tr>
 <tr><td>Hold <code>S</code> + click</td><td>Split the detection or selection under the pointer at that time (Temporal Analysis, section 7.4)</td></tr>
-<tr><td><code>Space</code></td><td>Play / pause in the Auto-coded Oscillogram</td></tr>
+<tr><td><code>Space</code></td><td>Play / pause (in the viewer and in the Auto-coded Oscillogram)</td></tr>
+<tr><td><code>Right Ctrl</code>+<code>Right Shift</code>+<code>↑</code> / <code>↓</code></td><td>Finer frequency / finer time resolution of the spectrogram (larger / smaller FFT)</td></tr>
 </table>
-<p>Hovering over a tool shows its keyboard shortcut in the tooltip. Keyboard shortcuts are ignored while you are typing in a text or number box.</p>
+<p>Hovering over a tool shows its keyboard shortcut in the tooltip. Keyboard shortcuts are ignored while you are typing in a text or number box. The shortcuts of the viewer (play / pause, the spectrogram resolution, the Spectral Analysis tools and zoom) can be changed in Preferences → Keyboard shortcuts… (section 15).</p>
 
 <h1 id="c4">4. Quick start: from a recording to a table</h1>
 <ol>
@@ -103,6 +113,7 @@
 
 <h2 id="s5-1">5.1 Loading audio</h2>
 <p>Click <b>Audio</b> in the top bar (or <b>Load Audio</b> on the landing page). The files appear in the Loaded Audio pane, and the first one becomes the active recording. The playback bar under the waveform and spectrogram shows the active recording’s duration, sample rate, Nyquist frequency and channels.</p>
+<p><b>Drag and drop.</b> You can also drag audio files from your file manager and drop them anywhere on the window: the landing page, the Loaded Audio list or any tab. A highlight appears while you drag. Files that are not WAV, MP3, FLAC, OGG or AIFF are ignored, and the log says so.</p>
 <p>Importing existing selections (Spectral Analysis tab, <b>Import selections</b>):</p>
 <ul>
 <li><b>Import Selections</b> reads a Raven selection table (<code>.txt</code> / <code>.csv</code>).</li>
@@ -137,6 +148,10 @@
 <p>The top of the tab shows the waveform and spectrogram of the active recording. Each has a Height slider and a drag handle; the waveform opens at 140 px.</p>
 <ul>
 <li><b>Centre line.</b> A thin line marks zero on the waveform. If the recording sits noticeably above or below it, a second line shows the mean, and the playback bar suggests <b>Fix DC Offset</b>.</li>
+<li><b>Zoom buttons.</b> Each plot header has magnifier buttons with + and −. The waveform has <b>Time</b> and <b>Amplitude</b> buttons, and the spectrogram has <b>Time</b> and <b>Frequency</b> buttons. Each zoom is centred on the middle of the current view. The ↺ button shows the whole recording again (and the full amplitude or frequency range). The mouse wheel still zooms time, and <code>Ctrl</code>+wheel zooms frequency. The same actions can be given keyboard shortcuts (section 15).</li>
+<li><b>A real oscillogram when zoomed in.</b> When the view is wide, each pixel column shows the lowest and highest sample as a bar. Once only a few samples fall in a column, the waveform is drawn as the samples joined by a line, with a dot on each sample when they are far apart. The shortest window you can zoom to is about 24 samples.</li>
+<li><b>Waveform at full scale (0 dBFS).</b> By default the waveform is stretched so its loudest sample fills the height, so Vanish or Normalize can seem to change nothing. Tick this box to fix full height at 0 dBFS so real level changes show.</li>
+<li><b>Spectral resolution on the fly.</b> <code>Right Ctrl</code>+<code>Right Shift</code>+<code>↑</code> steps the FFT size up (finer frequency resolution, coarser time resolution) and <code>↓</code> steps it down. The log reports the new FFT size and the width of a frequency bin in Hz. This is the same setting as <b>FFT</b> in the Spectrogram menu of Spectral Analysis.</li>
 <li><b>Cursors.</b> The I-beam is the default: click to place the playhead, drag to select a stretch of time. Near either edge of a selection the cursor becomes a double arrow; drag there to resize the selection while the other edge stays put. Inside a selection, the cursor becomes a hand; drag to move the whole selection, which keeps its length.</li>
 <li><b>Playback bar:</b> Play/Stop, jump to the selection edges, <b>Speed</b> and <b>Freq drop</b> (listening only; see section 8.1), plus the recording’s duration, sample rate, Nyquist frequency and channels.</li>
 </ul>
@@ -204,19 +219,26 @@
 <li>Tune the parameters below. After the first Detect, changing any detection parameter re-runs detection automatically after a short pause. Note that re-detection replaces manual peak edits.</li>
 </ol>
 
-<h3>Envelope peak detection</h3>
+<h3>Peak Detection</h3>
 <table>
 <thead><tr><th style="width:28%">Parameter</th><th>Role</th></tr></thead>
-<tr><td>Smooth (ms)</td><td>Smoothing window of the envelope. Larger values merge nearby bumps.</td></tr>
-<tr><td>Envelope peak window (ms)</td><td>Window used to decide that a point is a local maximum.</td></tr>
-<tr><td>Envelope peak threshold (%)</td><td>Minimum prominence of a peak.</td></tr>
-<tr><td>Detection thr. (%) and Auto</td><td>Minimum level for a peak to count. <b>Auto</b> sets it from the background noise: the median plus 3 spreads of the quiet part of the envelope, below 25% of the peak. Typing a value switches Auto off.</td></tr>
+<tr><td>Smooth (ms)</td><td>Smoothing window of the envelope. Larger values merge nearby bumps. Default 2 ms.</td></tr>
+<tr><td>Peak Detection Window (ms)</td><td>Window used to decide that a point is a local maximum. Default 3 ms.</td></tr>
+</table>
+<p>The level a peak must reach, and how far it must stand out from its surroundings, is one setting: <b>Threshold (%)</b> in the <b>Local floor</b> pane (next section). There is no separate peak-prominence threshold.</p>
+
+<h3>Local floor</h3>
+<table>
+<thead><tr><th style="width:28%">Parameter</th><th>Role</th></tr></thead>
+<tr><td>Threshold (%) and Auto</td><td>One threshold for both detectors (default 2.5%). For peak detection it is the minimum level for a peak to count, and also the minimum prominence. For the Amplitude Detector it is the level the envelope must rise above. <b>Auto</b> (off by default) sets it from the background noise instead: the median plus 3 spreads of the quiet part of the envelope, below 25% of the peak. Typing a value switches Auto off. Auto is not used while the floor is applied to peak detection.</td></tr>
+<tr><td>Floor win. (ms)</td><td>Window of the local noise floor (default 10 ms); see section 7.5.</td></tr>
+<tr><td>Use in Amplitude Detector, Use in Peak Detection</td><td>Both ticked by default. With a box ticked, that detector’s threshold is an offset above the local floor curve instead of a fixed level.</td></tr>
 </table>
 
 <h3>Grouping</h3>
 <table>
 <thead><tr><th style="width:28%">Parameter</th><th>Role</th></tr></thead>
-<tr><td>Max envelope peak gap (ms)</td><td>Largest gap between peaks inside one pulse.</td></tr>
+<tr><td>Max envelope peak gap (ms)</td><td>Largest gap between peaks inside one pulse. Default 15 ms.</td></tr>
 <tr><td>Max amp diff (%)</td><td>Largest amplitude difference between neighbouring peaks of one pulse.</td></tr>
 <tr><td>Min envelope peaks/pulse</td><td>Pulses with fewer peaks are dropped, and their peaks are left unassigned.</td></tr>
 <tr><td>Edge pad (ms/side)</td><td>Expands every pulse on each side to capture the true onset and offset. Pulse rate and peak-timing metrics are unaffected.</td></tr>
@@ -290,15 +312,16 @@
 
 
 <h2 id="s7-5">7.5 Amplitude Detector (route B)</h2>
-<p>Thresholds the envelope directly, with no peaks involved. The parameters are <b>Floor %</b>, <b>Min dur. (ms)</b> and <b>Min gap (ms)</b>. Press <b>Amplitude Detector</b>, in the Detection parameters bar to the right of <b>Detect envelope peaks</b>.</p>
-<p>A dashed light-blue line on the plot marks the Floor % level, and a detection is any stretch where the envelope rises above it. With <b>Detect local minima</b> on, the line becomes a curve, the noise floor plus Floor %. The line appears once there are detections or while the Floor % box is active, and it moves as you type, so you can see the effect before the detector re-runs. The detections can be edited by dragging their edges, merged (<b>Merge</b> or <code>Ctrl+M</code>), split (hold <code>S</code>) and deleted.</p>
+<p>Thresholds the envelope directly, with no peaks involved. Its level is the shared <b>Threshold (%)</b> of the Local floor pane; the other parameters are <b>Min dur. (ms)</b> and <b>Min gap (ms)</b> (default 10 ms). Press <b>Amplitude Detector</b>, in the Detection parameters bar to the right of <b>Detect envelope peaks</b>.</p>
+<p>A dashed light-blue line on the plot marks the Threshold level, and a detection is any stretch where the envelope rises above it. With <b>Use in Amplitude Detector</b> ticked, the line becomes a curve, the local noise floor plus the Threshold. The line appears once there are detections or while the Threshold box is active, and it moves as you type, so you can see the effect before the detector re-runs. The detections can be edited by dragging their edges, merged (<b>Merge</b> or <code>Ctrl+M</code>), split (hold <code>S</code>) and deleted.</p>
 
 <h3>Local noise floor</h3>
-<p><b>Detect local minima</b> finds the lowest points of the envelope within a window (<b>Floor win., ms</b>). Choose a window longer than the spacing between pulses. The minima are joined and smoothed into a bright green curve.</p>
+<p>The <b>Local floor</b> pane finds the lowest points of the envelope within a window (<b>Floor win., ms</b>, default 10 ms). Choose a window longer than the spacing between pulses. The minima are joined and smoothed into a bright green curve.</p>
 <ul>
-<li>Afterwards, Floor % becomes an offset above this curve. Reverberation under loud passages then no longer merges elements, while faint parts are still caught.</li>
-<li>The ✕ button removes the curve and returns to a fixed level.</li>
-<li>Changing the window rebuilds the curve.</li>
+<li>The curve is computed automatically when a recording is selected, and rebuilt when the envelope or the window changes. There is no button to press.</li>
+<li>For each detector that has its <b>Use in…</b> box ticked (both are by default), the Threshold becomes an offset above this curve. Reverberation under loud passages then no longer merges elements, while faint parts are still caught.</li>
+<li>Untick a box to return that detector to a fixed level.</li>
+<li>Changing the window or the Threshold re-runs the detectors that use them.</li>
 </ul>
 
 <h2 id="s7-6">7.6 Computing metrics</h2>
@@ -338,7 +361,7 @@
 </ul>
 
 <h2 id="s7-8">7.8 Parameter presets</h2>
-<p><b>Parameter Presets</b> offers a built-in Acrididae preset (Smooth 50 ms, Floor win. 50 ms) and ten user slots stored on this machine (<b>Save</b>, <b>Load</b>, <b>Delete</b>). <b>Export file…</b> / <b>Import file…</b> use a <code>.json</code> that can be copied to another computer. Presets include the Amplitude Detector settings, and loading one recomputes the envelope immediately.</p>
+<p><b>Parameter Presets</b> offers a built-in Acrididae preset (Smooth 50 ms, Floor win. 50 ms) and ten user slots stored on this machine (<b>Save</b>, <b>Load</b>, <b>Delete</b>). <b>Export file…</b> / <b>Import file…</b> use a <code>.json</code> that can be copied to another computer. Presets include the Local floor and Amplitude Detector settings, and loading one recomputes the envelope immediately. A preset saved before 0.9.1 still loads, but the separate Floor %, Detection thr. and Envelope peak threshold values it holds are no longer used.</p>
 
 <h2 id="s7-9">7.9 Sending results on, and exporting</h2>
 <ul>
@@ -556,7 +579,8 @@
 <li><b>Tables</b> (Motifs, Pulses, EnvPeaks, Spectral, MotifSeqs, STR, STR rep.) set where the variables come from. The default is the motif level, because the same measurement averaged at several levels is nearly the same number repeated, which over-weights it. Add Pulses or EnvPeaks for things the motif row lacks, such as pulse gaps.</li>
 <li><b>Drop near-duplicates</b> (correlated above a threshold) keeps, of each group of correlated variables, the one that separates species best. <b>Suggested set</b>, <b>All</b> and <b>None</b> are shortcuts. <b>All spectral</b> / <b>all temporal</b> tick or untick every spectral (frequencies, bandwidths, Q, <code>spec_*</code>) or temporal variable at once, across all tables.</li>
 <li><b>Species shown</b> (All / First 6 / None), and <b>Names and labels</b> to rename recordings or species.</li>
-<li><b>Adjust for temperature</b> to a reference °C, within species, optionally only for variables with a significant slope (p &lt; 0.05). The variable ranking has a Temp. R² column.</li>
+<li><b>Adjust for temperature</b> to a reference °C, within species, optionally only for variables with a significant slope (p &lt; 0.05). Only the variables known to depend on temperature in orthopterans are adjusted: pulse, motif and echeme duration, gap, period and rate, duty cycle and peak frequency. Counts, levels, entropy and complexity indices are left alone. The variable ranking has a Temp. R² column.</li>
+<li><b>Point labels show</b> chooses what the labels on the PCA points say: name, species, specimen, country, locality, date, temperature, or any combination.</li>
 <li><b>Reload from merged data</b>, <b>Reset analysis</b>, <b>Save settings / Load settings…</b> (<code>.json</code>).</li>
 </ul>
 
@@ -568,7 +592,9 @@
 <tr><td>3D PCA</td><td>PC1–PC3 with 1.5σ ellipsoid outlines (needs 3+ variables). A species ellipsoid is drawn from 3 recordings, matching the 2D plot. Hover over or click points for recording IDs. Export a PNG or an interactive HTML page that works offline. The biplot and the 3D PCA sit side by side.</td></tr>
 <tr><td>Radar profiles</td><td>Each variable is scaled 0–1. The line is the species mean and the band is ±1 SD. <b>Radial labels</b> (also on the Compare radar) turns each variable name along its spoke, so long or many names do not overlap.</td></tr>
 <tr><td>Which variables separate the species?</td><td>η² (the share of variance explained by species, from a one-way ANOVA) and F for each variable. Variables are tested one at a time, so correlated variables rank similarly. The ranking sits to the right of the radar profiles and can be saved as a figure (PNG or SVG): a ranked bar chart of η² with F for each variable.</td></tr>
-<tr><td>Compare recordings or species</td><td>Pick 2–6 items for a side-by-side radar and a table of real values and ratios, no taller than the radar and with its own scrollbar. PNG / SVG save the radar; <b>Table (Excel)</b> saves the table as <code>compare_table.xlsx</code>, with each item’s mean, SD and number of recordings in separate columns at full precision, plus the ratio column and a sheet naming the items.</td></tr>
+<tr><td>Compare recordings or species</td><td>Pick 2–6 items for a side-by-side radar and a table of real values and ratios, no taller than the radar and with its own scrollbar. Next to each mean the table gives the number of specimens and of rows (motifs, pulses…) behind it. PNG / SVG save the radar; <b>Table (Excel)</b> saves the table as <code>compare_table.xlsx</code>, with each item’s mean, SD and numbers of recordings, specimens and rows in separate columns at full precision, plus the ratio column and a sheet naming the items.</td></tr>
+<tr><td>Do the species differ? (PERMANOVA)</td><td>Tests whether the ticked species differ in the ticked variables, on the same data as the PCA (temperature-adjusted if ticked, each variable Z-scored). It gives pseudo-F, R² (the share of the distance variation explained by species) and a p-value from shuffling the species labels. <b>PERMDISP</b> checks that the species do not merely differ in spread. Every pair of species is also tested, with p corrected by Holm’s method. <b>Shuffle whole specimens</b> (on by default) keeps the recordings of one animal together when shuffling, since they are not independent. Choose 999, 9999 or 49999 <b>Permutations</b> and press <b>Run test</b>. A fixed random seed makes the p-values reproducible.</td></tr>
+<tr><td>Clustering (k-means, DBSCAN, hierarchical)</td><td>Groups the observations without looking at the species names, on the same data as the PCA. Set <b>k</b>, the <b>linkage</b> (Ward, average, complete, single) and DBSCAN’s <b>minPts</b> and <b>eps</b> (empty = suggested from the k-distance plot), then press <b>Run</b>. The output has silhouette widths for k = 2–8, a dendrogram, and a clusters × species table with the <b>adjusted Rand index</b> (1 = clusters equal species, about 0 = chance). It describes the data and is not a test: the result depends on k, eps and the linkage, so report the settings.</td></tr>
 <tr><td>Leave-one-out test</td><td>Classifies each observation from all the others, using Mahalanobis distance and LDA. Leaving out the whole specimen is the stricter, more honest test.</td></tr>
 <tr><td>Species profiles and knowledge base</td><td>(1) <b>Extract species profiles</b> (mean and spread per species). (2) Save them to, or load, a knowledge base file. (3) <b>Compare with knowledge base:</b> place a new song among the known species and see the closest by LDA or Mahalanobis distance.</td></tr>
 </table>
@@ -599,7 +625,7 @@
 <p>Steps that are recorded are the parameter-driven actions:</p>
 <ul>
 <li><b>Preprocessing:</b> Bandpass filter, Fix DC offset, Normalize, Frequency drop, Downsample, Noise padding, Fade.</li>
-<li><b>Temporal Analysis:</b> Detect local minima, Detect envelope peaks, Amplitude Detector, Clear detections, Apply to Spectral Analysis, Compute metrics from peaks / pulses.</li>
+<li><b>Temporal Analysis:</b> Detect envelope peaks, Amplitude Detector, Clear detections, Apply to Spectral Analysis, Compute metrics from peaks / pulses.</li>
 <li><b>Spectral Analysis:</b> Spectral metrics.</li>
 </ul>
 <p>With each step, the parameter boxes that changed since the previous step are stored too, so a replay reproduces the settings as well as the clicks.</p>
@@ -726,6 +752,16 @@
 <li>Recordist name and License are used by the Xeno-canto helper.</li>
 <li>Annotation author is used by the Annotate export.</li>
 </ul></li>
+<li><b>Keyboard shortcuts…:</b> a list of the actions that have a shortcut. Click a shortcut, then press the new combination (<code>Esc</code> cancels). Left and right <code>Ctrl</code>, <code>Shift</code> and <code>Alt</code> are told apart, so <code>Right Ctrl</code>+<code>Right Shift</code>+<code>↑</code> is not the same as the left-hand keys. Giving a combination that is already in use moves it to the new action. <b>Clear</b> removes a shortcut, <b>Default</b> restores one and <b>Reset all to defaults</b> restores every one.
+<table>
+<thead><tr><th style="width:62%">Action</th><th>Default</th></tr></thead>
+<tr><td>Spectrogram: finer frequency resolution (larger FFT)</td><td><code>Right Ctrl</code>+<code>Right Shift</code>+<code>↑</code></td></tr>
+<tr><td>Spectrogram: finer time resolution (smaller FFT)</td><td><code>Right Ctrl</code>+<code>Right Shift</code>+<code>↓</code></td></tr>
+<tr><td>Play / pause</td><td><code>Space</code></td></tr>
+<tr><td>Tool: Select, Annotate, Pan (Spectral Analysis)</td><td><code>S</code>, <code>A</code>, <code>H</code></td></tr>
+<tr><td>Zoom in / out in time, frequency and amplitude</td><td>none (assign your own)</td></tr>
+</table>
+Undo, Delete and the editing keys of Temporal Analysis are fixed.</li>
 <li><b>Language:</b> English, Español, Italiano, Português.</li>
 <li><b>Text Size:</b> Small (90%), Normal, Large (115%), Extra large (130%).</li>
 <li><b>Version:</b> shows the installed version (please include it in bug reports).</li>
@@ -764,8 +800,8 @@
 <h2 id="s17-2">17.2 Common problems</h2>
 <table>
 <thead><tr><th style="width:28%">Symptom</th><th>Try</th></tr></thead>
-<tr><td>No peaks detected / notice at bottom right</td><td>Lower Detection thr. or tick Auto; reduce Smooth; check that you are on the right recording; try the Amplitude Detector.</td></tr>
-<tr><td>Pulses merged together</td><td>Lower Max envelope peak gap. For back-to-back pulses, tick Split on arches. With the Amplitude Detector, use Detect local minima and a smaller Min gap.</td></tr>
+<tr><td>No peaks detected / notice at bottom right</td><td>Lower the Threshold (%) in the Local floor pane or tick Auto; reduce Smooth; check that you are on the right recording; try the Amplitude Detector.</td></tr>
+<tr><td>Pulses merged together</td><td>Lower Max envelope peak gap. For back-to-back pulses, tick Split on arches. With the Amplitude Detector, keep Use in Amplitude Detector ticked and use a smaller Min gap.</td></tr>
 <tr><td>Pulses split too much</td><td>Raise Max envelope peak gap or Max amp diff; raise Valley depth; raise Smooth.</td></tr>
 <tr><td>My manual edits disappeared</td><td>Changing a detection parameter, pressing Detect again, or pressing Apply in Learn from Edits re-derives the peaks and replaces manual edits. Make manual edits last. Trim, Delete and Noise padding also clear detections and annotations (section 6.2).</td></tr>
 <tr><td>Merge is greyed out in Temporal Analysis</td><td>Select two or more envelope peaks, or two or more detections or drawn selections of the same kind (section 7.4).</td></tr>
@@ -782,7 +818,7 @@
 <tr><td>Interface too small or too large</td><td>Preferences → Text Size.</td></tr>
 </table>
 
-<h2 id="s17-3">17.3 Known limits (version 0.9.0)</h2>
+<h2 id="s17-3">17.3 Known limits (version 0.9.1)</h2>
 <ul>
 <li>Pulses-only metrics (no peaks) omit temporal excursion and the per-peak columns.</li>
 <li>Boundary edits made by hand cannot be reset in one step; use Undo.</li>
@@ -797,7 +833,7 @@
 <p>Please cite the paper when you publish results obtained with Rthoptera Desk:</p>
 <p class="cite">Rivas, F., Brizio, C., Buzzetti, F. M., &amp; Pijanowski, B. (2025). Rthoptera: Standardised insect bioacoustics in R. <i>Methods in Ecology and Evolution, 16</i>(6), 1084–1094. https://doi.org/10.1111/2041-210X.70045</p>
 <p>To state which software version you used:</p>
-<p class="cite">Rivas, F. (2026). <i>Rthoptera Desk</i> (Version 0.9.0) [Computer software]. https://github.com/panchorivasf/Rthoptera-Desk</p>
+<p class="cite">Rivas, F. (2026). <i>Rthoptera Desk</i> (Version 0.9.1) [Computer software]. https://github.com/panchorivasf/Rthoptera-Desk</p>
 <p>Work using the Auto-coded Oscillogram should also cite:</p>
 <p class="cite">Brizio, C. (2023). Colour Enhanced Time/Pressure Envelope (CETPE), a novel on-screen rendering of digital sound. <i>Rivista Italiana di Acustica, 48</i>(2), 63–71.</p>
 <p>Work using the Clustering module should also cite Google’s Perch 2.0 model as its authors request. <i>(Provisional: the full reference will be added.)</i></p>
@@ -816,7 +852,7 @@
 <tr><td>Syllable</td><td>In Summarize, a run of consecutive pulses treated as one sound (measured from the onset of the first to the offset of the last).</td></tr>
 <tr><td>TE / DE / PCI</td><td>Temporal excursion, dynamic excursion and pulse complexity index (see the Rthoptera paper).</td></tr>
 <tr><td>Duty cycle</td><td>Proportion of time occupied by sound within a unit.</td></tr>
-<tr><td>Floor %</td><td>Amplitude-detector threshold as a percentage of the envelope range (an offset above the local noise floor when that is active).</td></tr>
+<tr><td>Threshold (%)</td><td>The shared detection threshold of the Local floor pane, as a percentage of the envelope range (an offset above the local noise floor when that is used).</td></tr>
 <tr><td>FRB / FRT / FRPT</td><td>Frequency Range Bottom / Top and Frequency Range Pressure Threshold (Auto-coded Oscillogram).</td></tr>
 <tr><td>Nyquist</td><td>Half the sampling rate; the highest frequency that can be represented.</td></tr>
 <tr><td>dBFS</td><td>Decibels relative to digital full scale (0 dBFS = maximum).</td></tr>
