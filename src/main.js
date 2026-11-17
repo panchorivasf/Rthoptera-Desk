@@ -9866,10 +9866,11 @@
         clearTimeout(pkAmpLiveTimer);
         pkAmpLiveTimer = setTimeout(() => {
           if (!pkEnv) return;
-          pkEnsureFloor();
+          pkEnsureFloor(true);
           if (pkAmpDetections.length) pkRunAmpDetector();
+          else pkDrawEnvelope(); // redraw so the floor curve follows the new window
           if ($("pkFloorUseEnv").checked && pkHasDetected) pkScheduleRedetect(0);
-        }, 250);
+        }, 500);
       }
       pkOnReady(() => {
         ["pkSmooth", "pkWin", "pkDetThr"].forEach((id) => {
@@ -9900,7 +9901,10 @@
           );
         ["pkDetThr", "pkAmpMinDurMs", "pkAmpMinGapMs", "pkFloorWinMs"].forEach((id) => {
           const el = $(id);
-          if (el) el.addEventListener("input", pkScheduleAmpRedetect);
+          if (el) {
+            el.addEventListener("input", pkScheduleAmpRedetect);
+            el.addEventListener("change", pkScheduleAmpRedetect);
+          }
         });
         // Switching a detector's use of the floor on or off re-runs that detector.
         const useAmp = $("pkFloorUseAmp");
