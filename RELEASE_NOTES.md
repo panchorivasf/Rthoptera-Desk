@@ -1,3 +1,27 @@
+# Rthoptera Desk 0.9.2
+
+A vertical navigation bar for the waveform and spectrogram, and the local floor curve
+now follows its window setting.
+
+## Waveform and spectrogram
+
+- **Vertical navigation bar.** When you zoom in vertically, a thin bar appears on the
+  right edge of the plot. It shows the visible slice of the amplitude range
+  (waveform) or the frequency range (spectrogram). Drag the thumb, or click the
+  track, to move up and down. The bar is hidden when the plot is fully zoomed out.
+- **Vertical pan of the waveform.** Zoomed in on amplitude, the waveform can now be
+  moved up and down (it used to scale around zero only). The reset button (↺)
+  recentres it. The playhead and annotation overlays do not follow the vertical pan.
+
+## Temporal Analysis
+
+- **Local floor window updates live.** Changing **Floor win. (ms)** now redraws the
+  local floor curve about half a second after you stop typing (Enter or leaving the
+  field also applies it). Before, the curve stayed at the default until a detection
+  had run. The log reports the number of minima for the new window.
+
+---
+
 # Rthoptera Desk 0.9.1
 
 Drag-and-drop loading, zoom buttons and a real oscillogram when you zoom in, shortcuts
