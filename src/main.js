@@ -4894,13 +4894,17 @@
         if (!rawSamples) return;
         // factor < 1 zooms in (trace grows)
         waveAmpZoom = Math.max(0.25, Math.min(256, waveAmpZoom / factor));
+        clampAmpPan();
         render();
       }
       function zoomReset(panel) {
         if (!rawSamples) return;
         viewStart = 0;
         viewDur = duration;
-        if (panel === "wave") waveAmpZoom = 1;
+        if (panel === "wave") {
+          waveAmpZoom = 1;
+          waveAmpPan = 0;
+        }
         else {
           fvMin = 0;
           fvMax = sampleRate / 2;
@@ -5047,6 +5051,88 @@
         return $("sWrap").clientWidth;
       }
 
+      // ── Vertical navigation bars ─────────────────────────────────────────
+      // A thin scrollbar on the right edge of the waveform and the spectrogram,
+      // shown only while that panel is zoomed in vertically. The thumb is the
+      // visible slice; drag it, or click the track, to move up and down.
+      const vnav = {};
+      function vnavState(panel) {
+        // Returns { lo, hi } = visible slice as fractions of the full range,
+        // 0 at the top; or null when not zoomed.
+        if (!rawSamples) return null;
+        if (panel === "wave") {
+          if (waveAmpZoom <= 1.0001) return null;
+          const base = wfBase(),
+            half = wfRef();
+          return {
+            lo: (base - (waveAmpPan + half)) / (2 * base),
+            hi: (base - (waveAmpPan - half)) / (2 * base),
+          };
+        }
+        const nyq = sampleRate / 2;
+        if (fvMax - fvMin >= nyq * 0.9999) return null;
+        return { lo: 1 - fvMax / nyq, hi: 1 - fvMin / nyq };
+      }
+      function vnavMove(panel, loFrac) {
+        // loFrac = new top of the visible slice (fraction of the range).
+        if (panel === "wave") {
+          const base = wfBase(),
+            half = wfRef();
+          waveAmpPan = base - 2 * base * loFrac - half;
+          clampAmpPan();
+        } else {
+          const nyq = sampleRate / 2,
+            r = fvMax - fvMin;
+          const top = Math.max(r, Math.min(nyq, nyq * (1 - loFrac)));
+          fvMax = top;
+          fvMin = top - r;
+        }
+        panel === "wave" ? renderWave() : renderSpec();
+        updateVNav(panel);
+      }
+      function updateVNav(panel) {
+        const wrap = $(panel === "wave" ? "wWrap" : "sWrap");
+        if (!wrap) return;
+        let v = vnav[panel];
+        if (!v) {
+          const track = document.createElement("div");
+          track.className = "vnav";
+          track.title = t("Vertical navigation: drag to move up and down");
+          const thumb = document.createElement("div");
+          thumb.className = "vnav-thumb";
+          track.appendChild(thumb);
+          wrap.appendChild(track);
+          v = vnav[panel] = { track, thumb };
+          const frac = (e) => (e.clientY - track.getBoundingClientRect().top) / track.clientHeight;
+          thumb.addEventListener("pointerdown", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const s = vnavState(panel);
+            if (!s) return;
+            const grab = frac(e) - s.lo;
+            thumb.setPointerCapture(e.pointerId);
+            const mv = (ev) => vnavMove(panel, frac(ev) - grab);
+            const up = () => {
+              thumb.removeEventListener("pointermove", mv);
+              thumb.removeEventListener("pointerup", up);
+            };
+            thumb.addEventListener("pointermove", mv);
+            thumb.addEventListener("pointerup", up);
+          });
+          track.addEventListener("pointerdown", (e) => {
+            if (e.target !== track) return;
+            e.stopPropagation();
+            const s = vnavState(panel);
+            if (s) vnavMove(panel, frac(e) - (s.hi - s.lo) / 2);
+          });
+        }
+        const s = vnavState(panel);
+        v.track.style.display = s ? "" : "none";
+        if (!s) return;
+        v.thumb.style.top = s.lo * 100 + "%";
+        v.thumb.style.height = Math.max(0.04, s.hi - s.lo) * 100 + "%";
+      }
+
       function render() {
         // Sync waveform wrapper width to spectrogram wrapper width for pixel-perfect alignment
         const W = getVizWidth();
@@ -5056,6 +5142,8 @@
         renderWave();
         renderSpec();
         renderMinimap();
+        updateVNav("wave");
+        updateVNav("spec");
       }
 
       // DC offset check for the waveform. The mean is measured once per signal
@@ -5093,9 +5181,17 @@
       // something else, happened. With "Waveform at full scale" ticked, the
       // height is fixed at 0 dBFS, so level changes show.
       let waveAmpZoom = 1; // vertical zoom of the waveform (1 = fit)
-      function wfRef() {
+      let waveAmpPan = 0; // amplitude at the centre of the waveform view
+      function wfBase() {
         const el = $("wfFullScale");
-        return (el && el.checked ? 1 : peakAmp || 1) / waveAmpZoom;
+        return el && el.checked ? 1 : peakAmp || 1;
+      }
+      function wfRef() {
+        return wfBase() / waveAmpZoom;
+      }
+      function clampAmpPan() {
+        const lim = Math.max(0, wfBase() - wfRef());
+        waveAmpPan = Math.max(-lim, Math.min(lim, waveAmpPan));
       }
 
       function renderWave() {
@@ -5137,6 +5233,10 @@
         );
         const spp = (ei - si) / W,
           mid = H / 2;
+        // Vertical pan: shift everything drawn below so the view centres on
+        // amplitude waveAmpPan (the playhead/overlay canvas is unaffected).
+        ctx.save();
+        ctx.translate(0, mid * (waveAmpPan / wfRef()));
         const thr = (peakAmp * parseFloat($("threshPct").value)) / 100;
         if (peakAmp > 0) {
           const ty = mid * (1 - thr / wfRef());
@@ -5248,6 +5348,7 @@
             dcValue > 0 ? Math.max(10, dy - 3) : Math.min(H - 3, dy + 11),
           );
         }
+        ctx.restore();
         const ic2 = ic.getContext("2d");
         ic2.clearRect(0, 0, W, H);
         drawOverlay(ic2, W, H, "wave");
