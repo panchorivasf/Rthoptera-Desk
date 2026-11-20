@@ -1,3 +1,60 @@
+# Rthoptera Desk 0.9.3
+
+An FFT filter (a graphical equaliser on the power spectrum) with presets and microphone
+correction, selectable roll-off for the band-pass filter, deletion of padded noise,
+Delete around selection, and fixes to selection dragging and slow playback.
+
+## Preprocessing
+
+- **FFT filter.** A new **FFT filter…** button in Edit audio opens an editor with the
+  power spectrum of the whole file or of the time selection. Click the curve to add a
+  point, drag points up or down to amplify or attenuate a band, and delete points with
+  Delete or the point box. A frequency range (From / To) zooms the editor on any band.
+  The gain axis is fixed, so zooming in frequency does not move the 0 dB line. The
+  filter can be applied to the whole file or to the selection only (the edges are
+  blended over 5 ms), and the result is part of the edit chain: Undo Edit and
+  **Remove applied filter** take it away.
+- **FFT filter presets.** Save the current curve under a name, load it later, or delete
+  it. **Export file…** and **Import file…** move a preset to another computer as a
+  `.json`. A preset loaded on a recording with a lower sampling rate drops the points
+  above its Nyquist frequency.
+- **Microphone correction.** **Import response curve…** reads a microphone's frequency
+  response (a text or CSV table of frequency and level in dB), inverts it and places it
+  in the editor as a gain curve. The curve is smoothed (none to 1 octave), limited by
+  **max boost** and **max cut** (12 dB by default) and simplified to a few points
+  (**detail**), and is referenced to a chosen frequency or to its median. The response
+  is drawn as a dashed line over the spectrum. **Rebuild** redoes it with new settings;
+  **Clear curve** hides the response.
+- **Band-pass roll-off.** A new **Slope** box sets how steeply the band-pass filter
+  falls beyond the cut-off: 12, 24 (default), 48, 72 or 96 dB per octave. The cut-off
+  is the −6 dB point. The status line shows the slope when it is not 24.
+- **Band-pass cut-offs in kHz.** The High-pass and Low-pass boxes now take kHz (step
+  0.5), as the rest of the program does.
+- **Delete around selection.** A new button deletes everything outside the selection
+  (the part before it and the part after it). Undo restores both cuts in one step.
+- **Noise padding can be deleted.** The noise added by Noise padding can now be selected
+  and deleted like any other part of the recording. Deleting padded noise shortens the
+  padding instead of cutting the recording.
+
+## Fixes
+
+- **Selections stopping short of the recording's edges.** Dragging a selection past the
+  start or end of the waveform could stop at an arbitrary place. The drag now continues
+  while the pointer is outside the plot and reaches the edge.
+- **Playback at speeds other than 100%** stopped at random in Preprocessing. Playback
+  now resumes when the audio engine is interrupted and restarts from the right place
+  when a stop is not at the end. Please report it if it still happens.
+- **Grouping parameters of Temporal Analysis** now apply to the pulses made by the
+  Amplitude Detector, not only to those made from envelope peaks.
+
+## Temporal Analysis
+
+- The **Amplitude Detector** pane now sits under **Peak Detection** in two rows, and
+  its **Clear detections** button is gone: **Clear pulses** in the main pane does the
+  same.
+
+---
+
 # Rthoptera Desk 0.9.2
 
 A vertical navigation bar for the waveform and spectrogram, and the local floor curve

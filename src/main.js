@@ -66,6 +66,7 @@
       // around, and never edits the audio. A plain click clears it.
       let ppSel = null;
       let ppDrag = null; // {anchor, startX, moved} while dragging one out
+      let ppDragOwner = null; // the canvas the drag started on
       let drawing = null;
       // Visual trim: when trimMode is on, two draggable handles (trimSel.t0/t1,
       // in seconds on the ORIGINAL timeline) define the region to KEEP. Nothing
@@ -1892,7 +1893,7 @@
             const i1 = Math.min(sig.length, Math.ceil(ed.t1 * sr));
             if (i1 > i0) sig = sig.slice(i0, i1);
           } else if (ed.type === "bandpass") {
-            sig = applyBandpass(sig, sr, ed.hp, ed.lp);
+            sig = applyBandpass(sig, sr, ed.hp, ed.lp, ed.order);
           } else if (ed.type === "resample") {
             sig = applyResample(sig, sr, ed.targetSr);
             sr = ed.targetSr;
@@ -1905,6 +1906,11 @@
         // original audio.
         const fd = audioEdits.find((e) => e.type === "freqdrop");
         if (fd && fd.pct > 0) sig = applyFreqDrop(sig, fd.pct);
+        // The FFT filter is drawn on the spectrum the user sees, so it runs
+        // after the frequency drop (the frequencies it names are the final
+        // ones) and before Normalize, which then sets the level of the result.
+        const eq = audioEdits.find((e) => e.type === "eqfft");
+        if (eq && eq.pts && eq.pts.length) sig = applyFftFilterCached(sig, sr, eq);
         // Normalize sets the final level of what is left, so it runs after the
         // filters and cuts and before the padding and fades, which are noise
         // and ramps that should not decide the peak.
@@ -1913,7 +1919,11 @@
         // Noise padding grows the signal, so it goes after every filter but
         // before the fades, which then shape the padded edges.
         const np = audioEdits.find((e) => e.type === "noisepad");
-        if (np && np.sec > 0) sig = applyNoisePad(sig, sr, np.sec, np.seed);
+        if (np && np.sec > 0) {
+          const pl = noisePadLens();
+          if (pl.head > 0 || pl.tail > 0)
+            sig = applyNoisePad(sig, sr, pl.head, np.seed, pl.tail);
+        }
         // Fades go on after everything else: they shape the edges of the
         // signal as it will actually be heard and saved, and a filter run
         // after them would ring across the ramp.
@@ -2093,16 +2103,45 @@
         return y;
       }
       // Returns a NEW Float32Array; never mutates the input.
-      function applyBandpass(sig, sr, hpHz, lpHz) {
+      // `order` is the Butterworth order of each of the two filters (default 2).
+      // Every stage runs forward and backward, which doubles the roll-off: the
+      // slope past the cutoff is 12 dB/octave x order (6 dB/oct x order x 2),
+      // so the default 2 is the long-standing 24 dB/octave. The cutoff itself
+      // is -6 dB for the same reason.
+      function _butterSections(type, f0, sr, order) {
+        const sec = [];
+        if (order % 2 === 1) {
+          // One first-order section (bilinear transform).
+          const K = Math.tan((Math.PI * f0) / sr);
+          const a0 = 1 + K;
+          sec.push(
+            type === "hp"
+              ? { b0: 1 / a0, b1: -1 / a0, b2: 0, a1: (K - 1) / a0, a2: 0 }
+              : { b0: K / a0, b1: K / a0, b2: 0, a1: (K - 1) / a0, a2: 0 },
+          );
+        }
+        for (let k = 1; k <= Math.floor(order / 2); k++) {
+          // Pole angles: (2k-1)pi/2n for even orders, k*pi/n for odd ones
+          // (the odd order's real pole is the first-order section above).
+          const ang =
+            order % 2 === 0
+              ? (Math.PI * (2 * k - 1)) / (2 * order)
+              : (Math.PI * k) / order;
+          const Q = 1 / (2 * Math.cos(ang));
+          sec.push(_biquadCoeffs(type, f0, sr, Q));
+        }
+        return sec;
+      }
+      function applyBandpass(sig, sr, hpHz, lpHz, order) {
         const nyq = sr / 2;
+        order = Math.max(1, Math.min(12, Math.round(order) || 2));
         let out = Float32Array.from(sig);
-        const Q = Math.SQRT1_2; // Butterworth (maximally flat) per stage
-        if (hpHz && hpHz > 0 && hpHz < nyq) {
-          out = _filtfilt(out, _biquadCoeffs("hp", hpHz, sr, Q));
-        }
-        if (lpHz && lpHz > 0 && lpHz < nyq) {
-          out = _filtfilt(out, _biquadCoeffs("lp", lpHz, sr, Q));
-        }
+        if (hpHz && hpHz > 0 && hpHz < nyq)
+          for (const c of _butterSections("hp", hpHz, sr, order))
+            out = _filtfilt(out, c);
+        if (lpHz && lpHz > 0 && lpHz < nyq)
+          for (const c of _butterSections("lp", lpHz, sr, order))
+            out = _filtfilt(out, c);
         return out;
       }
 
@@ -2492,7 +2531,38 @@
       // false) when no usable noise profile can be learned.
       let _noisePadInfo = null;
       let _noiseProfileCache = null;
-      function applyNoisePad(sig, sr, sec, seed) {
+      // Effective pad lengths. Deleting a selection that reaches into the
+      // padding shortens that end of it (recorded on the delete edit as
+      // padHead / padTail), so the pad can lose sound without the recording
+      // being touched.
+      function noisePadLens() {
+        const np = audioEdits.find((e) => e.type === "noisepad");
+        if (!np || !(np.sec > 0)) return { head: 0, tail: 0 };
+        let head = np.sec,
+          tail = np.sec;
+        for (const e of audioEdits)
+          if (e.type === "delete") {
+            head -= e.padHead || 0;
+            tail -= e.padTail || 0;
+          }
+        return { head: Math.max(0, head), tail: Math.max(0, tail) };
+      }
+      // Drop the pad shortenings (and the delete edits that only held one).
+      function dropPadCuts() {
+        audioEdits = audioEdits
+          .map((e) => {
+            if (e.type !== "delete" || !(e.padHead || e.padTail)) return e;
+            const c = { ...e };
+            delete c.padHead;
+            delete c.padTail;
+            delete c.at;
+            delete c.dd;
+            return c;
+          })
+          .filter((e) => e.type !== "delete" || e.t1 > e.t0);
+      }
+      function applyNoisePad(sig, sr, sec, seed, secTail) {
+        if (secTail === undefined) secTail = sec;
         // Cache the (expensive) profile across rebuilds that did not change
         // the signal it is learned from, e.g. fade tweaks.
         const key =
@@ -2523,32 +2593,34 @@
           _noisePadInfo = { ok: false };
           return sig;
         }
-        return _padCore(sig, sr, sec, seed, prof);
+        return _padCore(sig, sr, sec, seed, prof, secTail);
       }
       // The padding itself, given a profile. Shared by the edit chain
       // (applyNoisePad, which caches the profile) and by batch apply, which
       // learns one per file.
-      function _padCore(sig, sr, sec, seed, prof) {
+      function _padCore(sig, sr, sec, seed, prof, secTail) {
+        if (secTail === undefined) secTail = sec;
         const P = Math.round(sec * sr),
+          Q = Math.round(secTail * sr),
           n = sig.length;
         const X = Math.max(
           1,
           Math.min(Math.round(0.02 * sr), Math.floor(n / 10)),
         );
         const head = synthNoise(prof, P + X, seed),
-          tail = synthNoise(prof, P + X, seed + 1);
-        const out = new Float32Array(P + n + P);
+          tail = synthNoise(prof, Q + X, seed + 1);
+        const out = new Float32Array(P + n + Q);
         for (let i = 0; i < n; i++) out[P + i] = sig[i];
-        for (let i = 0; i < P; i++) {
-          out[i] = head[i];
-          out[P + n + i] = tail[X + i];
-        }
+        for (let i = 0; i < P; i++) out[i] = head[i];
+        for (let i = 0; i < Q; i++) out[P + n + i] = tail[X + i];
+        // Cross-fade the signal's edges into noise only at an end that has
+        // padding left; an end whose pad was deleted stays as it is.
         for (let j = 0; j < X; j++) {
           const t = ((j + 0.5) / X) * (Math.PI / 2),
             a = Math.cos(t),
             b = Math.sin(t);
-          out[P + j] = head[P + j] * a + sig[j] * b;
-          out[P + n - X + j] = sig[n - X + j] * a + tail[j] * b;
+          if (P > 0) out[P + j] = head[P + j] * a + sig[j] * b;
+          if (Q > 0) out[P + n - X + j] = sig[n - X + j] * a + tail[j] * b;
         }
         let e = 0;
         for (let i = 0; i < P; i++) e += head[i] * head[i];
@@ -2684,25 +2756,30 @@
         log(msg, "warn");
         showToast(msg);
       }
-      function ppSelOnChainTimeline() {
+      function ppSelOnChainTimeline(allowPad, rng) {
         if (trimMode) {
           ppWarn("Confirm or cancel the trim first (Trim mode is open).");
           return null;
         }
-        if (!rawSamples || !ppSel || !(ppSel.t1 > ppSel.t0)) {
+        const sel = rng || ppSel;
+        if (!rawSamples || !sel || !(sel.t1 > sel.t0)) {
           ppWarn("Drag out a time selection on the waveform first.");
           return null;
         }
-        const np = audioEdits.find((e) => e.type === "noisepad"),
-          pad = np && np.sec > 0 ? np.sec : 0,
-          stageDur = duration - 2 * pad,
-          t0 = Math.max(0, ppSel.t0 - pad),
-          t1 = Math.min(stageDur, ppSel.t1 - pad);
-        if (t1 - t0 < 1 / sampleRate) {
+        const pl = noisePadLens(),
+          pad = pl.head,
+          stageDur = duration - pl.head - pl.tail,
+          t0 = Math.max(0, sel.t0 - pad),
+          t1 = Math.min(stageDur, sel.t1 - pad),
+          inner = t1 - t0 >= 1 / sampleRate;
+        // Part of the selection that lies in the added noise padding.
+        const padHead = Math.max(0, Math.min(sel.t1, pl.head) - sel.t0),
+          padTail = Math.max(0, sel.t1 - Math.max(sel.t0, pl.head + stageDur));
+        if (!inner && !(allowPad && (padHead > 0 || padTail > 0))) {
           ppWarn("The selection lies in the added noise padding, not in the recording.");
           return null;
         }
-        return { t0, t1, pad, stageDur };
+        return { t0: inner ? t0 : 0, t1: inner ? t1 : 0, inner, padHead, padTail, pad, stageDur };
       }
       function ppVanishSelection() {
         const s = ppSelOnChainTimeline();
@@ -2733,17 +2810,35 @@
       }
       // Cut the selection out and join what was before and after it. The
       // recording gets shorter, so later selections move up by the cut length.
-      function ppDeleteSelection() {
-        const s = ppSelOnChainTimeline();
-        if (!s) return;
-        if (s.t1 - s.t0 >= s.stageDur - 1e-6) {
+      // rng / grp are for Delete around selection, which makes two cuts that
+      // Undo takes back together.
+      function ppDeleteSelection(rng, grp) {
+        const s = ppSelOnChainTimeline(true, rng);
+        if (!s) return false;
+        if (s.inner && s.t1 - s.t0 >= s.stageDur - 1e-6) {
           ppWarn("The selection covers the whole recording; nothing would be left.");
-          return;
+          return false;
         }
-        const a = ppSel.t0,
-          b = ppSel.t1,
+        const sel = rng || ppSel;
+        const a = sel.t0,
+          b = sel.t1,
           d = b - a;
-        audioEdits.push({ type: "delete", t0: s.t0, t1: s.t1 });
+        // A selection that reaches into the noise padding also shortens it; a
+        // selection wholly inside the padding is a zero-length cut that only
+        // does that. at / dd (display start, length) let Undo restore it.
+        const edit = { type: "delete", t0: s.t0, t1: s.t1 };
+        if (grp) {
+          edit.grp = grp;
+          edit.at = a;
+          edit.dd = d;
+        }
+        if (s.padHead || s.padTail) {
+          edit.padHead = s.padHead;
+          edit.padTail = s.padTail;
+          edit.at = a;
+          edit.dd = d;
+        }
+        audioEdits.push(edit);
         clearTimeDependentWork();
         ppSel = null;
         rebuildAudioFromEdits({ resetView: false });
@@ -2759,6 +2854,25 @@
         seekTo(Math.min(a, duration));
         render();
         log("Deleted " + d.toFixed(3) + " s at " + a.toFixed(3) + " s; the two sides are joined.", "ok");
+        return true;
+      }
+      // Keep the selection and cut away everything before and after it
+      // (the noise padding included).
+      function ppDeleteAroundSelection() {
+        if (!ppSelOnChainTimeline(false)) return;
+        const A = ppSel.t0,
+          B = ppSel.t1,
+          total = duration,
+          grp = "around" + Date.now();
+        // After first, then before: the cut after the selection leaves the
+        // time axis in front of it unchanged.
+        if (B < total - 1e-6 && !ppDeleteSelection({ t0: B, t1: total }, grp)) return;
+        if (A > 1e-6) ppDeleteSelection({ t0: 0, t1: A }, grp);
+        ppSel = null;
+        updatePpSelReadout();
+        seekTo(0);
+        render();
+        log("Kept only the selection (" + (B - A).toFixed(3) + " s); everything around it was deleted.", "ok");
       }
       function ppUndoCut() {
         let idx = -1;
@@ -2767,13 +2881,13 @@
         });
         if (idx < 0) return;
         const [ed] = audioEdits.splice(idx, 1);
+        // Delete around selection made two cuts; take both back.
+        const partner = ed.grp && audioEdits.some((e) => e.grp === ed.grp);
         clearTimeDependentWork();
         rebuildAudioFromEdits({ resetView: false });
         if (ed.type === "delete") {
-          const np = audioEdits.find((e) => e.type === "noisepad"),
-            pad = np && np.sec > 0 ? np.sec : 0,
-            a = ed.t0 + pad,
-            d = ed.t1 - ed.t0;
+          const a = ed.at !== undefined ? ed.at : ed.t0 + noisePadLens().head,
+            d = ed.dd !== undefined ? ed.dd : ed.t1 - ed.t0;
           annotations = annotations.map((x) => ({
             ...x,
             start: x.start >= a ? x.start + d : x.start,
@@ -2787,6 +2901,7 @@
         updatePpSelReadout();
         render();
         log("Undid the last " + ed.type + ".", "ok");
+        if (partner) ppUndoCut();
       }
       // Trim sits at the front of the chain, so setting or removing one moves
       // the timeline every Vanish/Delete was measured on. Offer to drop them.
@@ -2813,9 +2928,17 @@
         // Trim is applied first so subsequent edits act on the trimmed signal.
         audioEdits.unshift({ type: "trim", t0, t1 });
       }
+      // The band-pass boxes are in kHz; the filter itself works in Hz.
+      function bpKhz(hz) {
+        return +(hz / 1000).toFixed(3);
+      }
+      function bandpassOrder() {
+        const el = $("editBpOrder");
+        return el ? parseInt(el.value, 10) || 2 : 2;
+      }
       function setBandpassEdit(hp, lp) {
         audioEdits = audioEdits.filter((e) => e.type !== "bandpass");
-        audioEdits.push({ type: "bandpass", hp, lp });
+        audioEdits.push({ type: "bandpass", hp, lp, order: bandpassOrder() });
       }
       function setFreqDropEdit(pct) {
         audioEdits = audioEdits.filter((e) => e.type !== "freqdrop");
@@ -3044,8 +3167,8 @@
           return;
         }
         const nyq = sampleRate / 2;
-        let hp = parseFloat($("editHp").value);
-        let lp = parseFloat($("editLp").value);
+        let hp = parseFloat($("editHp").value) * 1000;
+        let lp = parseFloat($("editLp").value) * 1000;
         if (!isFinite(hp) || hp < 0) hp = 0;
         if (!isFinite(lp) || lp <= 0) lp = nyq;
         lp = Math.min(lp, nyq);
@@ -3071,7 +3194,8 @@
         if (!audioHasEdit("bandpass")) return;
         audioEdits = audioEdits.filter((e) => e.type !== "bandpass");
         $("editHp").value = "0";
-        $("editLp").value = Math.round(sampleRate / 2);
+        $("editLp").value = bpKhz(sampleRate / 2);
+        if ($("editBpOrder")) $("editBpOrder").value = "2";
         rebuildAudioFromEdits({ resetView: false });
         log("Bandpass removed", "ok");
       }
@@ -3165,6 +3289,7 @@
         }
         const prev = audioEdits.find((e) => e.type === "noisepad");
         if (!prev || prev.sec !== sec) clearTimeDependentWork();
+        dropPadCuts(); // a new pad length starts from the full pad again
         audioEdits = audioEdits.filter((e) => e.type !== "noisepad");
         audioEdits.push({
           type: "noisepad",
@@ -3206,6 +3331,7 @@
         if (!audioHasEdit("noisepad")) return;
         clearTimeDependentWork();
         audioEdits = audioEdits.filter((e) => e.type !== "noisepad");
+        dropPadCuts();
         rebuildAudioFromEdits({ resetView: true });
         log("Noise padding removed", "ok");
       }
@@ -3445,7 +3571,7 @@
         const nyq = origSampleRate / 2;
         if (trimMode) exitTrimUi();
         if ($("editHp")) $("editHp").value = "0";
-        if ($("editLp")) $("editLp").value = Math.round(nyq);
+        if ($("editLp")) $("editLp").value = bpKhz(nyq);
         populateDownsampleOptions();
       }
 
@@ -3457,8 +3583,10 @@
           "btnClearTrim",
           "editHp",
           "editLp",
+          "editBpOrder",
           "btnApplyBandpass",
           "btnClearBandpass",
+          "btnOpenFftFilter",
           "editFreqDrop",
           "btnApplyFreqDrop",
           "btnClearFreqDrop",
@@ -3485,6 +3613,8 @@
         if (ct) ct.disabled = !has || !audioHasEdit("trim");
         const cnm = $("btnClearNormalize");
         if (cnm) cnm.disabled = !has || !audioHasEdit("normalize");
+        const cfq = $("btnClearFftFilter");
+        if (cfq) cfq.disabled = !has || !audioHasEdit("eqfft");
         const cdc = $("btnClearDc");
         if (cdc) cdc.disabled = !has || !audioHasEdit("dcoffset");
         // Same for the frequency-drop Reset.
@@ -3515,13 +3645,20 @@
               );
             const fdEd = audioEdits.find((e) => e.type === "freqdrop");
             if (fdEd) parts.push("freq drop " + fdEd.pct + "%");
+            const eqEd = audioEdits.find((e) => e.type === "eqfft");
+            if (eqEd)
+              parts.push(
+                "FFT filter (" + eqEd.pts.length + " pt" + (eqEd.pts.length > 1 ? "s" : "") +
+                  (eqEd.region ? ", selection" : "") + ")",
+              );
             const bp = audioEdits.find((e) => e.type === "bandpass");
             if (bp)
               parts.push(
                 "bandpass " +
                   (bp.hp > 0 ? fmtHz(bp.hp) : "DC") +
                   "–" +
-                  (bp.lp < origSampleRate / 2 ? fmtHz(bp.lp) : "Nyq"),
+                  (bp.lp < origSampleRate / 2 ? fmtHz(bp.lp) : "Nyq") +
+                  ((bp.order || 2) !== 2 ? ", " + 12 * bp.order + " dB/oct" : ""),
               );
             const rs = audioEdits.find((e) => e.type === "resample");
             if (rs)
@@ -3554,6 +3691,8 @@
             ? "Undo " +
               (last.type === "trim"
                 ? "trim"
+                : last.type === "eqfft"
+                  ? "FFT filter"
                 : last.type === "normalize"
                   ? "normalization"
                   : last.type === "dcoffset"
@@ -3590,6 +3729,7 @@
         const last = audioEdits[audioEdits.length - 1];
         if (last.type === "trim") clearTrim();
         else if (last.type === "bandpass") clearBandpass();
+        else if (last.type === "eqfft") clearFftFilter();
         else if (last.type === "resample") clearDownsample();
         else if (last.type === "freqdrop") clearFreqDrop();
         else if (last.type === "noisepad") clearNoisePad();
@@ -3817,8 +3957,10 @@
           "btnClearTrim",
           "editHp",
           "editLp",
+          "editBpOrder",
           "btnApplyBandpass",
           "btnClearBandpass",
+          "btnOpenFftFilter",
           "editFreqDrop",
           "btnApplyFreqDrop",
           "btnClearFreqDrop",
@@ -4100,8 +4242,8 @@
       }
 
       function _applyBatchBandpassInner() {
-        let hp = parseFloat($("editHp").value);
-        let lp = parseFloat($("editLp").value);
+        let hp = parseFloat($("editHp").value) * 1000;
+        let lp = parseFloat($("editLp").value) * 1000;
         if (!isFinite(hp) || hp < 0) hp = 0;
         if (!isFinite(lp) || lp <= 0) lp = 0; // 0 -> per-entry Nyquist, resolved below
 
@@ -4116,7 +4258,7 @@
             log(`Skipped "${entry.name}": high-pass must be below low-pass.`, "warn");
             return;
           }
-          entry.samples = applyBandpass(entry.samples, entry.rate, hp, entryLp);
+          entry.samples = applyBandpass(entry.samples, entry.rate, hp, entryLp, bandpassOrder());
           // Replace any previous bandpass tags rather than piling up stale ones.
           entry.editTags = entry.editTags.filter((t) => !/(hpf|lpf)$/.test(t));
           if (hp > 0) entry.editTags.push(freqSuffixLabel(hp) + "hpf");
@@ -4460,6 +4602,7 @@
           }
         }
         if (audioEdits.some((e) => e.type === "dcoffset")) parts.push("dcfix");
+        if (audioEdits.some((e) => e.type === "eqfft")) parts.push("eq");
         const nmTag = audioEdits.find((e) => e.type === "normalize");
         if (nmTag) parts.push("n" + nmTag.db);
         if (audioEdits.some((e) => e.type === "vanish")) parts.push("vanished");
@@ -6035,6 +6178,25 @@
         c.addEventListener("mouseleave", () => {
           $("cursorInfo").textContent = "";
         });
+        // A selection drag that leaves the canvas keeps going: without this,
+        // mouse events stop at the canvas edge, so a fast drag toward either
+        // end of the recording freezes wherever the last event inside landed,
+        // short of the edge. Hand the window's events to the canvas while
+        // the button is held; the time is clamped to [0, duration] anyway.
+        const relay = (type) => (ev) => {
+          if (!ppDrag || ev.target === c || !ppDragOwner || ppDragOwner !== c) return;
+          c.dispatchEvent(
+            new MouseEvent(type, {
+              clientX: ev.clientX,
+              clientY: ev.clientY,
+              buttons: ev.buttons,
+              button: ev.button,
+              bubbles: false,
+            }),
+          );
+        };
+        window.addEventListener("mousemove", relay("mousemove"));
+        window.addEventListener("mouseup", relay("mouseup"));
         c.addEventListener("mousedown", (e) => {
           if (!rawSamples || e.button !== 0) return;
           if (trimMode) {
@@ -6082,6 +6244,7 @@
             // becomes the anchor of an ordinary drag-out.
             const edge = ppEdgeHit(e.offsetX);
             if (edge) {
+              ppDragOwner = c;
               ppDrag = {
                 anchor: edge === "t0" ? ppSel.t1 : ppSel.t0,
                 startX: e.offsetX,
@@ -6095,6 +6258,7 @@
             // anywhere else pulls out a new one, as before.
             if (ppSel && ppSel.t1 > ppSel.t0 && t > ppSel.t0 && t < ppSel.t1) {
               setPpCursor("grabbing");
+              ppDragOwner = c;
               ppDrag = {
                 move: true,
                 grab: t - ppSel.t0,
@@ -6106,6 +6270,7 @@
               return;
             }
             ppDrag = { anchor: t, startX: e.offsetX, moved: false };
+            ppDragOwner = c;
             seekTo(t);
             return;
           }
@@ -8096,10 +8261,23 @@
         if (!audioBuffer) return;
         isPlaying ? pausePb() : startPb();
       }
+      let _pbEarlyEnds = 0,
+        _pbLastEarlyEnd = 0;
       function startPb() {
         if (!audioCtx)
           audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        if (audioCtx.state === "suspended") audioCtx.resume();
+        // The browser may suspend or interrupt the audio engine mid-playback
+        // (power saving, an output device change); the clock then freezes and
+        // playback seems to stop. Bring it back whenever that happens.
+        if (!audioCtx._pbWatch) {
+          audioCtx._pbWatch = true;
+          audioCtx.addEventListener("statechange", () => {
+            if (isPlaying && audioCtx.state !== "running") audioCtx.resume();
+          });
+        }
+        if (audioCtx.state !== "running") audioCtx.resume();
+        // Starting at or past the end would end at once; begin again instead.
+        if (playPos >= duration - 1e-3) playPos = 0;
         if (sourceNode)
           try {
             sourceNode.stop();
@@ -8122,8 +8300,27 @@
         // which time the replacement is already running and isPlaying is true
         // again. An unguarded handler therefore killed the playback it had
         // just been restarted for, so seeking while playing stopped the sound.
+        // "Ended" is not the same as "reached the end of the file": the node
+        // can also end early (the engine drops it, the output device changes,
+        // a very long slowed-down buffer hiccups), and treating every end as
+        // the end of the recording is what made slowed playback stop at
+        // random places. So the position decides: only a node that really got
+        // to the end stops playback; one that quit early is restarted from
+        // where the clock says playback had reached. A restart that keeps
+        // failing straight away is given up on, rather than looping.
         node.onended = () => {
-          if (sourceNode === node && isPlaying) stopPb();
+          if (sourceNode !== node || !isPlaying) return;
+          const pos = playOff + (audioCtx.currentTime - playT0) * playRate;
+          const nearEnd = pos >= duration - 0.05 * Math.max(1, playRate);
+          const now = performance.now();
+          _pbEarlyEnds = now - _pbLastEarlyEnd < 1000 ? _pbEarlyEnds + 1 : 1;
+          _pbLastEarlyEnd = now;
+          if (nearEnd || _pbEarlyEnds > 5) stopPb();
+          else {
+            pausePb();
+            playPos = Math.max(0, Math.min(duration, pos));
+            startPb();
+          }
         };
         isPlaying = true;
         $("btnPlay").textContent = "⏸ Pause";
@@ -8135,7 +8332,10 @@
             sourceNode.stop();
           } catch (e) {}
         // Wall-clock elapsed × rate = audio consumed.
-        playPos += (audioCtx.currentTime - playT0) * playRate;
+        playPos = Math.min(
+          duration,
+          playPos + (audioCtx.currentTime - playT0) * playRate,
+        );
         isPlaying = false;
         $("btnPlay").textContent = "▶ Play";
         cancelAnimationFrame(raf);
@@ -8198,6 +8398,8 @@
           pd = $("btnPpDelete");
         if (pv) pv.disabled = !has;
         if (pd) pd.disabled = !has;
+        const pda = $("btnPpDeleteAround");
+        if (pda) pda.disabled = !has;
         // Mirror the length into the Duration box, unless it is being typed in.
         const di = $("ppSelDur");
         if (di) {
@@ -10726,15 +10928,6 @@
         pkDrawEnvelope();
       }
 
-      function pkClearAmpDetections() {
-        if (!pkAmpDetections.length) return;
-        pkSnapshot("clear amplitude detections");
-        pkAmpDetections = [];
-        if (pkSelSelected && pkSelSelected.list === "det") pkSelSelected = null;
-        pkUpdateSelUi();
-        pkDrawEnvelope();
-      }
-
       // Refresh every piece of UI the selections layer touches: the list
       // panel, the manual-echeme table, and the enabled/disabled state of
       // the buttons that depend on there being something to act on.
@@ -10744,8 +10937,6 @@
           cnt.textContent = pkAmpDetections.length
             ? pkAmpDetections.length + " detection(s)"
             : "None yet";
-        const clearBtn = $("btnPkClearAmpDet");
-        if (clearBtn) clearBtn.disabled = !pkAmpDetections.length;
         const mergeBtn = $("btnPkMergeSel");
         if (mergeBtn)
           mergeBtn.disabled = !(
@@ -11090,10 +11281,17 @@
       // break after it even under the threshold, 'merge' suppresses a break
       // even over it.
       function pkGroupManualEchemes() {
-        const pulses = pkAnnotations
-          .filter((a) => a.unit === "pulse")
-          .slice()
-          .sort((a, b) => a.start - b.start);
+        // Amplitude detections are pulses too, so the grouping parameters
+        // apply to them exactly as they do to Pulse (train) annotations.
+        const pulses = [
+          ...pkAmpDetections.map((d) => ({
+            start: d.start,
+            end: d.end,
+            maxAmp: pkMaxEnvIn(d.start, d.end),
+            boundary: null,
+          })),
+          ...pkAnnotations.filter((a) => a.unit === "pulse"),
+        ].sort((a, b) => a.start - b.start);
         if (!pulses.length) return [];
         const maxGap = (parseFloat($("pkMaxPulseGap")?.value) || 100) / 1000;
         const groups = [];

@@ -29,7 +29,6 @@ const WF_TRACKED = {
   fixDcOffset: "Fix DC offset",
   pkDetect: "Detect envelope peaks",
   pkRunAmpDetector: "Amplitude Detector",
-  pkClearAmpDetections: "Clear detections",
   pkApplyDetectionsToSpectral: "Apply to Spectral Analysis",
   pkConfirm: "Compute metrics from peaks",
   pkConfirmFromPulses: "Compute metrics from pulses",

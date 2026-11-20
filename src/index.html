@@ -726,6 +726,17 @@
                         ✂ Delete
                       </button>
                     </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <button
+                        id="btnPpDeleteAround"
+                        onclick="ppDeleteAroundSelection()"
+                        disabled
+                        style="font-size: 11px; flex: 1"
+                        title="Keep only the selection: cut away everything before and after it, noise padding included. Undo takes both cuts back together."
+                      >
+                        ✂ Delete around selection
+                      </button>
+                    </div>
                   </div>
 
                   <!-- Trim -->
@@ -855,14 +866,14 @@
                         id="editHp"
                         value="0"
                         min="0"
-                        step="100"
+                        step="0.5"
                         disabled
                         style="width: 64px"
                         data-i18n-title
-                        title="High-pass cutoff in Hz (removes content below). 0 = off."
+                        title="High-pass cutoff in kHz (removes content below). 0 = off."
                       />
                       <span style="color: var(--txt2); font-size: 11px"
-                        >Hz</span
+                        >kHz</span
                       >
                     </div>
                     <div class="row" style="gap: 4px; margin-top: 3px">
@@ -875,15 +886,33 @@
                         id="editLp"
                         value="0"
                         min="0"
-                        step="100"
+                        step="0.5"
                         disabled
                         style="width: 64px"
                         data-i18n-title
-                        title="Low-pass cutoff in Hz (removes content above). Defaults to the Nyquist frequency."
+                        title="Low-pass cutoff in kHz (removes content above). Defaults to the Nyquist frequency."
                       />
                       <span style="color: var(--txt2); font-size: 11px"
-                        >Hz</span
+                        >kHz</span
                       >
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 3px">
+                      <span
+                        style="color: var(--txt2); font-size: 11px; width: 56px"
+                        >Slope</span
+                      >
+                      <select
+                        id="editBpOrder"
+                        disabled
+                        style="width: auto; font-size: 11px"
+                        title="How steeply the filter cuts past its cutoff. Steeper removes more of what lies beyond the cutoff but rings more around sharp sounds. 24 dB/octave is the default."
+                      >
+                        <option value="1">12 dB/oct (gentle)</option>
+                        <option value="2" selected>24 dB/oct</option>
+                        <option value="4">48 dB/oct</option>
+                        <option value="6">72 dB/oct</option>
+                        <option value="8">96 dB/oct (steep)</option>
+                      </select>
                     </div>
                     <div class="row" style="gap: 4px; margin-top: 4px">
                       <button
@@ -917,6 +946,49 @@
                         style="font-size: 11px"
                         data-i18n-title
                         title="Remove the bandpass filter."
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- FFT filter -->
+                  <div
+                    style="
+                      border-top: 1px solid var(--border);
+                      padding-top: 5px;
+                    "
+                  >
+                    <div
+                      style="
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: var(--txt3);
+                        margin-bottom: 3px;
+                      "
+                    >
+                      FFT filter
+                      <span class="info-icon" data-i18n-title title="A graphical equaliser drawn on the power spectrum of the file or of a selection. Click the spectrum to add points, drag them up or down to boost or cut that part of the spectrum, and zoom the frequency axis to work on narrow bands.">&#9432;</span>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <button
+                        id="btnOpenFftFilter"
+                        class="ppApply"
+                        onclick="openFftFilter()"
+                        disabled
+                        style="font-size: 11px"
+                        title="Open the spectrum editor: pick points on the power spectrum and move them up or down to amplify or attenuate frequency bands."
+                      >
+                        &#127898; Open FFT filter&hellip;
+                      </button>
+                    </div>
+                    <div class="row" style="gap: 4px; margin-top: 4px">
+                      <button
+                        id="btnClearFftFilter"
+                        onclick="clearFftFilter()"
+                        disabled
+                        style="font-size: 11px"
+                        title="Remove the FFT filter."
                       >
                         Reset
                       </button>
@@ -2501,6 +2573,8 @@
                 margin-bottom: 6px;
               "
             >
+              <!-- Peak Detection, with the Amplitude Detector stacked beneath it -->
+              <div style="display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto">
               <!-- Peak Detection -->
               <div class="panel" style="min-width: 210px">
                 <h2 data-i18n>Peak Detection</h2>
@@ -2537,6 +2611,56 @@
                     />
                   </div>
                 </div>
+              </div>
+
+              <!-- Amplitude Detector — the same simple threshold detector as
+                   Spectral Analysis, independent of envelope peak detection.
+                   Produces its own editable "detections" layer (see the
+                   Selections panel below), not envelope peaks. -->
+              <div
+                class="panel"
+                style="min-width: 210px"
+              >
+                <h2 data-i18n>Amplitude Detector</h2>
+                <div class="pk-cols pk-cols-amp" style="display: flex; flex-direction: column; gap: 4px">
+                  <div class="row">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 90px"
+                      >Min dur. (ms)</span
+                    >
+                    <input
+                      type="number"
+                      id="pkAmpMinDurMs"
+                      value="5"
+                      min="0"
+                      max="10000"
+                      step="0.5"
+                      style="width: 60px"
+                    />
+                  </div>
+                  <div class="row">
+                    <span
+                      style="color: var(--txt2); font-size: 11px; width: 90px"
+                      >Min gap (ms)</span
+                    >
+                    <input
+                      type="number"
+                      id="pkAmpMinGapMs"
+                      value="10"
+                      min="0"
+                      max="10000"
+                      step="0.5"
+                      style="width: 60px"
+                    />
+                  </div>
+                  <div
+                    id="pkAmpDetCount"
+                    style="font-size: 10px; color: var(--txt2)"
+                  >
+                    None yet
+                  </div>
+                </div>
+              </div>
               </div>
 
               <!-- Grouping — the pulse rules and the motif rules in ONE box.
@@ -2865,63 +2989,6 @@
                   <label class="chk" style="font-size: 11px; color: var(--txt2)" data-i18n-title title="Envelope peak detection's threshold becomes an offset above the local floor curve. The Auto threshold is not used while this is on.">
                     <input type="checkbox" id="pkFloorUseEnv" checked /> <span data-i18n>Use in Peak Detection</span>
                   </label>
-                </div>
-              </div>
-
-              <!-- Amplitude Detector — the same simple threshold detector as
-                   Spectral Analysis, independent of envelope peak detection.
-                   Produces its own editable "detections" layer (see the
-                   Selections panel below), not envelope peaks. -->
-              <div
-                class="panel"
-                style="min-width: 190px"
-              >
-                <h2 data-i18n>Amplitude Detector</h2>
-                <div class="pk-cols pk-cols-amp" style="display: flex; flex-direction: column; gap: 4px">
-                  <div class="row">
-                    <span
-                      style="color: var(--txt2); font-size: 11px; width: 90px"
-                      >Min dur. (ms)</span
-                    >
-                    <input
-                      type="number"
-                      id="pkAmpMinDurMs"
-                      value="5"
-                      min="0"
-                      max="10000"
-                      step="0.5"
-                      style="width: 60px"
-                    />
-                  </div>
-                  <div class="row">
-                    <span
-                      style="color: var(--txt2); font-size: 11px; width: 90px"
-                      >Min gap (ms)</span
-                    >
-                    <input
-                      type="number"
-                      id="pkAmpMinGapMs"
-                      value="10"
-                      min="0"
-                      max="10000"
-                      step="0.5"
-                      style="width: 60px"
-                    />
-                  </div>
-                  <div
-                    id="pkAmpDetCount"
-                    style="font-size: 10px; color: var(--txt2)"
-                  >
-                    None yet
-                  </div>
-                  <button
-                    onclick="pkClearAmpDetections()"
-                    id="btnPkClearAmpDet"
-                    disabled
-                    style="font-size: 10px; padding: 2px 8px; width: 100%"
-                  >
-                    &#128465; Clear detections
-                  </button>
                 </div>
               </div>
             </div>
@@ -8114,6 +8181,130 @@
     </div>
     <!-- /layout -->
 
+    <!-- ═══ FFT FILTER MODAL ═══════════════════════════════════════════════════ -->
+    <div id="fftFilterOverlay" class="modal-overlay" style="z-index: 1050">
+      <div class="modal-box" style="width: min(1150px, 96vw); max-height: 94vh; display: flex; flex-direction: column">
+        <div class="modal-header">
+          <h2>FFT filter</h2>
+          <button onclick="closeFftFilter()" style="font-size: 11px; padding: 2px 8px">✕</button>
+        </div>
+        <div class="modal-body" style="display: flex; flex-direction: column; gap: 6px; overflow-y: auto">
+          <div style="font-size: 11px; color: var(--txt2)">
+            Click the spectrum to add a point. Drag a point up to amplify or down to attenuate that part of the
+            spectrum, and sideways to move it (hold Shift to keep its frequency). Right-click or double-click a point
+            to remove it. Mouse wheel zooms the frequencies, Shift+wheel or Ctrl+drag pans.
+          </div>
+          <div class="row" style="gap: 10px; flex-wrap: wrap; align-items: center; font-size: 11px; color: var(--txt2)">
+            <label>Spectrum of
+              <select id="eqSpecScope" onchange="eqRefreshSpectrum()" style="font-size: 11px">
+                <option value="file">whole file</option>
+                <option value="sel">selection</option>
+              </select>
+            </label>
+            <label>Apply to
+              <select id="eqApplyScope" style="font-size: 11px" title="A selection-only filter blends in and out over 5 ms at the selection's edges. Make cuts first: it stays at the same time position.">
+                <option value="file">whole file</option>
+                <option value="sel">selection</option>
+              </select>
+            </label>
+            <label>Resolution
+              <select id="eqSize" onchange="eqSettingsChanged()" style="font-size: 11px" title="FFT size. Larger = finer frequency detail and sharper bands; smaller = better time precision.">
+                <option value="2048">2048</option>
+                <option value="4096">4096</option>
+                <option value="8192">8192</option>
+                <option value="16384" selected>16384</option>
+                <option value="32768">32768</option>
+                <option value="65536">65536</option>
+              </select>
+            </label>
+            <label class="chk"><input type="checkbox" id="eqSmooth" onchange="eqSettingsChanged()" /> Smooth curve</label>
+            <label>Gain range ±
+              <select id="eqRange" onchange="eqSettingsChanged()" style="font-size: 11px">
+                <option value="6">6 dB</option>
+                <option value="12">12 dB</option>
+                <option value="24" selected>24 dB</option>
+                <option value="48">48 dB</option>
+                <option value="96">96 dB</option>
+              </select>
+            </label>
+            <label>Level span
+              <select id="eqDyn" onchange="eqSettingsChanged()" style="font-size: 11px">
+                <option value="60">60 dB</option>
+                <option value="90" selected>90 dB</option>
+                <option value="120">120 dB</option>
+              </select>
+            </label>
+          </div>
+          <div class="row" style="gap: 6px; flex-wrap: wrap; align-items: center; font-size: 11px; color: var(--txt2)">
+            <span>Zoom:</span>
+            <button onclick="eqZoom(0.5)" style="font-size: 11px; padding: 1px 8px" title="Zoom in on frequency">+</button>
+            <button onclick="eqZoom(2)" style="font-size: 11px; padding: 1px 8px" title="Zoom out">−</button>
+            <button onclick="eqZoomFit()" style="font-size: 11px; padding: 1px 8px" title="Show 0 to Nyquist">Fit</button>
+            <button onclick="eqZoomToPoints()" style="font-size: 11px; padding: 1px 8px" title="Zoom to the range the points cover">Points</button>
+            <label>from <input type="number" id="eqFrom" step="0.1" min="0" style="width: 66px" onchange="eqViewFromInputs()" /> kHz</label>
+            <label>to <input type="number" id="eqTo" step="0.1" min="0" style="width: 66px" onchange="eqViewFromInputs()" /> kHz</label>
+            <span style="margin-left: 10px">Selected point:</span>
+            <label><input type="number" id="eqPtF" step="10" style="width: 78px" disabled onchange="eqPtInputsChanged()" /> Hz</label>
+            <label><input type="number" id="eqPtG" step="0.5" style="width: 60px" disabled onchange="eqPtInputsChanged()" /> dB</label>
+            <button id="eqPtDel" onclick="eqDeletePoint(EQ.sel)" disabled style="font-size: 11px; padding: 1px 8px">Remove</button>
+            <button onclick="eqClearPoints()" style="font-size: 11px; padding: 1px 8px" title="Remove every point (a flat curve)">Clear points</button>
+            <span id="eqCount" style="color: var(--txt3)"></span>
+          </div>
+          <div class="row" style="gap: 6px; flex-wrap: wrap; align-items: center; font-size: 11px; color: var(--txt2)">
+            <span>Presets:</span>
+            <select id="eqPresetSelect" style="font-size: 11px; min-width: 130px"><option value="">— presets —</option></select>
+            <button onclick="eqPresetLoad()" style="font-size: 11px; padding: 1px 8px" title="Load the chosen preset into the editor.">&#128193; Load</button>
+            <button onclick="eqPresetSave()" style="font-size: 11px; padding: 1px 8px" title="Save the current points and settings under a name, in this app.">&#128190; Save&hellip;</button>
+            <button onclick="eqPresetDelete()" style="font-size: 11px; padding: 1px 8px" title="Delete the chosen preset.">&#128465; Delete</button>
+            <button onclick="eqPresetExportFile()" style="font-size: 11px; padding: 1px 8px" title="Save the current points and settings to a .json file, to keep beside the recordings or copy to another computer.">&#11015; Export file&hellip;</button>
+            <button onclick="document.getElementById('eqPresetFile').click()" style="font-size: 11px; padding: 1px 8px" title="Load a preset from a .json file.">&#11014; Import file&hellip;</button>
+            <input type="file" id="eqPresetFile" accept=".json" style="display: none" onchange="eqPresetImportFile(this.files[0]); this.value = '';" />
+            <span id="eqPresetStatus" style="color: var(--txt3); overflow-wrap: anywhere"></span>
+          </div>
+          <div class="row" style="gap: 6px; flex-wrap: wrap; align-items: center; font-size: 11px; color: var(--txt2)">
+            <span>Microphone correction:</span>
+            <button onclick="document.getElementById('eqMicFile').click()" style="font-size: 11px; padding: 1px 8px" title="Load a microphone's frequency response (a text or CSV table: frequency, level in dB). It is inverted and put in the editor as a gain curve to correct the recording.">&#11014; Import response curve&hellip;</button>
+            <input type="file" id="eqMicFile" accept=".csv,.txt,.tsv,.dat,text/plain" style="display: none" onchange="eqMicImportFile(this.files[0]); this.value = '';" />
+            <label>Frequencies in
+              <select id="eqMicUnit" style="font-size: 11px" title="Unit of the frequency column. Auto assumes kHz when the table ends below 300.">
+                <option value="auto" selected>auto</option>
+                <option value="hz">Hz</option>
+                <option value="khz">kHz</option>
+              </select>
+            </label>
+            <label title="Never boost by more than this. Boosting where the microphone barely responds only raises the noise.">max boost <input type="number" id="eqMicBoost" value="12" min="0" max="48" step="1" style="width: 48px" /> dB</label>
+            <label title="Never cut by more than this.">max cut <input type="number" id="eqMicCut" value="12" min="0" max="48" step="1" style="width: 48px" /> dB</label>
+            <label title="Smooth the curve over this fraction of an octave first, so narrow notches and resonances in the table are not corrected into ringing.">smoothing
+              <select id="eqMicSmooth" style="font-size: 11px">
+                <option value="0">none</option>
+                <option value="0.1666">1/6 oct</option>
+                <option value="0.3333" selected>1/3 oct</option>
+                <option value="0.5">1/2 oct</option>
+                <option value="1">1 oct</option>
+              </select>
+            </label>
+            <label title="How closely the points follow the curve. Larger = fewer points that are easier to edit.">detail <input type="number" id="eqMicTol" value="0.5" min="0.05" max="6" step="0.1" style="width: 48px" /> dB</label>
+            <label title="The correction leaves the level at this frequency unchanged. Blank = the median of the curve.">reference <input type="number" id="eqMicRef" placeholder="median" min="0" step="0.5" style="width: 62px" /> kHz</label>
+            <button onclick="eqMicUse(true)" style="font-size: 11px; padding: 1px 8px" title="Rebuild the correction from the loaded curve with these settings (replaces the points in the editor).">Rebuild</button>
+            <button onclick="eqMicClear()" style="font-size: 11px; padding: 1px 8px" title="Stop showing the microphone's response. The points stay.">Clear curve</button>
+            <span id="eqMicStatus" style="color: var(--txt3); overflow-wrap: anywhere"></span>
+          </div>
+          <div style="position: relative; height: min(54vh, 460px); min-height: 240px">
+            <canvas id="eqCanvas" style="position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; border: 1px solid var(--border2); border-radius: var(--rad)"></canvas>
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--txt2)">
+            <span id="eqReadout">&nbsp;</span>
+            <span id="eqNote" style="color: var(--txt3)"></span>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button onclick="eqApply()" class="suc" style="font-size: 11px" title="Filter the audio with this gain curve. Applying again replaces the previous FFT filter.">Apply filter</button>
+          <button onclick="clearFftFilter()" style="font-size: 11px" title="Remove the applied FFT filter from the audio.">Remove applied filter</button>
+          <button onclick="closeFftFilter()" style="font-size: 11px">Close</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ═══ SAVE EDITED AUDIO MODAL ═══════════════════════════════════════════ -->
     <div
       id="saveAudioModalOverlay"
@@ -8496,6 +8687,9 @@
     </div>
 
     <script src="main.js"></script>
+    <script src="fft_filter.js"></script>
+    <script src="fft_filter_presets.js"></script>
+    <script src="fft_filter_mic.js"></script>
     <script src="shortcuts.js"></script>
     <script src="oscillogram_stack.js"></script>
     <script src="oscillogram_zoom.js"></script>

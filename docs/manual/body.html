@@ -10,7 +10,7 @@
 </ul>
 
 <h2 id="s1-1">1.1 Status of this manual</h2>
-<p>This manual is a provisional edition written against version 0.9.1. The application is under active development: names of buttons, default values and some behaviours may change between releases. Sections marked <i>Provisional</i> are shorter than they will eventually be. The screenshots were taken with a synthetic demonstration recording (a made-up song of seven echemes), so the numbers in them are illustrative only. Where the manual and the program disagree, trust the program and please tell the author; a checklist for reporting is in Appendix B.</p>
+<p>This manual is a provisional edition written against version 0.9.3. The application is under active development: names of buttons, default values and some behaviours may change between releases. Sections marked <i>Provisional</i> are shorter than they will eventually be. The screenshots were taken with a synthetic demonstration recording (a made-up song of seven echemes), so the numbers in them are illustrative only. Where the manual and the program disagree, trust the program and please tell the author; a checklist for reporting is in Appendix B.</p>
 
 <h2 id="s1-2">1.2 Conventions used in this manual</h2>
 <table class="plain">
@@ -21,8 +21,18 @@
 <tr><td>Tooltips</td><td>Hovering the pointer over almost any control explains it. The information icon (ⓘ) next to some headings gives longer hints. Tooltips are the most detailed reference for individual parameters; this manual explains how the pieces fit together.</td></tr>
 </table>
 
-<h2 id="s1-3">1.3 What changed in 0.9.1</h2>
+<h2 id="s1-3">1.3 What changed in 0.9.3</h2>
 <ul>
+<li>New <b>FFT filter</b> in Edit audio: a graphical equaliser on the power spectrum of the file or the selection, with frequency zoom, presets (in the program and as files) and <b>microphone correction</b> from an imported response curve (section 6.2).</li>
+<li>The <b>Bandpass filter</b> has a selectable <b>Slope</b> (12 to 96 dB per octave) and its cut-offs are now in kHz.</li>
+<li>New <b>Delete around selection</b> button. Noise added by Noise padding can be deleted.</li>
+<li>Fixed: selections that stopped short of the recording’s edges, playback at speeds other than 100% stopping at random, and the grouping parameters of Temporal Analysis not applying to Amplitude Detector pulses.</li>
+<li>Temporal Analysis: the Amplitude Detector pane moved under Peak Detection and its <b>Clear detections</b> button was removed (use <b>Clear pulses</b>).</li>
+</ul>
+
+<h2 id="s1-4">1.4 What changed in 0.9.2 and 0.9.1</h2>
+<ul>
+<li>0.9.2: a <b>vertical navigation bar</b> on the right of the waveform and spectrogram when zoomed in vertically; the waveform can be panned up and down; <b>Floor win. (ms)</b> redraws the local floor curve as you type.</li>
 <li><b>Drag and drop</b> of audio files onto the window (section 5.1).</li>
 <li>The waveform is drawn as a true <b>oscillogram</b> when zoomed in, and the waveform and spectrogram have <b>zoom buttons</b> (time, amplitude, frequency). <b>Right Ctrl + Right Shift + ↑ / ↓</b> changes the spectral resolution on the fly (section 6.1).</li>
 <li>Preferences → <b>Keyboard shortcuts…</b> lets you change the shortcuts (section 15).</li>
@@ -30,7 +40,7 @@
 <li>Summary Analysis: <b>PERMANOVA</b>, <b>clustering</b> (k-means, DBSCAN, hierarchical), choosable <b>point labels</b>, a temperature adjustment limited to timing variables and the peak frequency, and the number of specimens and rows behind each mean (section 11.2).</li>
 </ul>
 
-<h2 id="s1-4">1.4 What changed in 0.9.0 (since the 0.8.0 draft)</h2>
+<h2 id="s1-5">1.5 What changed in 0.9.0 (since the 0.8.0 draft)</h2>
 <ul>
 <li>Three new modules: <b>Custom Workflow</b> (section 12), <b>Clustering</b> with Google Perch (section 13) and <b>STR</b> (section 14), including the STR fingerprint and the Representative STR.</li>
 <li>Preprocessing rewritten (section 6): Vanish, Delete, Fix DC Offset, Normalize, Noise padding and Fade in <b>Edit audio</b>. Every tool has its own <b>Apply to selected files</b> button, which replaces the Batch Edit pane.</li>
@@ -43,7 +53,7 @@
 <p>Download the installer for your system from the project’s Releases page (<code>github.com/panchorivasf/Rthoptera-Desk/releases</code>).</p>
 <table>
 <thead><tr><th>System</th><th>File</th><th>Notes</th></tr></thead>
-<tr><td>Windows 64-bit</td><td><code>Rthoptera.Desk_0.9.1_x64-setup.exe</code></td><td>Recommended; double-click it. The <code>.msi</code> is for managed deployment.</td></tr>
+<tr><td>Windows 64-bit</td><td><code>Rthoptera.Desk_0.9.3_x64-setup.exe</code></td><td>Recommended; double-click it. The <code>.msi</code> is for managed deployment.</td></tr>
 <tr><td>macOS, Apple Silicon (M1–M4)</td><td><code>…_aarch64.dmg</code></td><td>Apple menu → About This Mac shows “Apple M…”.</td></tr>
 <tr><td>macOS, Intel</td><td><code>…_x64.dmg</code></td><td>About This Mac shows an Intel processor.</td></tr>
 <tr><td>Linux x86_64</td><td><code>.AppImage</code> (run <code>chmod +x</code> first), <code>.deb</code>, <code>.rpm</code></td><td>The AppImage works on most distributions.</td></tr>
@@ -163,9 +173,10 @@
  with the arrow in its title bar. The title bar also holds <b>Undo Edit</b>, which steps back the last edit of any kind, and <b>Save Edited Audio As…</b>. The second button offers a suffix reflecting the edits (for example <code>_1hpf_trimmed</code>). <b>Save (in app)</b> adds a new entry to Loaded Audio only; <b>Save &amp; Export to Disk</b> also writes a WAV.</p>
 <table>
 <thead><tr><th style="width:22%">Tool</th><th>What it does</th></tr></thead>
-<tr><td>Time selection</td><td>Shows the current selection. A <b>Duration</b> box resizes the selection from its start (handy for cutting clips of equal length). <b>Save selection</b> writes the selection as its own WAV (original name + <code>_1</code>, <code>_2</code>, …). <b>Vanish</b> replaces the selection with noise matched to this recording’s own background: the sound disappears but the length and timing stay the same. It needs a few hundred milliseconds of quiet material in the recording to learn the background from. <b>Delete</b> (or the <code>Delete</code> key) cuts the selection out and joins what came before and after it, so the recording gets shorter.</td></tr>
+<tr><td>Time selection</td><td>Shows the current selection. A <b>Duration</b> box resizes the selection from its start (handy for cutting clips of equal length). <b>Save selection</b> writes the selection as its own WAV (original name + <code>_1</code>, <code>_2</code>, …). <b>Vanish</b> replaces the selection with noise matched to this recording’s own background: the sound disappears but the length and timing stay the same. It needs a few hundred milliseconds of quiet material in the recording to learn the background from. <b>Delete</b> (or the <code>Delete</code> key) cuts the selection out and joins what came before and after it, so the recording gets shorter. <b>Delete around selection</b> does the opposite: it removes everything before and after the selection and keeps only the selection. Undo restores both cuts in one step. Sound added by Noise padding can be selected and deleted too; deleting it shortens the padding.</td></tr>
 <tr><td>Trim</td><td><b>Trim…</b>: drag the two handles (on the waveform or on the Spectral Analysis tab), then <b>Confirm Trim</b>. <b>Reset</b> restores the full duration. While Trim mode is open, dragging draws the trim range rather than a time selection, so Vanish and Delete are unavailable.</td></tr>
-<tr><td>Bandpass filter</td><td>High-pass and low-pass cut-offs in Hz (0 = off for the high-pass; the low-pass defaults to Nyquist). Use a high-pass just below the insect’s lowest frequency to remove wind and handling noise.</td></tr>
+<tr><td>Bandpass filter</td><td>High-pass and low-pass cut-offs in kHz (0 = off for the high-pass; the low-pass defaults to Nyquist). Use a high-pass just below the insect’s lowest frequency to remove wind and handling noise. <b>Slope</b> sets how steeply the filter falls beyond a cut-off: 12, 24 (default), 48, 72 or 96 dB per octave. A steeper slope separates a band more cleanly but can ring after sharp sounds. The cut-off is the point where the level has dropped by 6 dB.</td></tr>
+<tr><td>FFT filter</td><td>Opens the FFT filter editor (see below). <b>Remove applied filter</b> takes the filter off again.</td></tr>
 <tr><td>DC offset</td><td><b>Fix DC Offset</b> subtracts the recording’s mean so the waveform is centred on zero. A DC offset is common with some recorders and distorts amplitude measurements.</td></tr>
 <tr><td>Normalize</td><td>Scales the recording so its peak reaches the <b>Target level</b> in dBFS (0 = full scale). It is applied after the filters and cuts, and before the noise padding and fades.</td></tr>
 <tr><td>Frequency drop</td><td>Scales every frequency down by a percentage while keeping the duration (25% moves 40 kHz to 30 kHz). A way to bring ultrasonic song into a convenient range.</td></tr>
@@ -175,6 +186,18 @@
 </table>
 <p>Every tool except Time selection and Trim has an <b>Apply to current file</b> button and a <b>Reset</b> button on its own row. Reset removes that tool’s edit.</p>
 <div class="warn"><b>Edits that change the timeline.</b> Trim, Delete and Noise padding change the timeline. Detections, envelope peaks and annotations made earlier are therefore cleared, because their times would no longer point at the right sound. Changing the trim after Vanish or Delete edits removes those edits, after asking.</div>
+
+<h3>FFT filter</h3>
+<p>The FFT filter is a graphical equaliser. <b>FFT filter…</b> opens a window with the power spectrum of the whole file or of the current time selection (choose with <b>Spectrum of</b>). A gain curve lies over the spectrum, flat at 0 dB.</p>
+<ul>
+<li><b>Add and move points.</b> Click the curve to add a point; drag a point up to amplify and down to attenuate that band. The point’s frequency and gain can also be typed in the boxes, and a selected point is removed with the <b>Remove</b> button. <b>Clear points</b> flattens the curve. Between points the curve is a straight line, or a smooth curve with <b>Smooth curve</b> ticked.</li>
+<li><b>Zoom in frequency.</b> The <b>+</b> and <b>−</b> buttons, the <b>from</b> and <b>to</b> boxes, <b>Fit</b> (0 to Nyquist) and <b>Points</b> (the range the points cover) show any band. The gain axis does not depend on the zoom, so the 0 dB line stays where it is. <b>Gain range ±</b> sets how many dB the axis shows, <b>Level span</b> how many dB of the spectrum, and <b>Resolution</b> the FFT size (larger gives finer frequency detail).</li>
+<li><b>Apply to</b> sets the scope: the whole file, or the selection only; at the edges of a selection the filtered and original sound are blended over 5 ms. Press <b>Apply filter</b>. The filter becomes part of the edit chain: <b>Undo Edit</b> or <b>Remove applied filter</b> removes it.</li>
+<li><b>Presets.</b> <b>Save</b> stores the current curve under a name on this computer, <b>Load</b> brings it back and <b>Delete</b> removes it. <b>Export file…</b> and <b>Import file…</b> use a <code>.json</code> that can be copied to another computer. A preset loaded on a recording with a lower sampling rate drops the points above its Nyquist frequency.</li>
+<li><b>Microphone correction.</b> <b>Import response curve…</b> reads the frequency response of a microphone as a text or CSV table with a frequency column and a level column in dB (comma, semicolon, tab or space separated; header lines and extra columns are ignored). <b>Frequencies in</b> is Auto (kHz if the table ends below 300), Hz or kHz. The response is inverted and placed in the editor as an ordinary gain curve, which you can edit before pressing Apply filter. The response itself is drawn as a dashed line. Settings: <b>max boost</b> and <b>max cut</b> (default 12 dB; boosting where the microphone barely responds only raises the noise), <b>smoothing</b> (so narrow notches in the table are not corrected into ringing), <b>detail</b> (how closely the points follow the curve; larger gives fewer points) and <b>reference</b> (the frequency whose level stays unchanged; blank = the median of the curve). <b>Rebuild</b> applies new settings and replaces the points; <b>Clear curve</b> hides the response.</li>
+</ul>
+<div class="note">Microphone correction evens out the relative level across frequencies; it does not give absolute levels (dB SPL). Above the last frequency of the table the last value is held. A correction is only as good as the curve: use the one measured for your microphone and, if possible, for the angle of incidence you recorded at.</div>
+
 
 <h2 id="s6-3">6.3 Applying edits to several recordings</h2>
 <p>Every tool except Time selection and Trim also has an <b>Apply to selected files</b> button, which is enabled when more than one recording is checked in the Loaded Audio pane. The tool’s current settings are applied to each checked recording. If the active recording is among them, its existing edits are kept and the new one is added on top. A checked recording that is already at or below a chosen Downsample rate is left untouched.</p>
@@ -625,7 +648,7 @@
 <p>Steps that are recorded are the parameter-driven actions:</p>
 <ul>
 <li><b>Preprocessing:</b> Bandpass filter, Fix DC offset, Normalize, Frequency drop, Downsample, Noise padding, Fade.</li>
-<li><b>Temporal Analysis:</b> Detect envelope peaks, Amplitude Detector, Clear detections, Apply to Spectral Analysis, Compute metrics from peaks / pulses.</li>
+<li><b>Temporal Analysis:</b> Detect envelope peaks, Amplitude Detector, Apply to Spectral Analysis, Compute metrics from peaks / pulses.</li>
 <li><b>Spectral Analysis:</b> Spectral metrics.</li>
 </ul>
 <p>With each step, the parameter boxes that changed since the previous step are stored too, so a replay reproduces the settings as well as the clicks.</p>
@@ -818,7 +841,7 @@ Undo, Delete and the editing keys of Temporal Analysis are fixed.</li>
 <tr><td>Interface too small or too large</td><td>Preferences → Text Size.</td></tr>
 </table>
 
-<h2 id="s17-3">17.3 Known limits (version 0.9.1)</h2>
+<h2 id="s17-3">17.3 Known limits (version 0.9.3)</h2>
 <ul>
 <li>Pulses-only metrics (no peaks) omit temporal excursion and the per-peak columns.</li>
 <li>Boundary edits made by hand cannot be reset in one step; use Undo.</li>
@@ -833,7 +856,7 @@ Undo, Delete and the editing keys of Temporal Analysis are fixed.</li>
 <p>Please cite the paper when you publish results obtained with Rthoptera Desk:</p>
 <p class="cite">Rivas, F., Brizio, C., Buzzetti, F. M., &amp; Pijanowski, B. (2025). Rthoptera: Standardised insect bioacoustics in R. <i>Methods in Ecology and Evolution, 16</i>(6), 1084–1094. https://doi.org/10.1111/2041-210X.70045</p>
 <p>To state which software version you used:</p>
-<p class="cite">Rivas, F. (2026). <i>Rthoptera Desk</i> (Version 0.9.1) [Computer software]. https://github.com/panchorivasf/Rthoptera-Desk</p>
+<p class="cite">Rivas, F. (2026). <i>Rthoptera Desk</i> (Version 0.9.3) [Computer software]. https://github.com/panchorivasf/Rthoptera-Desk</p>
 <p>Work using the Auto-coded Oscillogram should also cite:</p>
 <p class="cite">Brizio, C. (2023). Colour Enhanced Time/Pressure Envelope (CETPE), a novel on-screen rendering of digital sound. <i>Rivista Italiana di Acustica, 48</i>(2), 63–71.</p>
 <p>Work using the Clustering module should also cite Google’s Perch 2.0 model as its authors request. <i>(Provisional: the full reference will be added.)</i></p>
