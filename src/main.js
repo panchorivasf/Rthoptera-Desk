@@ -1654,7 +1654,9 @@
       // pane (Analyzer, Envelope peaks, Multiplot, Osc. Stack/Zoom, Habitus) reads
       // from the shared `audioLibrary`, so this is the single place new
       // recordings enter it.
-      async function _ingestDecodedAudio(displayName, folder, decoded) {
+      // info (optional): { ab: the file's bytes or its first part, mtimeMs: its modified time }.
+      // It is only used to remember WHEN the recording was made (see field_import.js).
+      async function _ingestDecodedAudio(displayName, folder, decoded, info) {
         const len = decoded.length,
           nch = decoded.numberOfChannels;
         const mono = new Float32Array(len);
@@ -1666,6 +1668,9 @@
 
         if (folder) lastImportFolder = folder;
         const entry = addAudioToLibrary(displayName, folder, mono, decoded.sampleRate);
+        try {
+          entry.recTime = fiTimeInfo(info && info.ab, info && info.mtimeMs, len / decoded.sampleRate, displayName);
+        } catch (e) {}
         log(
           'Decoded "' + displayName + '": ' +
             len.toLocaleString() + " samples @ " + decoded.sampleRate +
@@ -1759,10 +1764,16 @@
                 bytes.byteOffset + bytes.byteLength,
               );
               const decoded = await decodeAudioBytes(ab);
+              let mtimeMs = 0;
+              try {
+                const st = await window.__TAURI__.fs.stat(path);
+                if (st && st.mtime) mtimeMs = new Date(st.mtime).getTime();
+              } catch (e) {}
               const entry = await _ingestDecodedAudio(
                 displayName,
                 getFolderFromPath(path),
                 decoded,
+                { ab, mtimeMs },
               );
               if (!firstEntry) firstEntry = entry;
             } catch (err) {
@@ -1863,10 +1874,15 @@
               );
               continue;
             }
+            let head = null;
+            try {
+              head = await f.slice(0, 65536).arrayBuffer();
+            } catch (e) {}
             const entry = await _ingestDecodedAudio(
               displayName,
               getFolderFromPath(srcPath),
               decoded,
+              { ab: head, mtimeMs: f.lastModified || 0 },
             );
             if (!firstEntry) firstEntry = entry;
           }
@@ -4661,7 +4677,10 @@
           alert("Enter a name for the saved audio.");
           return;
         }
-        addAudioToLibrary(name, currentAudioFileFolder, rawSamples, sampleRate);
+        // an edited copy was recorded at the same time as its source
+        const srcEntry = audioLibrary.find((e) => e.id === audioLibActiveId);
+        const savedEntry = addAudioToLibrary(name, currentAudioFileFolder, rawSamples, sampleRate);
+        if (srcEntry && srcEntry.recTime) savedEntry.recTime = srcEntry.recTime;
         if (alsoExport) exportAudioToDisk(name, rawSamples, sampleRate);
         closeSaveEditedAudioModal();
         log('Saved edited audio as "' + name + '" in the Loaded Audio panel', "ok");

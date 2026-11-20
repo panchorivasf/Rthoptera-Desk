@@ -8515,6 +8515,63 @@
       </div>
     </div>
 
+    <!-- ═══ FIELD RECORDS (Rthoptera Field, iPhone) -> RECORDINGS ═════════════ -->
+    <div id="fiOverlay" class="modal-overlay" style="z-index: 1050" onclick="if (event.target === this) fiClose();">
+      <div class="modal-box" style="width: min(900px, 96vw)">
+        <div class="modal-header">
+          <h2>Field records &rarr; recordings</h2>
+          <button onclick="fiClose()" style="font-size: 11px; padding: 2px 8px">&#10005;</button>
+        </div>
+        <div class="modal-body" style="display: flex; flex-direction: column; gap: 8px; overflow-y: auto">
+          <div style="font-size: 11px; color: var(--txt3)">
+            Add the <b>.zip</b> (or the <b>.json</b>) that Rthoptera Field shared from the phone; several at once are fine. Each record is matched to the loaded recording that was started between its <i>Recorder started</i> and <i>Recorder stopped</i> marks, using the recording&rsquo;s own time (AudioMoth header, WAV header, or the file&rsquo;s date). Check the matches, fix any by hand, then Apply.
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+            <button onclick="fiPick()" style="font-size: 11px">Add Field files&hellip;</button>
+            <input type="file" id="fiFile" accept=".zip,.json" multiple style="display: none" onchange="fiPickedBrowser(this.files)" />
+            <button onclick="fiMatchAll()" style="font-size: 11px" title="Match again, e.g. after loading more recordings.">Match again</button>
+            <button onclick="fiClear()" style="font-size: 11px">Clear list</button>
+            <label style="font-size: 11px; color: var(--txt2)" title="Where the time of each recording comes from. Automatic: the AudioMoth or WAV header if it has one, then the time written in the file name, then the file date. The others use only that one source.">
+              recording time from
+              <select id="fiSrc" onchange="fiMatchAll()" style="font-size: 11px">
+                <option value="auto" selected>automatic (header, name, file date)</option>
+                <option value="name">file name (e.g. 20261120_143005)</option>
+                <option value="stamp">file date (modified stamp)</option>
+                <option value="header">WAV / AudioMoth header</option>
+              </select>
+            </label>
+            <label style="font-size: 11px; color: var(--txt2)" title="Added to the recorder clock offset of every record, in seconds. Use it if all the matches are off by about the same amount (positive: the recorder clock is ahead of the phone's).">
+              extra clock shift
+              <input type="text" id="fiShift" value="0" onchange="fiMatchAll()" style="font-size: 11px; width: 44px" /> s
+            </label>
+            <label style="font-size: 11px; color: var(--txt2)" title="How far outside the start and stop marks a recording may still count as belonging to the record. A recording only has to overlap the marks, so starting the recorder a little earlier or later is fine.">
+              tolerance
+              <select id="fiTol" onchange="fiMatchAll()" style="font-size: 11px">
+                <option value="30">30 s</option>
+                <option value="120" selected>2 min</option>
+                <option value="300">5 min</option>
+                <option value="1800">30 min</option>
+              </select>
+            </label>
+          </div>
+          <table id="fiTable" style="width: 100%; font-size: 11px; border-collapse: collapse"></table>
+          <div id="fiStatus" style="font-size: 11px; color: var(--txt3); overflow-wrap: anywhere"></div>
+          <div style="display: flex; gap: 8px; align-items: center; justify-content: flex-end">
+            <button id="btnFiApply" onclick="fiApply()" disabled style="font-size: 11px">Apply</button>
+            <button onclick="fiClose()" style="font-size: 11px">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="fiImgOverlay" class="modal-overlay" style="z-index: 1200" onclick="this.classList.remove('show')">
+      <div class="modal-box" style="width: min(760px, 94vw)">
+        <div class="modal-body" style="display: flex; flex-direction: column; gap: 6px; align-items: center">
+          <img id="fiImg" alt="Satellite picture" style="max-width: 100%; max-height: 80vh" />
+          <div id="fiImgCap" style="font-size: 11px; color: var(--txt3)"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- ═══ RECORDING METADATA MODAL ═══════════════════════════════════════════ -->
     <div
       id="recMetaOverlay"
@@ -8623,6 +8680,7 @@
         </div>
         <div class="modal-footer">
           <button onclick="openXcHelper()" style="font-size: 11px; margin-right: auto" title="Step-by-step helper for uploading this recording on xeno-canto.org: every field of their upload form, in order, with a copy button.">🌐 Xeno-canto upload helper</button>
+          <button onclick="fiOpen()" style="font-size: 11px" title="Read the records saved by Rthoptera Field on the phone (the .zip it shares, or the .json), match them to the loaded recordings by time, and fill in their metadata.">📱 Import Field records…</button>
           <button onclick="saveRecordingMetadata()" class="suc" style="font-size: 11px" title="Write the recording session and specimen to a .json file.">⬇ Save to file</button>
           <button onclick="document.getElementById('metaFile').click()" style="font-size: 11px" title="Load a .json written by Save to file (older specimen_metadata.json files work too).">⬆ Load from file</button>
           <input type="file" id="metaFile" accept=".json" style="display: none" onchange="loadRecordingMetadata(this.files[0]); this.value = '';" />
@@ -8853,6 +8911,7 @@
     <script src="perch_cluster.js"></script>
     <script src="voice_notes.js"></script>
     <script src="voice_protocol.js"></script>
+    <script src="field_import.js"></script>
     <script src="str_tool.js"></script>
     <script src="i18n.js"></script>
   </body>
