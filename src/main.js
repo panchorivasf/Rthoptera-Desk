@@ -1169,7 +1169,13 @@
         use.disabled = false;
       }
 
-      async function openMapPicker() {
+      // opts (optional): {lat, lon, onUse(point)} to start from other coordinates
+      // than the metadata form's and hand the chosen point to onUse instead of
+      // writing it into the form.
+      let _mapPickCb = null;
+      async function openMapPicker(opts) {
+        if (opts && typeof opts !== "object") opts = null; // a click event
+        _mapPickCb = opts && opts.onUse ? opts.onUse : null;
         $("mapPickOverlay").classList.add("show");
         _pickPoint = null;
         $("mapPickUse").disabled = true;
@@ -1199,13 +1205,17 @@
           L.control.layers({ Street: street, Satellite: satellite }, null, { position: "topright" }).addTo(_pickMap);
           _pickMap.on("click", (e) => mapPickPoint(e.latlng.lat, e.latlng.lng, true));
         }
-        const lat = parseFloat($("latInput").value),
-          lon = parseFloat($("lonInput").value);
+        const lat = opts && "lat" in opts ? parseFloat(opts.lat) : parseFloat($("latInput").value),
+          lon = opts && "lon" in opts ? parseFloat(opts.lon) : parseFloat($("lonInput").value);
         if (isFinite(lat) && isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
           _pickMap.setView([lat, lon], 12);
           mapPickPoint(lat, lon, false);
           _mapInfo("Lat " + lat + ", Lon " + lon + " (current values) — click the map to choose another point.");
         } else {
+          if (_pickMarker) {
+            _pickMap.removeLayer(_pickMarker);
+            _pickMarker = null;
+          }
           _pickMap.setView([20, 0], 2);
           _mapInfo("Click the map to choose a point. Use the layer button (top right of the map) to switch between street and satellite.");
         }
@@ -1214,10 +1224,18 @@
 
       function closeMapPicker() {
         $("mapPickOverlay").classList.remove("show");
+        _mapPickCb = null;
       }
 
       function useMapPoint() {
         if (!_pickPoint) return;
+        if (_mapPickCb) {
+          const cb = _mapPickCb,
+            pt = _pickPoint;
+          closeMapPicker();
+          cb(pt);
+          return;
+        }
         metaFill("session", {
           lat: _pickPoint.lat,
           lon: _pickPoint.lon,

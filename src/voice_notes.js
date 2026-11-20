@@ -542,6 +542,7 @@ function vnRefreshButtons() {
   set("btnVnDelete", has && !VN.busy);
   set("btnVnTxt", has);
   set("btnVnCsv", has);
+  set("btnVnMeta", VN.ranges.some((r) => r.text));
 }
 function vnRender() {
   const box = vnEl("vnList");

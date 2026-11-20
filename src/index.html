@@ -1508,6 +1508,7 @@
                     </button>
                     <button id="btnVnTxt" onclick="vnExport('txt')" disabled style="font-size: 11px" title="Save the times and transcripts as a text file.">Export .txt</button>
                     <button id="btnVnCsv" onclick="vnExport('csv')" disabled style="font-size: 11px" title="Save the times and transcripts as a table.">Export .csv</button>
+                    <button id="btnVnMeta" onclick="vpOpen()" disabled style="font-size: 11px" title="Read the transcribed notes as recording metadata (date, time, coordinates, temperature, species, …) and fill in the Recording metadata form. You see what was heard before anything is saved.">&#128203; Read as metadata&hellip;</button>
                   </div>
                   <div id="vnStatus" style="font-size: 11px; color: var(--txt3); overflow-wrap: anywhere"></div>
                   <div style="display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px">
@@ -8470,6 +8471,50 @@
     </div>
 
 
+    <!-- ═══ VOICE NOTES -> METADATA ═══════════════════════════════════════════ -->
+    <div id="vpOverlay" class="modal-overlay" onclick="if (event.target === this) vpClose();">
+      <div class="modal-box" style="width: min(780px, 94vw)">
+        <div class="modal-header">
+          <h2>Voice notes &rarr; recording metadata</h2>
+          <button onclick="vpClose()" style="font-size: 11px; padding: 2px 8px">&#10005;</button>
+        </div>
+        <div class="modal-body" style="display: flex; flex-direction: column; gap: 8px; overflow-y: auto">
+          <details style="font-size: 11px; color: var(--txt2)">
+            <summary style="cursor: pointer">How to speak the notes</summary>
+            <div style="color: var(--txt3); margin-top: 3px">
+              Say each label, then its value, slowly and with a short pause between fields. Labels (English or Spanish): <b>date</b> (year, month, day), <b>time</b> (hour, minute, 24 h), <b>latitude</b>, <b>longitude</b>, <b>elevation</b>, <b>temperature</b>, <b>country</b>, <b>locality</b>, <b>recorder</b>, <b>microphone</b>, <b>accessories</b>, <b>specimen</b>, <b>species</b>. Say numbers one digit at a time, with <b>minus</b> and <b>point</b>. You may say <b>begin notes</b> and <b>end notes</b> to mark where the notes start and stop.
+              <br /><i>Example: &ldquo;begin notes. Date 2026 11 20. Time 14 30. Latitude minus 3 8 point 4 5 1 2. Longitude minus 7 3 point 1 8 9. Temperature 2 4 point 5. Species Gryllus assimilis. End notes.&rdquo;</i>
+            </div>
+          </details>
+          <label style="font-size: 11px; color: var(--txt2)">
+            Text read from the transcripts (edit it if the transcription got a word wrong)
+            <textarea id="vpText" rows="4" style="width: 100%; font-size: 12px; box-sizing: border-box; resize: vertical"></textarea>
+          </label>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+            <button onclick="vpRead()" style="font-size: 11px">Read again</button>
+            <button onclick="vpOpenMap()" style="font-size: 11px" title="Show the coordinates on a map (street or satellite) to check them. Click the map to move the point: the elevation and place are then updated.">&#128506; Check on map&hellip;</button>
+            <label style="font-size: 11px; color: var(--txt2)" title="With coordinates, whatever was not spoken (country, locality, elevation) is looked up from them on openstreetmap.org (or bigdatacloud.net) and open-meteo.com. That sends the coordinates to those services.">
+              <input type="checkbox" id="vpGeo" checked onchange="vpGeoSetting(this.checked)" /> look up country, locality and elevation from the coordinates (sends them to openstreetmap.org and open-meteo.com)
+            </label>
+          </div>
+          <table id="vpTable" style="width: 100%; font-size: 11px; border-collapse: collapse"></table>
+          <div id="vpStatus" style="font-size: 11px; color: var(--txt3); overflow-wrap: anywhere"></div>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end">
+            <label style="font-size: 11px; color: var(--txt2)" title="Date, time, place, temperature and equipment can go to several recordings; the specimen and species only go to the active one.">
+              apply the session to
+              <select id="vpScope" style="font-size: 11px">
+                <option value="active" selected>the active recording</option>
+                <option value="checked">the checked recordings</option>
+                <option value="all">all loaded recordings</option>
+              </select>
+            </label>
+            <button id="btnVpApply" onclick="vpApply()" disabled style="font-size: 11px">Apply</button>
+            <button onclick="vpClose()" style="font-size: 11px">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ═══ RECORDING METADATA MODAL ═══════════════════════════════════════════ -->
     <div
       id="recMetaOverlay"
@@ -8807,6 +8852,7 @@
     <script src="vendor/umap/umap-js.min.js"></script>
     <script src="perch_cluster.js"></script>
     <script src="voice_notes.js"></script>
+    <script src="voice_protocol.js"></script>
     <script src="str_tool.js"></script>
     <script src="i18n.js"></script>
   </body>
