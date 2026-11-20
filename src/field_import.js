@@ -6,21 +6,22 @@
 // (several at once), finds which loaded recording each one belongs to by TIME,
 // and writes the site metadata into those recordings.
 //
-// Time matching. The phone records when the recorder was started and stopped
-// (recording_start_utc / recording_end_utc) and, optionally, how far the
-// recorder's clock is from the phone's (recorder_clock_offset_s). A recording's
-// own start time is read, in this order, from:
+// Time matching. A record made in "Metadata Only" is a MARK: one instant (mark_utc),
+// tapped whenever the person likes, with no start or stop. Each loaded recording is
+// paired with the NEAREST mark in time: the mark inside the recording's own time span, or
+// else the one closest to it, as long as it is within the tolerance. A record made with
+// "Record with Phone" has the real start and stop of its recording (the same rule applies
+// to that window), and its sound can be opened directly.
+// The recorder's clock may differ from the phone's: recorder_clock_offset_s (recorder
+// minus phone, seconds) is subtracted. A recording's own start time is read, in this order, from:
 //   1. the AudioMoth comment in the WAV ("Recorded at 14:30:05 20/11/2026 (UTC-3)")
 //   2. the BWF "bext" chunk (Zoom recorders and others: date and time, no zone,
 //      taken as the zone of the phone record)
-//   3. the file's modified date minus its duration (the moment it was closed)
+//   3. the time written in the file name, 4. the file's modified date minus its duration
 // The user chooses which of these to trust (the "recording time from" list): the
-// first available one in the order above, then the time written in the file name,
-// then the file date (automatic), or only the file name, only the file date, or
-// only the WAV header.
-// A recording belongs to the record when its start falls between the recorder
-// start mark and the stop mark, give or take the tolerance. These functions
-// are plain (no DOM) so they can be tested outside the app.
+// first available one in the order above (automatic), or only the file name, only the
+// file date, or only the WAV header. These functions are plain (no DOM) so they can be
+// tested outside the app.
 
 // ───────────────────────── time of a recording ─────────────────────────
 
@@ -145,10 +146,17 @@ function fiParseRecord(meta, name) {
   const tzOffMin = typeof fr.timezone_offset_min === "number" ? fr.timezone_offset_min : -new Date().getTimezoneOffset();
   const startMs = fr.recording_start_utc ? Date.parse(fr.recording_start_utc) : NaN;
   const endMs = fr.recording_end_utc ? Date.parse(fr.recording_end_utc) : NaN;
+  const markMs = fr.mark_utc ? Date.parse(fr.mark_utc) : NaN;
   let approx = false;
+  let isMark = false;
   let s = startMs;
   let e = endMs;
-  if (!isFinite(s)) {
+  if (!isFinite(s) && isFinite(markMs)) {
+    // a mark: one instant
+    s = markMs;
+    e = markMs;
+    isMark = true;
+  } else if (!isFinite(s)) {
     // no marks: only the date and time of the record, to the minute
     const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(flat.date || ""),
       t = /^(\d{2}):(\d{2})/.exec(flat.time || "");
@@ -163,6 +171,8 @@ function fiParseRecord(meta, name) {
     startMs: s,
     endMs: e,
     approx,
+    isMark,
+    mode: fr.mode || null,
     tzOffMin,
     offsetS: typeof fr.recorder_clock_offset_s === "number" ? fr.recorder_clock_offset_s : 0,
     files: { image: null, note: null, sound: null }, // { name, bytes }
@@ -183,38 +193,37 @@ function fiFormValues(rec, metaFields) {
   return out;
 }
 
-// Which recordings belong to which record.
+// Which recordings belong to which record (mark).
 // recs: parsed records; entries: [{id, name, time}] (time = fiTimeInfo); tolS: tolerance in seconds;
 // mode: where the recording's time is taken from (see fiFileStart); shiftS: extra seconds added to
 // every record's clock offset (a correction found later).
-// A recording belongs to a record when the time it was recording OVERLAPS the record's
-// window: from the start mark minus the tolerance to the stop mark plus the tolerance.
-// So it does not matter if the recorder was started a little before the phone, or if the stop
-// mark was forgotten (then the window is just the start mark +/- the tolerance).
-// A recording goes to the one record it overlaps most (ties: the closest start mark).
-// -> array parallel to recs of [{id, deltaS, signedS, overlapS, src}], best first.
+// The gap between a recording (from its start to its end) and a record (its mark, or its start
+// to stop window) is 0 when they overlap, else the time between them. A recording goes to the
+// record with the smallest gap, if that gap is within the tolerance; a tie (several marks inside
+// one recording) goes to the mark closest to the recording's start.
+// -> array parallel to recs of [{id, deltaS, signedS, gapS, src}], best first.
 function fiMatch(recs, entries, tolS, mode, shiftS) {
   const tol = tolS * 1000;
-  const best = new Map(); // entry id -> {ri, overlap, delta, signed, src}
+  const best = new Map(); // entry id -> {ri, gap, delta, signed, src}
   recs.forEach((r, ri) => {
     if (!isFinite(r.startMs)) return;
-    const lo = r.startMs - tol;
-    const hi = Math.max(r.endMs, r.startMs) + tol;
+    const rs = r.startMs;
+    const re = Math.max(r.endMs, r.startMs);
     entries.forEach((en) => {
       const st = fiFileStart(en.time, r.tzOffMin, (r.offsetS || 0) + (shiftS || 0), mode);
       if (!st) return;
-      const fileEnd = st.ms + (en.time.durS || 0) * 1000;
-      const overlap = Math.min(fileEnd, hi) - Math.max(st.ms, lo);
-      if (overlap < 0) return;
-      const signed = st.ms - r.startMs;
+      const fe = st.ms + (en.time.durS || 0) * 1000;
+      const gap = Math.max(0, st.ms - re, rs - fe);
+      if (gap > tol) return;
+      const signed = st.ms - rs;
       const delta = Math.abs(signed);
       const cur = best.get(en.id);
-      if (!cur || overlap > cur.overlap + 1000 || (Math.abs(overlap - cur.overlap) <= 1000 && delta < cur.delta))
-        best.set(en.id, { ri, overlap, delta, signed, src: st.src });
+      if (!cur || gap < cur.gap - 500 || (Math.abs(gap - cur.gap) <= 500 && delta < cur.delta))
+        best.set(en.id, { ri, gap, delta, signed, src: st.src });
     });
   });
   const out = recs.map(() => []);
-  best.forEach((b, id) => out[b.ri].push({ id, deltaS: b.delta / 1000, signedS: b.signed / 1000, overlapS: b.overlap / 1000, src: b.src }));
+  best.forEach((b, id) => out[b.ri].push({ id, deltaS: b.delta / 1000, signedS: b.signed / 1000, gapS: b.gap / 1000, src: b.src }));
   out.forEach((l) => l.sort((x, y) => x.deltaS - y.deltaS));
   return out;
 }
@@ -312,6 +321,15 @@ function fiRel(sec) {
   if (a < 1) return "at the start mark";
   const t = a >= 120 ? Math.round(a / 60) + " min" : Math.round(a) + " s";
   return t + (sec > 0 ? " after" : " before") + " the start mark";
+}
+// How a matched recording sits relative to a MARK: "the mark is 12 s into the recording" ...
+function fiRelMark(h) {
+  const t = (sec) => {
+    const a = Math.abs(sec);
+    return a >= 120 ? Math.round(a / 60) + " min" : Math.round(a) + " s";
+  };
+  if (h.gapS === 0) return "the mark is " + t(-h.signedS) + " into the recording";
+  return h.signedS > 0 ? "recording starts " + t(h.signedS) + " after the mark" : "recording ended " + t(h.gapS) + " before the mark";
 }
 function fiPlaceName(r) {
   return [r.flat.country, r.flat.locality].filter(Boolean).join(", ");
@@ -471,16 +489,20 @@ function fiRender() {
     '<option value="">(automatic)</option>' +
     audioLibrary.map((e) => '<option value="' + e.id + '"' + (sel === e.id ? " selected" : "") + ">" + fiEsc(e.name) + "</option>").join("");
   tb.innerHTML =
-    '<thead><tr style="text-align:left"><th></th><th>Field record</th><th>Recorder on</th><th>Recording(s)</th><th>Extras</th></tr></thead><tbody>' +
+    '<thead><tr style="text-align:left"><th></th><th>Field record</th><th>Mark / recording</th><th>Recording(s)</th><th>Extras</th></tr></thead><tbody>' +
     FI.rows
       .map((r, i) => {
         const rec = r.rec;
-        const w = rec.approx
-          ? "≈ " + fiClock(rec.startMs) + '<br><span style="color:var(--txt3)">no start/stop marks: matched by the time of the record</span>'
-          : fiClock(rec.startMs) + " → " + fiClock(rec.endMs) + (rec.offsetS ? '<br><span style="color:var(--txt3)">recorder clock ' + (rec.offsetS > 0 ? "+" : "") + rec.offsetS + " s</span>" : "");
+        const w =
+          (rec.isMark
+            ? "⚡ mark " + fiClock(rec.startMs)
+            : rec.approx
+              ? "≈ " + fiClock(rec.startMs) + '<br><span style="color:var(--txt3)">no mark or recording times: matched by the time of the record</span>'
+              : "● " + fiClock(rec.startMs) + " → " + fiClock(rec.endMs)) +
+          (rec.offsetS ? '<br><span style="color:var(--txt3)">recorder clock ' + (rec.offsetS > 0 ? "+" : "") + rec.offsetS + " s</span>" : "");
         const got = r.targets.length
           ? r.targets.map((id) => fiEsc(names.get(id) || "?")).join("<br>") +
-            (r.manual ? '<br><span style="color:var(--txt3)">chosen by hand</span>' : "<br>" + r.how.map((h) => '<span style="color:var(--txt3)">' + fiEsc(h.src) + ", starts " + fiRel(h.signedS) + "</span>").join("<br>"))
+            (r.manual ? '<br><span style="color:var(--txt3)">chosen by hand</span>' : "<br>" + r.how.map((h) => '<span style="color:var(--txt3)">' + fiEsc(h.src) + ", " + (rec.isMark ? fiRelMark(h) : "starts " + fiRel(h.signedS)) + "</span>").join("<br>"))
           : '<span style="color:#d29922">no loaded recording matches</span>';
         const extras =
           (r.imageUrl ? '<a href="#" onclick="fiShowImage(' + i + ');return false" title="Satellite picture">🛰 picture</a> ' : "") +

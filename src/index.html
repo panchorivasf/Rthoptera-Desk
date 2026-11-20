@@ -8524,7 +8524,7 @@
         </div>
         <div class="modal-body" style="display: flex; flex-direction: column; gap: 8px; overflow-y: auto">
           <div style="font-size: 11px; color: var(--txt3)">
-            Add the <b>.zip</b> (or the <b>.json</b>) that Rthoptera Field shared from the phone; several at once are fine. Each record is matched to the loaded recording that was started between its <i>Recorder started</i> and <i>Recorder stopped</i> marks, using the recording&rsquo;s own time (AudioMoth header, WAV header, or the file&rsquo;s date). Check the matches, fix any by hand, then Apply.
+            Add the <b>.zip</b> (or the <b>.json</b>) that Rthoptera Field shared from the phone; several at once are fine. Each loaded recording is paired with the <b>nearest mark</b> in time (a <i>Metadata Only</i> mark, or the start&ndash;stop of a phone recording), using the recording&rsquo;s own time (AudioMoth header, WAV header, file name or file date). Check the matches, fix any by hand, then Apply.
           </div>
           <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
             <button onclick="fiPick()" style="font-size: 11px">Add Field files&hellip;</button>
@@ -8540,17 +8540,19 @@
                 <option value="header">WAV / AudioMoth header</option>
               </select>
             </label>
-            <label style="font-size: 11px; color: var(--txt2)" title="Added to the recorder clock offset of every record, in seconds. Use it if all the matches are off by about the same amount (positive: the recorder clock is ahead of the phone's).">
+            <label style="font-size: 11px; color: var(--txt2)" title="Added to the recorder clock offset of every record, in seconds. Use it if all the pairings are off by about the same amount (positive: the recorder clock is ahead of the phone's).">
               extra clock shift
               <input type="text" id="fiShift" value="0" onchange="fiMatchAll()" style="font-size: 11px; width: 44px" /> s
             </label>
-            <label style="font-size: 11px; color: var(--txt2)" title="How far outside the start and stop marks a recording may still count as belonging to the record. A recording only has to overlap the marks, so starting the recorder a little earlier or later is fine.">
+            <label style="font-size: 11px; color: var(--txt2)" title="The farthest a mark may be from a recording (before its start or after its end) and still be paired with it. A mark inside the recording always counts.">
               tolerance
               <select id="fiTol" onchange="fiMatchAll()" style="font-size: 11px">
-                <option value="30">30 s</option>
-                <option value="120" selected>2 min</option>
+                <option value="120">2 min</option>
                 <option value="300">5 min</option>
+                <option value="900" selected>15 min</option>
                 <option value="1800">30 min</option>
+                <option value="3600">1 h</option>
+                <option value="10800">3 h</option>
               </select>
             </label>
           </div>
@@ -8678,9 +8680,9 @@
             Changes apply to the active recording as you type and are written into every table you export. “Remember” keeps an entry for reuse on other recordings; “Save to file” writes both sections to one .json you can load again later or on another computer.
           </div>
         </div>
-        <div class="modal-footer">
-          <button onclick="openXcHelper()" style="font-size: 11px; margin-right: auto" title="Step-by-step helper for uploading this recording on xeno-canto.org: every field of their upload form, in order, with a copy button.">🌐 Xeno-canto upload helper</button>
-          <button onclick="fiOpen()" style="font-size: 11px" title="Read the records saved by Rthoptera Field on the phone (the .zip it shares, or the .json), match them to the loaded recordings by time, and fill in their metadata.">📱 Import Field records…</button>
+        <div class="modal-footer" style="flex-wrap: wrap">
+          <button onclick="openXcHelper()" style="font-size: 11px; margin-right: auto" title="Step-by-step helper for uploading this recording on xeno-canto.org: every field of their upload form, in order, with a copy button.">🌐 Xeno-canto</button>
+          <button onclick="fiOpen()" style="font-size: 11px" title="Read the records saved by Rthoptera Field on the phone (the .zip it shares, or the .json), pair each loaded recording with the nearest mark in time, and fill in its metadata.">📱 Import Field records…</button>
           <button onclick="saveRecordingMetadata()" class="suc" style="font-size: 11px" title="Write the recording session and specimen to a .json file.">⬇ Save to file</button>
           <button onclick="document.getElementById('metaFile').click()" style="font-size: 11px" title="Load a .json written by Save to file (older specimen_metadata.json files work too).">⬆ Load from file</button>
           <input type="file" id="metaFile" accept=".json" style="display: none" onchange="loadRecordingMetadata(this.files[0]); this.value = '';" />
