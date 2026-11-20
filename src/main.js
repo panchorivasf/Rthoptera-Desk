@@ -2781,11 +2781,14 @@
         }
         return { t0: inner ? t0 : 0, t1: inner ? t1 : 0, inner, padHead, padTail, pad, stageDur };
       }
-      function ppVanishSelection() {
-        const s = ppSelOnChainTimeline();
-        if (!s) return;
+      // rng: a {t0, t1} to use instead of the selection (Voice notes).
+      // Returns false when nothing was done.
+      function ppVanishSelection(rng) {
+        if (rng && typeof rng.t0 !== "number") rng = null; // called from a click event
+        const s = ppSelOnChainTimeline(false, rng);
+        if (!s) return false;
         // clearTimeDependentWork() drops ppSel, so keep the start for the log.
-        const a = ppSel.t0;
+        const a = (rng || ppSel).t0;
         audioEdits.push({
           type: "vanish",
           t0: s.t0,
@@ -2801,12 +2804,13 @@
           ppWarn(
             "Not enough quiet material to learn the background noise from (needs a few hundred ms without the target sound).",
           );
-          return;
+          return false;
         }
         log(
           "Replaced " + (s.t1 - s.t0).toFixed(3) + " s at " + a.toFixed(3) + " s with matched background noise.",
           "ok",
         );
+        return true;
       }
       // Cut the selection out and join what was before and after it. The
       // recording gets shorter, so later selections move up by the cut length.
@@ -5738,6 +5742,9 @@
           });
         }
 
+        // Stretches of voice found by Voice notes (purple).
+        if (viewerMode === "preprocess" && typeof vnDrawOverlay === "function") vnDrawOverlay(ctx, tx, W, H);
+
         // ── Preprocessing time selection ─────────────────────────────────
         // Drawn under the trim handles so trim always reads on top when both
         // are present. Blue, to stay clearly distinct from trim's amber and
@@ -6008,7 +6015,14 @@
       }
 
       document.addEventListener("keydown", (e) => {
-        if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT")
+        // Typing in a text box (the Voice notes transcripts, annotation notes,
+        // any field) must reach the box: Space types a space, it does not play.
+        if (
+          e.target.tagName === "INPUT" ||
+          e.target.tagName === "SELECT" ||
+          e.target.tagName === "TEXTAREA" ||
+          e.target.isContentEditable
+        )
           return;
         if (
           (e.key === "z" || e.key === "Z") &&
@@ -8264,6 +8278,7 @@
       let _pbEarlyEnds = 0,
         _pbLastEarlyEnd = 0;
       function startPb() {
+        if (typeof vnStopPlay === "function") vnStopPlay(); // a voice note playing on its own
         if (!audioCtx)
           audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         // The browser may suspend or interrupt the audio engine mid-playback

@@ -1433,6 +1433,106 @@
                   </div>
                 </div>
               </div>
+              <!-- Voice notes: its own pane, below Edit Audio -->
+              <div class="panel" id="vnPanel">
+                <h2>Voice notes <span class="info-icon" data-i18n-title title="Finds the stretches of the recording where someone speaks (field notes, a spoken locality or date). They are marked in purple on the waveform. You can then transcribe them, and cut them out or replace them with background noise. Everything runs on this computer.">&#9432;</span></h2>
+                <div style="display: flex; flex-direction: column; gap: 6px">
+                  <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11px">
+                    <button
+                      id="btnVnDetect"
+                      class="ppApply"
+                      onclick="vnDetect()"
+                      disabled
+                      style="font-size: 11px; flex: 0 0 auto; width: auto"
+                      title="Look for human voice in the whole recording."
+                    >
+                      Detect voice
+                    </button>
+                    <label title="How readily faint or distant voices are accepted. Lower it if insect sound is wrongly marked as voice.">
+                      sensitivity
+                      <select id="vnSens" style="font-size: 11px">
+                        <option value="0.35">high</option>
+                        <option value="0.5" selected>normal</option>
+                        <option value="0.7">low</option>
+                      </select>
+                    </label>
+                    <label title="Shortest stretch of voice to report.">
+                      min. <input type="number" id="vnMin" value="0.25" min="0.1" max="5" step="0.05" style="width: 46px; font-size: 11px" /> s
+                    </label>
+                    <span style="width: 1px; height: 18px; background: var(--border); margin: 0 4px"></span>
+                    <button
+                      id="btnVnTranscribe"
+                      onclick="vnTranscribe()"
+                      disabled
+                      style="font-size: 11px"
+                      title="Write out what is said in the stretches found. Needs a transcription model (see below)."
+                    >
+                      &#128221; Transcribe
+                    </button>
+                    <label title="The language spoken. Auto detects it for each stretch, which can be wrong for short notes: set it when you know it.">
+                      language
+                      <select id="vnLang" style="font-size: 11px">
+                        <option value="auto" selected>auto</option>
+                        <option value="en">English</option>
+                        <option value="es">Spanish</option>
+                        <option value="pt">Portuguese</option>
+                        <option value="fr">French</option>
+                        <option value="de">German</option>
+                        <option value="it">Italian</option>
+                        <option value="nl">Dutch</option>
+                        <option value="ja">Japanese</option>
+                        <option value="zh">Chinese</option>
+                        <option value="id">Indonesian</option>
+                        <option value="th">Thai</option>
+                        <option value="ru">Russian</option>
+                      </select>
+                    </label>
+                    <span style="width: 1px; height: 18px; background: var(--border); margin: 0 4px"></span>
+                    <button
+                      id="btnVnVanish"
+                      onclick="vnVanishAll()"
+                      disabled
+                      style="font-size: 11px"
+                      title="Replace every listed stretch with background noise matched to the recording. Length and timing stay the same."
+                    >
+                      &#127787; Vanish voice
+                    </button>
+                    <button
+                      id="btnVnDelete"
+                      onclick="vnDeleteAll()"
+                      disabled
+                      style="font-size: 11px"
+                      title="Cut every listed stretch out of the recording. The recording gets shorter."
+                    >
+                      &#9986; Delete voice
+                    </button>
+                    <button id="btnVnTxt" onclick="vnExport('txt')" disabled style="font-size: 11px" title="Save the times and transcripts as a text file.">Export .txt</button>
+                    <button id="btnVnCsv" onclick="vnExport('csv')" disabled style="font-size: 11px" title="Save the times and transcripts as a table.">Export .csv</button>
+                  </div>
+                  <div id="vnStatus" style="font-size: 11px; color: var(--txt3); overflow-wrap: anywhere"></div>
+                  <div style="display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px">
+                    <div id="vnList" style="display: none; flex: 0 1 40%; min-width: 300px; max-height: 260px; overflow-y: auto"></div>
+                    <details id="vnModelBox" style="flex: 1 1 320px; font-size: 11px">
+                      <summary style="cursor: pointer; color: var(--txt2)">Transcription model</summary>
+                      <div style="color: var(--txt3); margin: 3px 0">
+                        Transcription uses OpenAI's Whisper, run on this computer. The model is downloaded once (tiny &asymp; 42 MB, base &asymp; 75 MB, small &asymp; 250 MB; larger is more accurate and slower) and kept for later sessions. No internet is needed after that.
+                      </div>
+                      <div style="display: flex; gap: 4px; flex-wrap: wrap; align-items: center">
+                        <select id="vnModelSize" style="font-size: 11px">
+                          <option value="tiny">tiny</option>
+                          <option value="base" selected>base</option>
+                          <option value="small">small</option>
+                        </select>
+                        <button id="btnVnDownload" onclick="vnDownload()" style="font-size: 11px" title="Download the model from huggingface.co (onnx-community) and keep it.">&#11015; Download</button>
+                        <button onclick="document.getElementById('vnModelFiles').click()" style="font-size: 11px" title="Use files you already have: the encoder .onnx, the merged decoder .onnx and tokenizer.json (plus generation_config.json if you like), chosen together.">Load from files&hellip;</button>
+                        <input type="file" id="vnModelFiles" multiple accept=".onnx,.json" style="display: none" onchange="vnImportFiles(this.files); this.value = '';" />
+                        <button onclick="vnForgetModel()" style="font-size: 11px" title="Delete the stored model.">Remove</button>
+                      </div>
+                      <div id="vnModelStatus" style="color: var(--txt3); margin-top: 3px; overflow-wrap: anywhere"></div>
+                    </details>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
           <!-- ═══ MERGE ══════════════════════════════════════════════════════════════
@@ -8706,6 +8806,7 @@
     <script src="vendor/ort/ort.wasm.min.js"></script>
     <script src="vendor/umap/umap-js.min.js"></script>
     <script src="perch_cluster.js"></script>
+    <script src="voice_notes.js"></script>
     <script src="str_tool.js"></script>
     <script src="i18n.js"></script>
   </body>
