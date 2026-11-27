@@ -1,10 +1,10 @@
-<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Rthoptera Desk 0.9.5 — User Manual</title><style>
+<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Rthoptera Desk 0.9.6 — User Manual</title><style>
 :root{--teal:#156082;--dark:#0c3347;--mid:#0e75a0;--pale:#e8f1f5;--line:#c9d8e0;--txt:#1b2a33;--muted:#5b6b75}
 @page{size:A4;margin:24mm 20mm 24mm 20mm;
- @top-right{content:"Rthoptera Desk 0.9.5 — User Manual";font:8pt 'Segoe UI',Arial,sans-serif;color:#7a8a94;padding-bottom:4mm;border-bottom:.4pt solid #c9d8e0;width:100%;text-align:right}
+ @top-right{content:"Rthoptera Desk 0.9.6 — User Manual";font:8pt 'Segoe UI',Arial,sans-serif;color:#7a8a94;padding-bottom:4mm;border-bottom:.4pt solid #c9d8e0;width:100%;text-align:right}
  @bottom-center{content:counter(page);font:9pt 'Segoe UI',Arial,sans-serif;color:#5b6b75}}
 @page :first{margin:0;@top-right{content:none;border:0}@bottom-center{content:none}}
-@page toc{@top-right{content:"Rthoptera Desk 0.9.5 — User Manual"}}
+@page toc{@top-right{content:"Rthoptera Desk 0.9.6 — User Manual"}}
 *{box-sizing:border-box}
 html{font-size:10pt}
 body{font-family:'Segoe UI','Helvetica Neue',Arial,sans-serif;color:var(--txt);line-height:1.5;margin:0;orphans:3;widows:3}
@@ -21,6 +21,7 @@ h1{font-size:20pt;color:var(--dark);margin:0 0 6mm;padding:0 0 2.5mm;border-bott
 h1.first{page-break-before:avoid}
 h2{font-size:13.5pt;color:var(--teal);margin:7mm 0 2.5mm;break-after:avoid;font-weight:600}
 h3{font-size:11pt;color:var(--dark);margin:5mm 0 1.5mm;break-after:avoid;font-weight:600}
+h4{font-size:10pt;color:var(--teal);margin:4mm 0 1.2mm;break-after:avoid;font-weight:600}
 p{margin:0 0 2.6mm}
 ul,ol{margin:0 0 3mm;padding-left:6mm}
 li{margin:0 0 1.2mm}
@@ -58,16 +59,17 @@ figcaption b{color:var(--teal)}
 </style></head><body><div class="cover"><div class="band"></div><img src="logo.png">
 <h1><b>Rthoptera</b> Desk</h1><div class="sub">User Manual</div>
 <div class="tag2">Desktop application for insect bioacoustics analysis</div>
-<div class="ver">Version 0.9.5 &nbsp;&middot;&nbsp; November 2026</div>
+<div class="ver">Version 0.9.6 &nbsp;&middot;&nbsp; November 2026</div>
 <div class="fine">Rthoptera Desk project &nbsp;&middot;&nbsp; github.com/panchorivasf/Rthoptera-Desk<br>PolyForm Noncommercial License 1.0.0</div></div><div class="toc"><h1 class="first" style="page-break-before:avoid">Contents</h1>
 <div class="row l1"><span class="t">1. Introduction</span><span class="d"></span><span class="n">5</span></div>
 <div class="row l2"><span class="t">1.1 About this manual</span><span class="d"></span><span class="n">5</span></div>
 <div class="row l2"><span class="t">1.2 Conventions used in this manual</span><span class="d"></span><span class="n">5</span></div>
-<div class="row l2"><span class="t">1.3 What changed in 0.9.5</span><span class="d"></span><span class="n">6</span></div>
-<div class="row l2"><span class="t">1.4 What changed in 0.9.4</span><span class="d"></span><span class="n">6</span></div>
-<div class="row l2"><span class="t">1.5 What changed in 0.9.3</span><span class="d"></span><span class="n">6</span></div>
-<div class="row l2"><span class="t">1.6 What changed in 0.9.2 and 0.9.1</span><span class="d"></span><span class="n">6</span></div>
-<div class="row l2"><span class="t">1.7 What changed in 0.9.0</span><span class="d"></span><span class="n">7</span></div>
+<div class="row l2"><span class="t">1.3 What changed in 0.9.6</span><span class="d"></span><span class="n">6</span></div>
+<div class="row l2"><span class="t">1.4 What changed in 0.9.5</span><span class="d"></span><span class="n">6</span></div>
+<div class="row l2"><span class="t">1.5 What changed in 0.9.4</span><span class="d"></span><span class="n">6</span></div>
+<div class="row l2"><span class="t">1.6 What changed in 0.9.3</span><span class="d"></span><span class="n">6</span></div>
+<div class="row l2"><span class="t">1.7 What changed in 0.9.2 and 0.9.1</span><span class="d"></span><span class="n">7</span></div>
+<div class="row l2"><span class="t">1.8 What changed in 0.9.0</span><span class="d"></span><span class="n">7</span></div>
 <div class="row l1"><span class="t">2. Installation</span><span class="d"></span><span class="n">8</span></div>
 <div class="row l1"><span class="t">3. A tour of the window</span><span class="d"></span><span class="n">9</span></div>
 <div class="row l2"><span class="t">3.1 Layout</span><span class="d"></span><span class="n">9</span></div>
@@ -113,33 +115,33 @@ figcaption b{color:var(--teal)}
 <div class="row l2"><span class="t">10.4 Auto-coded Oscillogram (CETPE)</span><span class="d"></span><span class="n">36</span></div>
 <div class="row l2"><span class="t">10.5 Habitus</span><span class="d"></span><span class="n">37</span></div>
 <div class="row l2"><span class="t">10.6 Multi-Mean Spectra</span><span class="d"></span><span class="n">37</span></div>
-<div class="row l1"><span class="t">11. Summarize and Summary Analysis</span><span class="d"></span><span class="n">38</span></div>
-<div class="row l2"><span class="t">11.1 Summary sub-tab</span><span class="d"></span><span class="n">38</span></div>
-<div class="row l2"><span class="t">11.2 Summary Analysis sub-tab (compare species)</span><span class="d"></span><span class="n">39</span></div>
-<div class="row l1"><span class="t">12. Custom Workflow</span><span class="d"></span><span class="n">42</span></div>
-<div class="row l2"><span class="t">12.1 Recording a workflow</span><span class="d"></span><span class="n">42</span></div>
-<div class="row l2"><span class="t">12.2 Running a workflow</span><span class="d"></span><span class="n">43</span></div>
-<div class="row l1"><span class="t">13. Clustering</span><span class="d"></span><span class="n">44</span></div>
-<div class="row l2"><span class="t">13.1 Loading the model</span><span class="d"></span><span class="n">44</span></div>
-<div class="row l2"><span class="t">13.2 What gets clustered</span><span class="d"></span><span class="n">44</span></div>
-<div class="row l2"><span class="t">13.3 Running</span><span class="d"></span><span class="n">44</span></div>
-<div class="row l2"><span class="t">13.4 Reading the result</span><span class="d"></span><span class="n">45</span></div>
-<div class="row l1"><span class="t">14. STR (Simplified Temporal Representation)</span><span class="d"></span><span class="n">46</span></div>
-<div class="row l2"><span class="t">14.1 Parameters</span><span class="d"></span><span class="n">46</span></div>
-<div class="row l2"><span class="t">14.2 Running and reading the result</span><span class="d"></span><span class="n">47</span></div>
-<div class="row l2"><span class="t">14.3 Building an STR from a Temporal Analysis export</span><span class="d"></span><span class="n">48</span></div>
-<div class="row l2"><span class="t">14.4 The STR fingerprint</span><span class="d"></span><span class="n">48</span></div>
-<div class="row l2"><span class="t">14.5 The Representative STR</span><span class="d"></span><span class="n">48</span></div>
-<div class="row l1"><span class="t">15. Preferences, language and text size</span><span class="d"></span><span class="n">50</span></div>
-<div class="row l1"><span class="t">16. Output files and column names</span><span class="d"></span><span class="n">51</span></div>
-<div class="row l1"><span class="t">17. Tips, troubleshooting and known limits</span><span class="d"></span><span class="n">52</span></div>
-<div class="row l2"><span class="t">17.1 Good practice</span><span class="d"></span><span class="n">52</span></div>
-<div class="row l2"><span class="t">17.2 Common problems</span><span class="d"></span><span class="n">52</span></div>
-<div class="row l2"><span class="t">17.3 Known limits (version 0.9.5)</span><span class="d"></span><span class="n">53</span></div>
-<div class="row l1"><span class="t">18. Citing the software and licence</span><span class="d"></span><span class="n">54</span></div>
-<div class="row l2"><span class="t">18.1 Licence</span><span class="d"></span><span class="n">54</span></div>
-<div class="row l1"><span class="t">Appendix A: Glossary</span><span class="d"></span><span class="n">55</span></div>
-<div class="row l1"><span class="t">Appendix B: Reporting a problem</span><span class="d"></span><span class="n">57</span></div>
+<div class="row l1"><span class="t">11. Summarize and Summary Analysis</span><span class="d"></span><span class="n">40</span></div>
+<div class="row l2"><span class="t">11.1 Summary sub-tab</span><span class="d"></span><span class="n">40</span></div>
+<div class="row l2"><span class="t">11.2 Summary Analysis sub-tab (compare species)</span><span class="d"></span><span class="n">41</span></div>
+<div class="row l1"><span class="t">12. Custom Workflow</span><span class="d"></span><span class="n">44</span></div>
+<div class="row l2"><span class="t">12.1 Recording a workflow</span><span class="d"></span><span class="n">44</span></div>
+<div class="row l2"><span class="t">12.2 Running a workflow</span><span class="d"></span><span class="n">45</span></div>
+<div class="row l1"><span class="t">13. Clustering</span><span class="d"></span><span class="n">46</span></div>
+<div class="row l2"><span class="t">13.1 Loading the model</span><span class="d"></span><span class="n">46</span></div>
+<div class="row l2"><span class="t">13.2 What gets clustered</span><span class="d"></span><span class="n">46</span></div>
+<div class="row l2"><span class="t">13.3 Running</span><span class="d"></span><span class="n">46</span></div>
+<div class="row l2"><span class="t">13.4 Reading the result</span><span class="d"></span><span class="n">47</span></div>
+<div class="row l1"><span class="t">14. STR (Simplified Temporal Representation)</span><span class="d"></span><span class="n">48</span></div>
+<div class="row l2"><span class="t">14.1 Parameters</span><span class="d"></span><span class="n">48</span></div>
+<div class="row l2"><span class="t">14.2 Running and reading the result</span><span class="d"></span><span class="n">49</span></div>
+<div class="row l2"><span class="t">14.3 Building an STR from a Temporal Analysis export</span><span class="d"></span><span class="n">50</span></div>
+<div class="row l2"><span class="t">14.4 The STR fingerprint</span><span class="d"></span><span class="n">50</span></div>
+<div class="row l2"><span class="t">14.5 The Representative STR</span><span class="d"></span><span class="n">50</span></div>
+<div class="row l1"><span class="t">15. Preferences, language and text size</span><span class="d"></span><span class="n">52</span></div>
+<div class="row l1"><span class="t">16. Output files and column names</span><span class="d"></span><span class="n">53</span></div>
+<div class="row l1"><span class="t">17. Tips, troubleshooting and known limits</span><span class="d"></span><span class="n">54</span></div>
+<div class="row l2"><span class="t">17.1 Good practice</span><span class="d"></span><span class="n">54</span></div>
+<div class="row l2"><span class="t">17.2 Common problems</span><span class="d"></span><span class="n">54</span></div>
+<div class="row l2"><span class="t">17.3 Known limits (version 0.9.6)</span><span class="d"></span><span class="n">55</span></div>
+<div class="row l1"><span class="t">18. Citing the software and licence</span><span class="d"></span><span class="n">57</span></div>
+<div class="row l2"><span class="t">18.1 Licence</span><span class="d"></span><span class="n">57</span></div>
+<div class="row l1"><span class="t">Appendix A: Glossary</span><span class="d"></span><span class="n">58</span></div>
+<div class="row l1"><span class="t">Appendix B: Reporting a problem</span><span class="d"></span><span class="n">60</span></div>
 <h2 style="margin-top:9mm;break-after:avoid">List of figures</h2>
 <div class="row l2"><span class="t">Figure 1. The main window</span><span class="d"></span><span class="n">9</span></div>
 <div class="row l2"><span class="t">Figure 2. Recording metadata window</span><span class="d"></span><span class="n">12</span></div>
@@ -150,10 +152,10 @@ figcaption b{color:var(--teal)}
 <div class="row l2"><span class="t">Figure 7. Spectral Analysis</span><span class="d"></span><span class="n">31</span></div>
 <div class="row l2"><span class="t">Figure 8. Annotate</span><span class="d"></span><span class="n">33</span></div>
 <div class="row l2"><span class="t">Figure 9. Plotting: Multiplot</span><span class="d"></span><span class="n">35</span></div>
-<div class="row l2"><span class="t">Figure 10. Summarize: Summary sub-tab</span><span class="d"></span><span class="n">38</span></div>
-<div class="row l2"><span class="t">Figure 11. Custom Workflow tab</span><span class="d"></span><span class="n">42</span></div>
-<div class="row l2"><span class="t">Figure 12. Clustering tab</span><span class="d"></span><span class="n">44</span></div>
-<div class="row l2"><span class="t">Figure 13. STR after computing</span><span class="d"></span><span class="n">47</span></div>
+<div class="row l2"><span class="t">Figure 10. Summarize: Summary sub-tab</span><span class="d"></span><span class="n">40</span></div>
+<div class="row l2"><span class="t">Figure 11. Custom Workflow tab</span><span class="d"></span><span class="n">44</span></div>
+<div class="row l2"><span class="t">Figure 12. Clustering tab</span><span class="d"></span><span class="n">46</span></div>
+<div class="row l2"><span class="t">Figure 13. STR after computing</span><span class="d"></span><span class="n">49</span></div>
 </div><h1 id="c1">1. Introduction</h1>
 
 <p>Rthoptera Desk is a cross-platform desktop application for analysing insect sounds (crickets, katydids, grasshoppers, cicadas and others). It is the graphical counterpart of the Rthoptera R package (Rivas et al. 2025): the temporal and spectral measurements and the acoustic metrics it reports are those defined in that paper. No R installation is needed. Everything runs locally on your computer and no audio leaves it. The only features that use the internet are the map, place-name and elevation lookups in Recording metadata and in the voice notes protocol, and the one-time download of the transcription model. The Clustering module also runs its neural network locally, from a model file you supply.</p>
@@ -166,7 +168,7 @@ figcaption b{color:var(--teal)}
 </ul>
 
 <h2 id="s1-1">1.1 About this manual</h2>
-<p>This manual describes Rthoptera Desk version 0.9.5. Names of buttons and default values can change between versions: the notes of each release list what changed, and sections 1.3 to 1.7 summarise the recent versions. The screenshots were taken with a synthetic demonstration recording (a made-up song of seven echemes), so the numbers in them are illustrative only. Where the manual and the program differ, the program and its tooltips are the reference; to report a difference or a problem, see Appendix B.</p>
+<p>This manual describes Rthoptera Desk version 0.9.6. Names of buttons and default values can change between versions: the notes of each release list what changed, and sections 1.3 to 1.8 summarise the recent versions. The screenshots were taken with a synthetic demonstration recording (a made-up song of seven echemes), so the numbers in them are illustrative only. Where the manual and the program differ, the program and its tooltips are the reference; to report a difference or a problem, see Appendix B.</p>
 
 <h2 id="s1-2">1.2 Conventions used in this manual</h2>
 <table class="plain">
@@ -177,7 +179,16 @@ figcaption b{color:var(--teal)}
 <tr><td>Tooltips</td><td>Hovering the pointer over almost any control explains it. The information icon (ⓘ) next to some headings gives longer hints. Tooltips are the most detailed reference for individual parameters; this manual explains how the pieces fit together.</td></tr>
 </table>
 
-<h2 id="s1-3">1.3 What changed in 0.9.5</h2>
+<h2 id="s1-3">1.3 What changed in 0.9.6</h2>
+<ul>
+<li><b>Multi-Mean Spectra: label classes from selection tables.</b> A new mode builds one mean spectrum for each label, pooled from one or more selection tables (Raven, CSV/TSV or Excel), from the same or from different recordings, including recordings with different sampling rates. Tables can be switched on or off, and a table that groups the selections of another (motifs, echemes) is pointed out (section 10.6).</li>
+<li><b>Selection viewer</b> for labelling: the waveform or envelope of the recording with every selection on a label track, time zoom, playback, and keys to step through the selections and label them with <code>1</code>–<code>9</code> (section 10.6).</li>
+<li>Class spectra as lines or filled areas, with an optional ±1 SD band; the waveform can be added above the spectra in the exported figure; the spectra CSV gives the mean, SD and number of selections at each frequency; the labelled selections can be saved as one Raven table.</li>
+<li><b>Colour-blind-safe palettes</b> (Okabe–Ito, Paul Tol’s Bright, Vibrant and Muted, viridis) for the class colours, with each colour’s name and hex code.</li>
+<li>Manual: sections 10.5 (Habitus) and 10.6 (Multi-Mean Spectra) described each other’s tab; they are now correct.</li>
+</ul>
+
+<h2 id="s1-4">1.4 What changed in 0.9.5</h2>
 <ul>
 <li><b>Voice Notes Protocol.</b> The new <b>Read as metadata…</b> button of the Voice notes pane reads the transcribed notes as recording metadata: date, time, coordinates, elevation, temperature, country, locality, equipment, specimen and species, spoken as a label followed by its value. You review what was heard before anything is saved (section 6.6).</li>
 <li><b>Place and elevation from coordinates.</b> When coordinates are read, the country, the locality and the elevation that were not spoken are looked up from them. <b>Check on map…</b> shows the point on a map; moving it updates the coordinates, the elevation and the place (section 6.6).</li>
@@ -185,13 +196,13 @@ figcaption b{color:var(--teal)}
 <li>The buttons at the bottom of the Recording metadata window wrap onto a second line instead of leaving the window.</li>
 </ul>
 
-<h2 id="s1-4">1.4 What changed in 0.9.4</h2>
+<h2 id="s1-5">1.5 What changed in 0.9.4</h2>
 <ul>
 <li>New <b>Voice notes</b> pane in Preprocessing: it finds the stretches where someone speaks, can transcribe them with Whisper (model downloaded once), and can vanish or delete them (section 6.5).</li>
 <li>Pressing Space while typing in a multi-line text box no longer starts playback.</li>
 </ul>
 
-<h2 id="s1-5">1.5 What changed in 0.9.3</h2>
+<h2 id="s1-6">1.6 What changed in 0.9.3</h2>
 <ul>
 <li>New <b>FFT filter</b> in Edit audio: a graphical equaliser on the power spectrum of the file or the selection, with frequency zoom, presets (in the program and as files) and <b>microphone correction</b> from an imported response curve (section 6.2).</li>
 <li>The <b>Bandpass filter</b> has a selectable <b>Slope</b> (12 to 96 dB per octave) and its cut-offs are now in kHz.</li>
@@ -200,7 +211,7 @@ figcaption b{color:var(--teal)}
 <li>Temporal Analysis: the Amplitude Detector pane moved under Peak Detection and its <b>Clear detections</b> button was removed (use <b>Clear pulses</b>).</li>
 </ul>
 
-<h2 id="s1-6">1.6 What changed in 0.9.2 and 0.9.1</h2>
+<h2 id="s1-7">1.7 What changed in 0.9.2 and 0.9.1</h2>
 <ul>
 <li>0.9.2: a <b>vertical navigation bar</b> on the right of the waveform and spectrogram when zoomed in vertically; the waveform can be panned up and down; <b>Floor win. (ms)</b> redraws the local floor curve as you type.</li>
 <li><b>Drag and drop</b> of audio files onto the window (section 5.1).</li>
@@ -210,7 +221,7 @@ figcaption b{color:var(--teal)}
 <li>Summary Analysis: <b>PERMANOVA</b>, <b>clustering</b> (k-means, DBSCAN, hierarchical), choosable <b>point labels</b>, a temperature adjustment limited to timing variables and the peak frequency, and the number of specimens and rows behind each mean (section 11.2).</li>
 </ul>
 
-<h2 id="s1-7">1.7 What changed in 0.9.0</h2>
+<h2 id="s1-8">1.8 What changed in 0.9.0</h2>
 <ul>
 <li>Three new modules: <b>Custom Workflow</b> (section 12), <b>Clustering</b> with Google Perch (section 13) and <b>STR</b> (section 14), including the STR fingerprint and the Representative STR.</li>
 <li>Preprocessing rewritten (section 6): Vanish, Delete, Fix DC Offset, Normalize, Noise padding and Fade in <b>Edit audio</b>. Every tool has its own <b>Apply to selected files</b> button, which replaces the Batch Edit pane.</li>
@@ -223,7 +234,7 @@ figcaption b{color:var(--teal)}
 <p>Download the installer for your system from the project’s Releases page (<code>github.com/panchorivasf/Rthoptera-Desk/releases</code>).</p>
 <table>
 <thead><tr><th>System</th><th>File</th><th>Notes</th></tr></thead>
-<tr><td>Windows 64-bit</td><td><code>Rthoptera.Desk_0.9.5_x64-setup.exe</code></td><td>Recommended; double-click it. The <code>.msi</code> is for managed deployment.</td></tr>
+<tr><td>Windows 64-bit</td><td><code>Rthoptera.Desk_0.9.6_x64-setup.exe</code></td><td>Recommended; double-click it. The <code>.msi</code> is for managed deployment.</td></tr>
 <tr><td>macOS, Apple Silicon (M1–M4)</td><td><code>…_aarch64.dmg</code></td><td>Apple menu → About This Mac shows “Apple M…”.</td></tr>
 <tr><td>macOS, Intel</td><td><code>…_x64.dmg</code></td><td>About This Mac shows an Intel processor.</td></tr>
 <tr><td>Linux x86_64</td><td><code>.AppImage</code> (run <code>chmod +x</code> first), <code>.deb</code>, <code>.rpm</code></td><td>The AppImage works on most distributions.</td></tr>
@@ -323,12 +334,12 @@ figcaption b{color:var(--teal)}
 <p>Inside the metadata window, the Xeno-canto upload helper lists the fields of xeno-canto’s two-page upload form in order, each with a copy button. Fields that are radio buttons or drop-downs on the site are shown as reminders. The helper does not send anything: you open the upload page from it and paste the values yourself. Text you type in the helper is remembered on this computer.</p>
 
 <h2 id="s5-4">5.4 Importing records from Rthoptera Field</h2>
-<p>Rthoptera Field is a companion app for the iPhone that records the metadata of a recording site while you are in the field: the time to the millisecond, the position, the place name, the elevation, the temperature (typed, or read from a Bluetooth thermometer), a satellite picture, an optional voice note and, when the sound was recorded with the phone, the WAV file. It has two modes:</p>
+<p>Rthoptera Field is a companion app for the iPhone that records the metadata of a recording site while you are in the field: the time to the millisecond, the position, the place name, the elevation, the temperature (typed, or read from a Bluetooth thermometer), an optional voice note and, when the sound was recorded with the phone, the WAV file. It has two modes:</p>
 <ul>
 <li><b>Metadata Only</b>, for when another recorder (a field recorder, an AudioMoth, a bat detector) makes the recording. Each tap of <b>MARK NOW</b> saves one <i>mark</i>: an instant, with its place and conditions, saved without any further input.</li>
 <li><b>Record with Phone</b>, for when the phone itself (or a USB microphone plugged into it) records the sound. The record holds the real start and end of the recording, and the recorder is the phone.</li>
 </ul>
-<p>Each record is a folder named <code>COUNTRY_Locality_YYYYMMDD_HHMM</code>, with the country as its three-letter ISO code (for example <code>CHL_Contulmo-Biobio_20261120_1430</code>). It holds a <code>.json</code> file with the metadata, and optionally a <code>.jpg</code> (a 1 km satellite picture with a circle of 100 m radius), a <code>_note.m4a</code> voice note and a <code>.wav</code> sound. The phone shares a record as one <code>.zip</code>. The <code>.json</code> has the same layout as the file written by <b>Save to file</b> (section 5.2), with an extra block, <code>field_record</code>, that holds the mark or recording times, the clock difference between the recorder and the phone, the accuracy of the GPS fix and the names of the other files.</p>
+<p>Each record is a folder named <code>COUNTRY_Locality_YYYYMMDD_HHMM</code>, with the country as its three-letter ISO code (for example <code>CHL_Contulmo-Biobio_20261120_1430</code>). It holds a <code>.json</code> file with the metadata, and optionally a <code>_note.m4a</code> voice note and a <code>.wav</code> sound. Records made by early versions of the app also hold a <code>.jpg</code>, a satellite picture of the site. The phone shares a record as one <code>.zip</code>. The <code>.json</code> has the same layout as the file written by <b>Save to file</b> (section 5.2), with an extra block, <code>field_record</code>, that holds the mark or recording times, the clock difference between the recorder and the phone, the accuracy of the GPS fix and the names of the other files.</p>
 
 <h3>Importing</h3>
 <ol>
@@ -346,7 +357,7 @@ figcaption b{color:var(--teal)}
 <tr><td>tolerance</td><td>The farthest a mark may be from a recording, before its start or after its end, and still be paired with it: 2 min, 5 min, 15 min (default), 30 min, 1 h or 3 h. A mark inside the recording always counts.</td></tr>
 <tr><td>extra clock shift</td><td>Seconds added to the clock difference of every record. Use it when all the pairings are off by about the same amount; positive means the recorder’s clock is ahead of the phone’s.</td></tr>
 <tr><td>Table</td><td>One row per record: its name, place, date, time and temperature; its mark (⚡) or recording (●) time in UTC; the recordings it is paired with and how they sit against the mark (for example “the mark is 12 s into the recording” or “recording starts 3 min after the mark”); and the extras. The drop-down lets you choose one recording by hand; <b>(automatic)</b> goes back to the automatic pairing. Untick a row to leave it out.</td></tr>
-<tr><td>Extras</td><td><b>🛰 picture</b> shows the satellite picture, <b>▶ note</b> plays the voice note (it depends on the audio codecs of the computer), and <b>🎧 open sound</b> opens the WAV recorded in the phone as a recording of its own and pairs it with its record.</td></tr>
+<tr><td>Extras</td><td><b>🛰 picture</b> shows the satellite picture, for records that have one, <b>▶ note</b> plays the voice note (it depends on the audio codecs of the computer), and <b>🎧 open sound</b> opens the WAV recorded in the phone as a recording of its own and pairs it with its record.</td></tr>
 <tr><td>Apply</td><td>Writes the country, locality, date, time, temperature, coordinates, elevation, recorder, microphone, specimen ID and species into every paired recording. Empty values never overwrite what is already there. The active recording is filled in through the metadata form, so its fields follow.</td></tr>
 </table>
 
@@ -810,15 +821,6 @@ figcaption b{color:var(--teal)}
 <p>On the figure: drag to zoom, and use the wheel to zoom or <code>Shift</code>+wheel to pan. Click to place the playhead, and press <code>Space</code> to play. A live indicator lights when the playhead is over a highlighted column. Double-click or press <code>Home</code> to show the whole recording. Presets can be exported and imported as <code>.json</code>.</p>
 
 <h2 id="s10-5">10.5 Habitus</h2>
-<p>Combines a photo of the animal with a waveform, a spectrum and labelled selections:</p>
-<ol>
-<li>Pick the wave, the window length and the opacity.</li>
-<li>Drag on the oscillogram to brush a stretch.</li>
-<li>Name it (closing, opening, male, female or custom) and press <b>Add selection</b>.</li>
-</ol>
-<p>Export a PNG, an SVG or the spectra as CSV, and set a file prefix.</p>
-
-<h2 id="s10-6">10.6 Multi-Mean Spectra</h2>
 <p>Tick the recordings to average in Loaded Audio; there is no separate add step.</p>
 <ul>
 <li><b>Spectrum options:</b> window length (128–8192), overlap, window function (hanning, hamming, blackman, bartlett, flattop, rectangle), scale (linear, dB, dBFS), frequency limits and step, minimum amplitude, and <b>Normalize each recording before averaging</b>.</li>
@@ -826,6 +828,63 @@ figcaption b{color:var(--teal)}
 <li>An optional habitus photo can be added, and the A/B letters dragged.</li>
 </ul>
 <p>All recordings must share the same sampling rate. Exports: PNG, SVG, spectra CSV.</p>
+
+<h2 id="s10-6">10.6 Multi-Mean Spectra</h2>
+<p>The <b>Mode</b> menu at the top of the panel chooses between two ways of working.</p>
+
+<h3>Brushed stretches of one wave</h3>
+<p>The mean spectrum of a whole recording (black line), with the spectra of brushed stretches laid over it:</p>
+<ol>
+<li>Pick the wave, the window length and the opacity.</li>
+<li>Drag on the oscillogram to brush a stretch.</li>
+<li>Name it (closing, opening, male, female or custom) and press <b>Add selection</b>.</li>
+</ol>
+<p>Export a PNG, an SVG or the spectra as CSV, and set a file prefix.</p>
+
+<h3>Label classes from selection tables</h3>
+<p>One mean spectrum for each label, pooled from one or more selection tables, which may come from different recordings. Use it, for example, to compare the opening and closing strokes, or the calling and courtship songs, across several males.</p>
+<ol>
+<li>Load the recordings in Loaded Audio.</li>
+<li><b>Import tables…</b> reads one or several selection tables: Raven <code>.txt</code> tables, CSV/TSV files or Excel workbooks (<code>.xlsx</code>). They need begin and end time columns in seconds: <code>Begin Time (s)</code>/<code>End Time (s)</code>, <code>start</code>/<code>end</code>, <code>begin_s</code>/<code>end_s</code>, or a pair such as <code>motif_start</code>/<code>motif_end</code>. In a workbook, every sheet with such a pair becomes a table of its own, so the Pulse and Motif sheets of a Temporal Analysis export can be read directly. Raven’s duplicate rows for the Waveform and Spectrogram views are read once.</li>
+<li>Each row is tied to a recording. When the table has a <b>Begin File</b> column, each row goes to the recording of that name; <b>File Offset (s)</b>, when present, gives the time inside that file. Otherwise the table goes to the recording whose name matches the table’s file name: <code>rec.Table.1.selections.txt</code>, <code>rec_annotations.csv</code> and <code>rec_temporal.xlsx</code> all go to <code>rec.wav</code>. The table’s drop-down chooses another recording. Rows that match no loaded recording are marked ⚠ and left out.</li>
+<li><b>Decide which tables to use before labelling.</b> The box at the left of each table card switches the table on or off. A table that is off is left out of the spectra, the classes, the Selections list and the viewer; its rows keep their own settings for when it is switched back on. Two warnings help here:
+<ul>
+<li><b>⊃ Groups the selections of …</b>: each selection of this table encloses two or more selections of another table. It is a grouping level, such as motifs over syllables or echemes over pulses. Using both levels counts the same sound twice, so normally use one or the other.</li>
+<li><b>⚠ … repeat one in another table</b>: some selections have the same recording and times as selections of another table. Untick the repeats or switch one table off.</li>
+</ul></li>
+<li><b>Label column</b> chooses the column that holds the labels (by default <i>Annotation</i>, <i>Label</i>, <i>Class</i> or <i>Type</i>, or a column ending in one of these words, such as <i>pulse_type</i>). Rows without a label form the class <i>(unlabelled)</i>. Changing the column replaces labels edited by hand, after a warning.</li>
+<li>Label the selections, in the <b>Selections</b> list or in the viewer (below). Type a label in a row, or pick rows (click; <code>Shift</code>-click for a range, <code>Ctrl</code>-click to add one), type a label and press <b>Label picked</b> or <code>Enter</code>. The box at the left of a row, or <b>Include picked</b>/<b>Leave out picked</b>, includes or leaves out selections.</li>
+<li>The <b>Classes</b> panel lists every label, numbered, with the number of selections plotted over the number in the class. Untick a class to hide it, change its colour, or rename it. Renaming a class to a name already in use merges the two classes.</li>
+</ol>
+
+<h4>The selection viewer</h4>
+<p>Above the spectra, the viewer shows the recording of the current selection as a <b>Waveform</b> or an <b>Envelope</b>, shaded in the class colour wherever an included selection lies. The drop-down at its top switches recording. Under the waveform, a <b>label track</b> shows every selection as a bar with its label. It has a block of rows for each table, in import order, separated by a thin line; within a table, selections that overlap in time get extra rows. Selections left out are grey and dashed, marked <i>(out)</i>, and picked ones are outlined in black. Hover over a bar to see its label, source table and times.</p>
+<ul>
+<li><b>Picking.</b> Click a bar to pick that selection; the list follows. A click on the waveform picks a selection there, preferring included ones, and clicking the same spot again steps to the next selection that overlaps it.</li>
+<li><b>Zooming in time.</b> Drag across the stretch to see, use the wheel, or press <b>+</b>/<b>−</b>. <b>⤢ Selection</b> zooms to the current selection and <b>Fit</b> (or a double-click) shows the whole recording. Alt-drag, middle-drag or <code>Shift</code>+wheel pans. The visible time range is shown above the viewer.</li>
+</ul>
+<p>With the viewer or the list focused, these keys speed up labelling:</p>
+<table>
+<tr><th>Key</th><th>Action</th></tr>
+<tr><td><code>←</code> / <code>→</code></td><td>Previous / next selection, switching recordings as needed</td></tr>
+<tr><td><code>1</code>–<code>9</code></td><td>Give the picked selections the label of that class (the numbers of the Classes panel). After labelling a single selection, the next one is picked, so a whole table can be labelled from the keyboard.</td></tr>
+<tr><td><code>Space</code></td><td>Play the current selection</td></tr>
+<tr><td><code>+</code> / <code>−</code>, <code>Z</code>, <code>F</code></td><td>Zoom in / out, zoom to the selection, show the whole recording</td></tr>
+</table>
+
+<h4>Colours</h4>
+<p>The colour swatch of a class opens a list of colour-blind-safe palettes: <b>Okabe–Ito</b> (the default), Paul Tol’s <b>Bright</b>, <b>Vibrant</b> and <b>Muted</b>, and six steps of <b>viridis</b>. Each colour shows its palette, name and hex code (for example <i>Okabe–Ito blue #0072B2</i>), so a figure can be described and reproduced exactly. <b>Apply to all classes</b> gives the classes a palette’s colours in order. A hex code or a custom colour can also be entered.</p>
+
+<h4>How a class spectrum is made</h4>
+<p>The mean spectrum of each selection (Hann window of the chosen length, no overlap) is normalised to a maximum of 1, so that a loud recording does not outweigh a quiet one. The spectra are averaged frequency by frequency, and the average is normalised to 1 again. Recordings with different sampling rates can be mixed: above the Nyquist frequency of a recording, its selections do not count, and a line stops where no selection reaches. <b>±1 SD band</b> shades the standard deviation of the selections’ spectra around each class mean. <b>Class spectra</b> draws each class as a line (the default, best for comparing classes) or as a filled area using the <b>Opacity</b> setting. A shorter window gives smoother curves.</p>
+
+<h4>Figure and exports</h4>
+<p><b>Waveform above the spectra</b> adds the recording and time range shown in the viewer to the figure: the waveform (or envelope, following the viewer), coloured by class where included selections lie, with a label track and a time axis. Zoom or pan the viewer to choose the stretch; the figure follows. The viewer itself is never exported.</p>
+<ul>
+<li><b>Download PNG / SVG</b>: the figure, with the waveform panel when it is shown.</li>
+<li><b>Download spectra (CSV)</b>: for each class, the mean, the SD and the number of selections (<code>_n</code>) at each frequency.</li>
+<li><b>Download labelled table</b>: every imported selection with its current label, as one Raven table with <code>Begin File</code>, <code>File Offset (s)</code>, the source table and whether the row was included. Import it again to continue labelling later; all its rows then start included.</li>
+</ul>
 
 <h1 id="c11">11. Summarize and Summary Analysis</h1>
 <p>This tab needs no audio. It pools the Excel exports of many recordings into species-level statistics.</p>
@@ -1109,7 +1168,7 @@ Undo, Delete and the editing keys of Temporal Analysis are fixed.</li>
 <tr><td>Interface too small or too large</td><td>Preferences → Text Size.</td></tr>
 </table>
 
-<h2 id="s17-3">17.3 Known limits (version 0.9.5)</h2>
+<h2 id="s17-3">17.3 Known limits (version 0.9.6)</h2>
 <ul>
 <li>Pulses-only metrics (no peaks) omit temporal excursion and the per-peak columns.</li>
 <li>Boundary edits made by hand cannot be reset in one step; use Undo.</li>
@@ -1120,13 +1179,14 @@ Undo, Delete and the editing keys of Temporal Analysis are fixed.</li>
 <li>Builds exist only for x86_64 Windows and Linux, and for Intel and Apple Silicon Macs.</li>
 <li>The Voice Notes Protocol depends on the transcript, so numbers that Whisper mishears must be corrected in the review window. Place names and elevations come from public services and are approximate: check the point on the map.</li>
 <li>Import Field records reads the time of a recording from an AudioMoth or WAV header, a file name or a file date. A time without a time zone is read in the zone of the phone record, and a file date can change when a file is copied.</li>
+<li>Multi-Mean Spectra from selection tables uses each selection’s full frequency band (the Low and High Freq columns are kept but not applied), reads times in seconds only, and matches tables to recordings by file name. The labelled table it saves does not keep which rows were left out.</li>
 </ul>
 
 <h1 id="c18">18. Citing the software and licence</h1>
 <p>Please cite the paper when you publish results obtained with Rthoptera Desk:</p>
 <p class="cite">Rivas, F., Brizio, C., Buzzetti, F. M., &amp; Pijanowski, B. (2025). Rthoptera: Standardised insect bioacoustics in R. <i>Methods in Ecology and Evolution, 16</i>(6), 1084–1094. https://doi.org/10.1111/2041-210X.70045</p>
 <p>To state which software version you used:</p>
-<p class="cite">Rivas, F. (2026). <i>Rthoptera Desk</i> (Version 0.9.5) [Computer software]. https://github.com/panchorivasf/Rthoptera-Desk</p>
+<p class="cite">Rivas, F. (2026). <i>Rthoptera Desk</i> (Version 0.9.6) [Computer software]. https://github.com/panchorivasf/Rthoptera-Desk</p>
 <p>Work using the Auto-coded Oscillogram should also cite:</p>
 <p class="cite">Brizio, C. (2023). Colour Enhanced Time/Pressure Envelope (CETPE), a novel on-screen rendering of digital sound. <i>Rivista Italiana di Acustica, 48</i>(2), 63–71.</p>
 <p>Work using the Clustering module should also cite Google’s Perch 2.0 model, following the citation given by its authors.</p>

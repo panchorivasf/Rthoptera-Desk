@@ -1,55 +1,63 @@
-# Rthoptera Desk 0.9.5
+# Rthoptera Desk 0.9.6
 
-Metadata from the field, two ways: speak it into the recording, or import the records
-saved by the new Rthoptera Field phone app. The manual has been revised throughout.
+Compare the spectra of labelled sounds across recordings: the Multi-Mean Spectra tab can now
+build one mean spectrum for each label, pooled from selection tables, with a viewer for
+labelling the selections and colour-blind-safe palettes for the figure.
 
-## Voice Notes Protocol: metadata from spoken notes
+## Multi-Mean Spectra: label classes from selection tables
 
-- **Read as metadata…** is a new button in the Voice notes pane. Say the metadata at the
-  start of a recording, each field as a label followed by its value (date, time,
-  latitude, longitude, elevation, temperature, country, locality, recorder, microphone,
-  accessories, specimen, species), then transcribe it. The notes are read into a review
-  table where you can correct any value before it is applied to the Recording metadata
-  form, to the active recording, the checked recordings or all of them. Labels work in
-  English and Spanish. Numbers are said one digit at a time, with *minus* and *point*.
-- **Place and elevation from the coordinates.** When coordinates are read, the country,
-  locality and elevation that were not spoken are looked up from them (OpenStreetMap or
-  BigDataCloud for the place, Open-Meteo or OpenTopoData for the elevation). Only the
-  coordinates are sent, and the lookup can be switched off.
-- **Check on map…** shows the point on a street or satellite map. Click to move it: the
-  coordinates, elevation and place update together.
+- **A new mode**, chosen from the **Mode** menu at the top of the tab, draws one mean spectrum
+  for each label class. For example, compare the opening and closing strokes, or the calling
+  and courtship songs, across several males. The brushing mode works as before.
+- **Import tables…** reads one or several selection tables at once: Raven `.txt`, CSV/TSV, or
+  Excel `.xlsx` (every sheet with begin and end columns, so the Pulse and Motif sheets of a
+  Temporal Analysis export load directly). Each row is tied to a loaded recording by the
+  table's **Begin File** column or by the table's file name, and a drop-down chooses another
+  recording. Tables may come from different recordings, even at different sampling rates.
+- **Decide which tables to use.** Each table can be switched on or off. A table whose
+  selections each enclose several selections of another table (motifs over syllables,
+  echemes over pulses) is marked as a grouping level, and selections repeated between tables
+  are pointed out, so the same sound is not counted twice.
+- **Label the selections** from a column of the tables, by typing in the list, or for many
+  picked rows at once. Classes can be hidden, renamed or merged.
+- **How a class spectrum is made:** each selection's mean spectrum is normalised to 1, the
+  spectra are averaged frequency by frequency, and the result is normalised again. An
+  optional ±1 SD band shows the spread. Classes are drawn as lines (the default) or as
+  filled areas.
 
-## Import Field records
+## A selection viewer for labelling
 
-- **📱 Import Field records…** in Recording metadata reads the records saved by the
-  Rthoptera Field iPhone app (the `.zip` it shares, or the `.json`, several at once). It
-  shows the satellite picture and plays the voice note, can open a sound recorded in the
-  phone, and writes the site metadata into the matching recordings.
-- **Each recording is paired with the nearest mark in time.** In the app's *Metadata
-  Only* mode a single tap saves a mark: the instant, the place and the conditions. Desk
-  pairs every loaded recording with the mark inside it, or the closest one within the
-  tolerance (2 min to 3 h, 15 min by default). Records from *Record with Phone* carry the
-  real start and end of the recording.
-- **The time of a recording** is read from its AudioMoth or WAV header, from a date and
-  time in its file name, or from its file date. You choose the source, or leave it on
-  automatic. The clock difference between the recorder and the phone is corrected, and
-  an extra clock shift handles a difference found later.
+- Above the spectra, the **waveform or envelope** of the recording, with every selection on a
+  label track under it, in its class colour. Each table has its own rows; overlapping
+  selections get rows of their own. Hover over a bar to see its label, table and times.
+- **Zoom in time** by dragging across a stretch, with the wheel or with **+**/**−**;
+  **⤢ Selection** zooms to the current selection and **Fit** shows the whole recording.
+- **Label from the keyboard:** `←`/`→` step through the selections, `Space` plays one, and
+  `1`–`9` give it the label of that class and move on to the next.
+
+## Figure and exports
+
+- **Waveform above the spectra** puts the stretch shown in the viewer, coloured by class,
+  above the spectra in the figure and its PNG/SVG export.
+- **Colour-blind-safe palettes** for the class colours: Okabe–Ito (the default), Paul Tol's
+  Bright, Vibrant and Muted, and viridis. Every colour is shown with its name and hex code,
+  so a figure can be described and reproduced exactly. **Apply to all classes** recolours
+  the whole figure with one palette.
+- **Download spectra (CSV)** gives, for each class, the mean, the SD and the number of
+  selections at each frequency. **Download labelled table** saves all the selections with
+  their labels as one Raven table, which can be imported again to continue later.
 
 ## Other changes
 
-- The buttons at the bottom of the Recording metadata window wrap onto a second line
-  instead of leaving the window, and the Xeno-canto button is shortened.
-- A recording saved with **Save Edited Audio As…** keeps the time information of its
-  source.
-- The **User Manual** covers the new features (sections 5.4 and 6.6), lists what changed
-  in each recent version, and has been revised in wording throughout.
+- The **User Manual** describes the new mode (section 10.6). Sections 10.5 (Habitus) and 10.6
+  (Multi-Mean Spectra) described each other's tab; they are now correct.
 
 ---
 
 ## 📖 Documentation
 
-Read the [User Manual (PDF)](https://github.com/panchorivasf/Rthoptera-Desk/blob/main/Rthoptera_Desk_User_Manual_v0.9.5.pdf).
-It is also attached to this release as `Rthoptera_Desk_User_Manual_v0.9.5.pdf`.
+Read the [User Manual (PDF)](https://github.com/panchorivasf/Rthoptera-Desk/blob/main/Rthoptera_Desk_User_Manual_v0.9.6.pdf).
+It is also attached to this release as `Rthoptera_Desk_User_Manual_v0.9.6.pdf`.
 
 ## 📥 Which file do I download?
 
@@ -59,15 +67,15 @@ Pick the file that matches your operating system and processor.
 
 | File                                 | Use                                                     |
 | ------------------------------------ | ------------------------------------------------------- |
-| `Rthoptera.Desk_0.9.5_x64-setup.exe` | **Recommended** — standard installer, just double-click |
-| `Rthoptera.Desk_0.9.5_x64_en-US.msi` | Alternative for managed/enterprise deployment           |
+| `Rthoptera.Desk_0.9.6_x64-setup.exe` | **Recommended** — standard installer, just double-click |
+| `Rthoptera.Desk_0.9.6_x64_en-US.msi` | Alternative for managed/enterprise deployment           |
 
 ### macOS
 
 | File                               | Use                         |
 | ---------------------------------- | --------------------------- |
-| `Rthoptera.Desk_0.9.5_aarch64.dmg` | Apple Silicon (M1/M2/M3/M4) |
-| `Rthoptera.Desk_0.9.5_x64.dmg`     | Intel Macs                  |
+| `Rthoptera.Desk_0.9.6_aarch64.dmg` | Apple Silicon (M1/M2/M3/M4) |
+| `Rthoptera.Desk_0.9.6_x64.dmg`     | Intel Macs                  |
 
 Not sure which Mac you have? Click the Apple menu → **About This Mac**. "Apple M…"
 means Apple Silicon; "Intel" means the x64 build.
@@ -76,9 +84,9 @@ means Apple Silicon; "Intel" means the x64 build.
 
 | File                                  | Use                                                                 |
 | ------------------------------------- | ------------------------------------------------------------------- |
-| `Rthoptera.Desk_0.9.5_amd64.AppImage` | **Recommended** — works on most distros. Run `chmod +x` then launch |
-| `Rthoptera.Desk_0.9.5_amd64.deb`      | Debian, Ubuntu, Mint, etc.                                          |
-| `Rthoptera.Desk-0.9.5-1.x86_64.rpm`   | Fedora, RHEL, openSUSE, etc.                                        |
+| `Rthoptera.Desk_0.9.6_amd64.AppImage` | **Recommended** — works on most distros. Run `chmod +x` then launch |
+| `Rthoptera.Desk_0.9.6_amd64.deb`      | Debian, Ubuntu, Mint, etc.                                          |
+| `Rthoptera.Desk-0.9.6-1.x86_64.rpm`   | Fedora, RHEL, openSUSE, etc.                                        |
 
 > **Note:** Builds are currently 64-bit Intel/AMD (x86_64) for Windows and
 > Linux, plus both Intel and Apple Silicon for macOS. ARM Linux and

@@ -3752,7 +3752,7 @@
             data-i18n
             onclick="switchPlotSubtab('meanspec', this)"
             data-i18n-title
-            title="Multi-Mean Spectra: the mean power spectrum of a recording with the spectra of brushed stretches laid over it"
+            title="Multi-Mean Spectra: the mean power spectrum of a recording with the spectra of brushed stretches laid over it, or one mean spectrum per label class from selection tables"
             style="font-size: 11px; padding: 3px 12px"
           >
             Multi-Mean Spectra
@@ -7342,6 +7342,14 @@
               "
             >
               <div class="panel">
+                <h2 data-i18n>Mode</h2>
+                <select id="msMode" onchange="msOnModeChange()" style="width: 100%">
+                  <option value="brush">Brushed stretches of one wave</option>
+                  <option value="tables">Label classes from selection tables</option>
+                </select>
+              </div>
+
+              <div class="panel" id="msPanelWave">
                 <h2 data-i18n>Wave</h2>
                 <div style="display: flex; flex-direction: column; gap: 6px">
                   <div
@@ -7377,6 +7385,19 @@
                     <input type="number" id="msFMax" placeholder="max" min="0" step="1" style="width: 50px" oninput="msDraw()" />
                   </div>
                   <div data-grid-host="msGrid" data-grid-on="0" data-grid-width="0.5" data-grid-color="#bbbbbb" data-grid-type="dashed" data-grid-redraw="msDraw"></div>
+                  <div class="row" id="msClassStyleRow" style="display: none">
+                    <span style="color: var(--txt2); font-size: 11px; width: 110px">Class spectra</span>
+                    <select id="msClassStyle" onchange="msDraw()" style="width: 90px" title="Lines compare classes best; filled areas use the Opacity above">
+                      <option value="lines" selected>Lines</option>
+                      <option value="fill">Filled areas</option>
+                    </select>
+                  </div>
+                  <label class="row" id="msFigWaveRow" style="display: none; font-size: 11px; color: var(--txt2); gap: 4px" title="Put the recording and time range shown in the selection viewer above the spectra, coloured by class, in the figure and in its PNG/SVG export">
+                    <input type="checkbox" id="msFigWave" onchange="msDraw()" /> Waveform above the spectra
+                  </label>
+                  <label class="row" id="msSdRow" style="display: none; font-size: 11px; color: var(--txt2); gap: 4px" title="Shade ±1 standard deviation of the selections' spectra around each class mean">
+                    <input type="checkbox" id="msSd" onchange="msDraw()" /> ±1 SD band
+                  </label>
                   <div class="row">
                     <span style="color: var(--txt2); font-size: 11px; width: 110px">Plot title</span>
                     <input type="text" id="msTitle" style="width: 100px" oninput="msDraw()" />
@@ -7384,7 +7405,56 @@
                 </div>
               </div>
 
-              <div class="panel">
+              <!-- Table mode: selection tables from one or more recordings,
+                   classified by label, one mean spectrum per class. -->
+              <div class="panel" id="msPanelTables" style="display: none">
+                <h2 data-i18n>Selection tables</h2>
+                <div style="display: flex; flex-direction: column; gap: 5px">
+                  <input type="file" id="msTableFile" multiple accept=".txt,.csv,.tsv,.xlsx" style="display: none" onchange="msImportTables(this)" />
+                  <div class="row" style="gap: 4px">
+                    <button class="pri" data-i18n onclick="document.getElementById('msTableFile').click()" style="flex: 1" title="Raven selection tables (.txt), CSV/TSV or Excel (.xlsx: every sheet with begin and end columns), one or several, from the same or different recordings. Each row is matched to a loaded recording by its Begin File column, otherwise by the table's file name.">Import tables…</button>
+                    <button id="btnMsTablesClear" onclick="msClearTables()" disabled>Clear</button>
+                  </div>
+                  <div id="msTableList" style="display: flex; flex-direction: column; gap: 4px; max-height: 200px; overflow-y: auto">
+                    <div style="color: var(--txt2); font-size: 11px">No tables imported.</div>
+                  </div>
+                  <div class="row">
+                    <span style="color: var(--txt2); font-size: 11px; width: 80px" title="The column whose values become the class labels. Changing it discards labels edited by hand.">Label column</span>
+                    <select id="msLabelCol" onchange="msOnLabelColChange()" style="width: 130px"></select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel" id="msPanelClasses" style="display: none">
+                <h2 data-i18n>Classes</h2>
+                <div id="msClassList" style="display: flex; flex-direction: column; gap: 3px; max-height: 200px; overflow-y: auto">
+                  <div style="color: var(--txt2); font-size: 11px">No classes yet.</div>
+                </div>
+              </div>
+
+              <div class="panel" id="msPanelRows" style="display: none">
+                <h2 data-i18n>Selections</h2>
+                <div style="display: flex; flex-direction: column; gap: 5px">
+                  <div style="font-size: 10px; color: var(--txt3)">Click a row (or a box in the viewer) to pick it, Shift/Ctrl-click for more. The box includes or leaves out a row.</div>
+                  <div class="row" style="gap: 4px; font-size: 11px">
+                    <button onclick="msPickAll(true)" style="font-size: 10px">Pick all</button>
+                    <button onclick="msPickAll(false)" style="font-size: 10px">None</button>
+                    <span id="msPickedInfo" style="color: var(--txt3); margin-left: auto"></span>
+                  </div>
+                  <div class="row" style="gap: 4px">
+                    <input type="text" id="msBulkLabel" list="msLabelList" placeholder="label" style="flex: 1; min-width: 0" onkeydown="if (event.key === 'Enter') msLabelPicked()" />
+                    <button id="btnMsBulkLabel" onclick="msLabelPicked()" disabled title="Give this label to the picked rows">Label picked</button>
+                  </div>
+                  <div class="row" style="gap: 4px">
+                    <button id="btnMsInclPicked" onclick="msIncludePicked(true)" disabled style="flex: 1; font-size: 10px">Include picked</button>
+                    <button id="btnMsExclPicked" onclick="msIncludePicked(false)" disabled style="flex: 1; font-size: 10px">Leave out picked</button>
+                  </div>
+                  <datalist id="msLabelList"></datalist>
+                  <div id="msRowList" style="display: flex; flex-direction: column; max-height: 260px; overflow-y: auto"></div>
+                </div>
+              </div>
+
+              <div class="panel" id="msPanelBrush">
                 <h2 data-i18n>Selections</h2>
                 <div style="display: flex; flex-direction: column; gap: 5px">
                   <div id="msPendingInfo" style="font-size: 11px; color: var(--txt2)">Drag on the oscillogram to brush a stretch</div>
@@ -7414,11 +7484,15 @@
                   <button id="btnMsPng" onclick="msExportPng()" disabled>Download PNG</button>
                   <button id="btnMsSvg" onclick="msExportSvg()" disabled>Download SVG</button>
                   <button id="btnMsCsv" onclick="msExportCsv()" disabled>Download spectra (CSV)</button>
+                  <button id="btnMsTableOut" onclick="msExportLabelledTable()" disabled style="display: none" title="The imported selections with their current labels, as one Raven selection table with Begin File and File Offset columns">Download labelled table</button>
                 </div>
               </div>
             </div>
 
             <div style="flex: 1; overflow: auto; padding: 8px; background: #fff; min-width: 0">
+              <!-- Table mode: the recording of the current selection, with every
+                   selection boxed in its class colour (not part of the export). -->
+              <div id="msViewer" style="display: none; margin-bottom: 10px"></div>
               <div id="msFigure"></div>
             </div>
           </div>

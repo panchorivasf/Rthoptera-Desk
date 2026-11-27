@@ -21,7 +21,7 @@ If you're unsure, click the Apple menu → **About This Mac**. If it says "Apple
 
 ## Documentation
 
-Read the [User Manual (PDF)](Rthoptera_Desk_User_Manual_v0.9.5.pdf). It is also attached to each release.
+Read the [User Manual (PDF)](Rthoptera_Desk_User_Manual_v0.9.6.pdf). It is also attached to each release.
 
 ## About
 
