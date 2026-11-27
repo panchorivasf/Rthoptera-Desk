@@ -44,11 +44,15 @@
   let msFull = null; // { freqs (kHz), amp } of the whole wave, window = msFullWl
   let msFullWl = 0;
   let msSels = []; // { id, name, t0, t1, color, spec }
+  let msBrushColor = {}; // label -> colour in brush mode, stable per label
   let msNextId = 1;
   let msPending = null; // { t0, t1 } brushed, not yet added
   let msLibSelectedId = null;
   let msSvgEl = null;
   let msGeo = null; // plot geometry of the last draw, for the pointer handlers
+  let msBV0 = 0; // time range shown on the brush-mode oscillogram (s)
+  let msBV1 = 0;
+  let msLastClick = 0; // for double-click-to-fit on the oscillogram
 
   // Table mode ("Label classes from selection tables")
   let msMode = "brush"; // "brush" | "tables"
@@ -73,6 +77,64 @@
       hannCache[n] = w;
     }
     return hannCache[n];
+  }
+
+  // A plot title with light Markdown: *italic* or _italic_, **bold**,
+  // ***both***, and \* to write a literal asterisk. A marker without a
+  // partner is kept as text, and _ only counts at a word edge, so names
+  // like Ind3_HAA stay as typed. Returns an SVG <text> of <tspan>s.
+  function mdTitle(attrs, src) {
+    const toks = [];
+    let buf = "";
+    const flush = () => {
+      if (buf) toks.push({ s: buf });
+      buf = "";
+    };
+    const word = (c) => !!c && /[\p{L}\p{N}]/u.test(c);
+    for (let i = 0; i < src.length; i++) {
+      const c = src[i];
+      if (c === "\\" && i + 1 < src.length && /[*_\\]/.test(src[i + 1])) {
+        buf += src[++i];
+      } else if (c === "*") {
+        let n = 1;
+        while (src[i + n] === "*" && n < 3) n++;
+        flush();
+        if (n === 3) toks.push({ m: "**", s: "**" }, { m: "*", s: "*" });
+        else toks.push({ m: n === 2 ? "**" : "*", s: "*".repeat(n) });
+        i += n - 1;
+      } else if (c === "_" && (!word(src[i - 1]) || !word(src[i + 1]))) {
+        flush();
+        toks.push({ m: "_", s: "_", open: !word(src[i - 1]), close: !word(src[i + 1]) });
+      } else buf += c;
+    }
+    flush();
+    // Pair the markers; the unpaired ones become text again.
+    const open = {};
+    toks.forEach((t, k) => {
+      if (!t.m) return;
+      const st = (open[t.m] = open[t.m] || []);
+      const canClose = t.m !== "_" || t.close;
+      const canOpen = t.m !== "_" || t.open;
+      if (st.length && canClose) {
+        toks[st.pop()].on = true;
+        t.on = true;
+      } else if (canOpen) st.push(k);
+    });
+    const el = svgEl("text", attrs);
+    let bold = false,
+      ital = false;
+    toks.forEach((t) => {
+      if (t.m && t.on) {
+        if (t.m === "**") bold = !bold;
+        else ital = !ital;
+        return;
+      }
+      const ts = svgEl("tspan", {}, t.s);
+      if (ital) ts.setAttribute("font-style", "italic");
+      if (bold) ts.setAttribute("font-weight", 800);
+      el.appendChild(ts);
+    });
+    return el;
   }
 
   function svgEl(tag, attrs, text) {
@@ -187,7 +249,10 @@
     msMin = mn;
     msMax = mx;
     msSels = [];
+    msBrushColor = {};
     msPending = null;
+    msBV0 = 0;
+    msBV1 = msDur;
     $("msWaveInfo").textContent = `${label} — ${msDur.toFixed(3)}s @ ${rate} Hz`;
     if (!$("msTitle").value) $("msTitle").value = "";
     await computeFull();
@@ -240,6 +305,12 @@
       const b = $(id);
       if (b) b.disabled = !has;
     });
+    ["btnMsZoomIn", "btnMsZoomOut", "btnMsZoomFit"].forEach((id) => {
+      const b = $(id);
+      if (b) b.disabled = !has;
+    });
+    const zs = $("btnMsZoomSel");
+    if (zs) zs.disabled = !has || !(msPending || msSels.length);
     const add = $("btnMsAdd");
     if (add) add.disabled = !has || !msPending;
     const clr = $("btnMsClear");
@@ -263,10 +334,12 @@
         "display:flex;align-items:center;gap:6px;font-size:11px;padding:1px 0";
       row.innerHTML =
         `<span style="width:10px;height:10px;border-radius:2px;background:${s.color};flex-shrink:0"></span>` +
-        `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${s.t0.toFixed(3)}–${s.t1.toFixed(3)} s"></span>` +
+        `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:text" title="${s.t0.toFixed(3)}–${s.t1.toFixed(3)} s · click to rename"></span>` +
         `<span style="color:var(--txt3)">${s.t0.toFixed(2)}–${s.t1.toFixed(2)}s</span>` +
         `<button class="xbtn" title="Remove" style="font-size:10px">×</button>`;
-      row.children[1].textContent = s.name;
+      const nameEl = row.children[1];
+      nameEl.textContent = s.name;
+      nameEl.onclick = () => editSelName(s, nameEl);
       row.querySelector("button").onclick = () => {
         msSels = msSels.filter((x) => x.id !== s.id);
         msUpdateUi();
@@ -274,6 +347,54 @@
       };
       list.appendChild(row);
     });
+  }
+
+  // Rename a selection in place: Enter or leaving the box keeps the new
+  // label, Esc cancels. The selection takes its new label's colour and is
+  // pooled with that label's other selections. The suggestions are the
+  // labels in use plus the preset names.
+  function editSelName(s, nameEl) {
+    const inp = document.createElement("input");
+    inp.type = "text";
+    inp.value = s.name;
+    inp.style.cssText = "flex:1;min-width:0;font-size:11px;padding:0 3px";
+    let dl = $("msSelNameList");
+    if (!dl) {
+      dl = document.createElement("datalist");
+      dl.id = "msSelNameList";
+      document.body.appendChild(dl);
+    }
+    const presets = [...($("msSelName")?.options || [])]
+      .map((o) => o.value)
+      .filter((v) => v !== "Custom...");
+    dl.innerHTML = "";
+    [...new Set(msSels.map((x) => x.name).concat(presets))].forEach((v) => {
+      const o = document.createElement("option");
+      o.value = v;
+      dl.appendChild(o);
+    });
+    inp.setAttribute("list", "msSelNameList");
+    let done = false;
+    const finish = (save) => {
+      if (done) return;
+      done = true;
+      const name = inp.value.trim();
+      if (save && name && name !== s.name) {
+        s.name = name;
+        s.color = brushColorOf(name);
+        msDraw();
+      }
+      msUpdateUi();
+    };
+    inp.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") finish(true);
+      else if (ev.key === "Escape") finish(false);
+      ev.stopPropagation();
+    });
+    inp.addEventListener("blur", () => finish(true));
+    nameEl.replaceWith(inp);
+    inp.focus();
+    inp.select();
   }
 
   async function msAddSelection() {
@@ -291,7 +412,7 @@
       name,
       t0,
       t1,
-      color: PALETTE[msSels.length % PALETTE.length],
+      color: brushColorOf(name),
       spec: selectionSpectrum(t0, t1),
     };
     msSels.push(sel);
@@ -300,7 +421,48 @@
     msDraw();
   }
 
+  // One colour per label: a label keeps the colour it was first given, even
+  // after its selections are removed and added again; a new label takes the
+  // first palette colour no other label holds.
+  function brushColorOf(name) {
+    if (!msBrushColor[name]) {
+      const used = new Set(Object.values(msBrushColor));
+      const free = PALETTE.find((c) => !used.has(c));
+      msBrushColor[name] =
+        free || PALETTE[Object.keys(msBrushColor).length % PALETTE.length];
+    }
+    return msBrushColor[name];
+  }
+
+  // Selections pooled by label, in order of first appearance. A label's
+  // spectrum is the bin-by-bin mean of its selections' spectra (each one
+  // the normalised meanspec scaled by its peak amplitude, as for a single
+  // selection), so one selection draws exactly as before.
+  function brushGroups() {
+    const byName = new Map();
+    msSels.forEach((s) => {
+      let g = byName.get(s.name);
+      if (!g) {
+        g = { name: s.name, color: s.color, n: 0, sels: [] };
+        byName.set(s.name, g);
+      }
+      g.n++;
+      g.sels.push(s);
+    });
+    return [...byName.values()].map((g) => {
+      const f = g.sels[0].spec.freqs;
+      const amp = new Float64Array(f.length);
+      g.sels.forEach((s) => {
+        for (let b = 0; b < amp.length; b++) amp[b] += s.spec.amp[b];
+      });
+      for (let b = 0; b < amp.length; b++) amp[b] /= g.n;
+      g.spec = { freqs: f, amp };
+      return g;
+    });
+  }
+
   function msClearSelections() {
+    msBrushColor = {};
     msSels = [];
     msPending = null;
     msUpdateUi();
@@ -395,17 +557,26 @@
     const title = ($("msTitle")?.value || "").trim();
     if (title)
       svg.appendChild(
-        svgEl("text", { x: L, y: 22, "font-size": 17, fill: "#111", "font-weight": 600 }, title),
+        mdTitle({ x: L, y: 22, "font-size": 17, fill: "#111", "font-weight": 600 }, title),
       );
 
-    // ── Oscillogram ──
-    const tX = (t) => L + (t / msDur) * pw;
+    // ── Oscillogram ── (the zoomed time range msBV0..msBV1)
+    if (!(msBV1 > msBV0)) {
+      msBV0 = 0;
+      msBV1 = msDur;
+    }
+    const v0 = msBV0,
+      v1 = msBV1;
+    const tX = (t) => L + ((t - v0) / (v1 - v0)) * pw;
     const aY = (a) => oscTop + oscH * (1 - (a + 1.2) / 2.4); // -1.2..1.2, as the Shiny app's y limits
-    const bins = minmaxBins(0, msSamples.length, Math.floor(pw));
-    const envPath = (b0, b1, i0, i1) => {
+    const si0 = Math.max(0, Math.floor(v0 * msRate));
+    const si1 = Math.min(msSamples.length, Math.max(si0 + 1, Math.ceil(v1 * msRate)));
+    const bins = minmaxBins(si0, si1, Math.floor(pw));
+    const perBin = (si1 - si0) / bins.nBins; // samples per bin
+    const envPath = (b0, b1) => {
       let d = "";
       for (let b = b0; b < b1; b++) {
-        const x = L + ((b + 0.5) / bins.nBins) * pw;
+        const x = tX((si0 + (b + 0.5) * perBin) / msRate);
         d += `M${x.toFixed(1)},${aY(scaled(bins.mins[b])).toFixed(1)}L${x.toFixed(1)},${aY(scaled(bins.maxs[b])).toFixed(1)}`;
       }
       return d;
@@ -414,8 +585,8 @@
       svgEl("path", { d: envPath(0, bins.nBins), stroke: "#000", "stroke-width": 1, fill: "none" }),
     );
     msSels.forEach((s) => {
-      const b0 = Math.max(0, Math.floor((s.t0 / msDur) * bins.nBins));
-      const b1 = Math.min(bins.nBins, Math.ceil((s.t1 / msDur) * bins.nBins));
+      const b0 = Math.max(0, Math.floor((s.t0 * msRate - si0) / perBin));
+      const b1 = Math.min(bins.nBins, Math.ceil((s.t1 * msRate - si0) / perBin));
       if (b1 > b0)
         svg.appendChild(
           svgEl("path", { d: envPath(b0, b1), stroke: s.color, "stroke-width": 1, fill: "none" }),
@@ -424,7 +595,7 @@
     // axes
     svg.appendChild(svgEl("line", { x1: L, y1: oscTop + oscH, x2: L + pw, y2: oscTop + oscH, stroke: "#000" }));
     svg.appendChild(svgEl("line", { x1: L, y1: oscTop, x2: L, y2: oscTop + oscH, stroke: "#000" }));
-    niceTicks(0, msDur, 8).forEach((t) => {
+    niceTicks(v0, v1, 8).forEach((t) => {
       const x = tX(t);
       svg.appendChild(svgEl("line", { x1: x, y1: oscTop + oscH, x2: x, y2: oscTop + oscH + 4, stroke: "#000" }));
       svg.appendChild(svgEl("text", { x, y: oscTop + oscH + 16, "text-anchor": "middle", "font-size": 11, fill: "#222" }, fmtTick(t)));
@@ -437,12 +608,14 @@
     });
     const yl = svgEl("text", { x: 14, y: oscTop + oscH / 2, "text-anchor": "middle", "font-size": 12, fill: "#222", transform: `rotate(-90 14 ${oscTop + oscH / 2})` }, "Amplitude");
     svg.appendChild(yl);
-    if (msPending) {
+    if (msPending && msPending.t1 > v0 && msPending.t0 < v1) {
+      const px0 = tX(Math.max(v0, msPending.t0)),
+        px1 = tX(Math.min(v1, msPending.t1));
       svg.appendChild(
         svgEl("rect", {
-          x: tX(msPending.t0),
+          x: px0,
           y: oscTop,
-          width: Math.max(1, tX(msPending.t1) - tX(msPending.t0)),
+          width: Math.max(1, px1 - px0),
           height: oscH,
           fill: "rgba(217,153,34,0.18)",
           stroke: "#d29922",
@@ -468,7 +641,9 @@
     let f1 = num("msFMax", fNyq);
     f0 = Math.max(0, Math.min(f0, fNyq));
     f1 = Math.max(f0 + 0.01, Math.min(f1, fNyq));
-    const yMax = Math.max(1, ...msSels.map((s) => Math.max(...s.spec.amp))) * 1.05;
+    const groups = brushGroups(); // selections pooled by label
+    const gName = (g) => (g.n > 1 ? `${g.name} (n=${g.n})` : g.name);
+    const yMax = Math.max(1, ...groups.map((g) => Math.max(...g.spec.amp))) * 1.05;
     const fX = (f) => L + ((f - f0) / (f1 - f0)) * pw;
     const sY = (a) => specTop + specH * (1 - a / yMax);
 
@@ -501,7 +676,7 @@
       niceTicks(f0, f1, 10).forEach((f) => gl(fX(f), specTop, fX(f), specTop + specH));
       niceTicks(0, yMax, 5).forEach((a) => gl(L, sY(a), L + pw, sY(a)));
     }
-    msSels.forEach((s) => {
+    groups.forEach((s) => {
       const line = area(s.spec);
       if (!line) return;
       const x1 = fX(Math.min(f1, s.spec.freqs[s.spec.freqs.length - 1]));
@@ -534,9 +709,9 @@
     });
     svg.appendChild(svgEl("text", { x: 14, y: specTop + specH / 2, "text-anchor": "middle", "font-size": 12, fill: "#222", transform: `rotate(-90 14 ${specTop + specH / 2})` }, "Amplitude"));
 
-    // Legend (right-aligned, above the spectrum): Mean, then each selection
+    // Legend (right-aligned, above the spectrum): Mean, then each label
     const items = [{ name: "Mean", color: "#000", line: true }].concat(
-      msSels.map((s) => ({ name: s.name, color: s.color })),
+      groups.map((g) => ({ name: gName(g), color: g.color })),
     );
     let lx = L + pw;
     for (let i = items.length - 1; i >= 0; i--) {
@@ -565,7 +740,7 @@
     msGeo = {
       L, pw, oscTop, oscH, specTop, specH, f0, f1, yMax, fX, sY, tX,
       traces: [{ name: "Mean", color: "#000", spec: msFull }].concat(
-        msSels.map((s) => ({ name: s.name, color: s.color, spec: s.spec })),
+        groups.map((g) => ({ name: gName(g), color: g.color, spec: g.spec })),
       ),
     };
 
@@ -583,7 +758,11 @@
     rect.addEventListener("pointerdown", (ev) => {
       const g = msGeo;
       const startX = clientToSvgX(svg, ev.clientX);
-      const toT = (x) => Math.max(0, Math.min(msDur, ((x - g.L) / g.pw) * msDur));
+      if (ev.altKey || ev.button === 1) return panDrag(svg, ev);
+      if (ev.button !== 0) return;
+      const v0 = msBV0,
+        v1 = msBV1;
+      const toT = (x) => Math.max(v0, Math.min(v1, v0 + ((x - g.L) / g.pw) * (v1 - v0)));
       let moved = false;
       const live = svgEl("rect", {
         y: g.oscTop,
@@ -612,6 +791,14 @@
           msPending = { t0: Math.min(a, b), t1: Math.max(a, b) };
         } else {
           msPending = null; // a plain click clears the brush
+          // Two plain clicks in quick succession: show the whole wave. (A
+          // dblclick listener would not fire: the first click redraws.)
+          const now = performance.now();
+          if (now - msLastClick < 400) {
+            msBV0 = 0;
+            msBV1 = msDur;
+          }
+          msLastClick = now;
         }
         msUpdateUi();
         msDraw();
@@ -620,6 +807,80 @@
       document.addEventListener("pointerup", onUp);
       ev.preventDefault();
     });
+    // Wheel zooms in time around the pointer; Shift+wheel (or a sideways
+    // swipe) pans. Double-click shows the whole wave.
+    rect.addEventListener(
+      "wheel",
+      (ev) => {
+        ev.preventDefault();
+        const g = msGeo;
+        const span = msBV1 - msBV0;
+        if (ev.shiftKey || Math.abs(ev.deltaX) > Math.abs(ev.deltaY)) {
+          const d = (ev.shiftKey ? ev.deltaY : ev.deltaX) || ev.deltaY;
+          const k = (d > 0 ? 0.15 : -0.15) * span;
+          msBrushSetView(msBV0 + k, msBV1 + k);
+          msDraw();
+        } else {
+          const x = clientToSvgX(svg, ev.clientX);
+          msBrushZoom(ev.deltaY > 0 ? 1.25 : 0.8, msBV0 + ((x - g.L) / g.pw) * span);
+        }
+      },
+      { passive: false },
+    );
+  }
+
+  // Alt-drag or middle-drag on the oscillogram: pan in time.
+  function panDrag(svg, ev) {
+    const g = msGeo;
+    const startX = clientToSvgX(svg, ev.clientX);
+    const a0 = msBV0,
+      a1 = msBV1;
+    const onMove = (e2) => {
+      const dt = ((clientToSvgX(svg, e2.clientX) - startX) / g.pw) * (a1 - a0);
+      msBrushSetView(a0 - dt, a1 - dt);
+      msDraw();
+    };
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    ev.preventDefault();
+  }
+
+  // ── Time zoom of the brush-mode oscillogram ──
+  function msBrushSetView(a, b) {
+    if (!msSamples) return;
+    const span = Math.max(Math.min(msDur, 64 / msRate), Math.min(msDur, b - a));
+    a = Math.max(0, Math.min(a, msDur - span));
+    msBV0 = a;
+    msBV1 = a + span;
+  }
+
+  // k < 1 zooms in, around the centre (or around time `at`).
+  function msBrushZoom(k, at) {
+    if (!msSamples) return;
+    const c = at != null ? at : (msBV0 + msBV1) / 2;
+    msBrushSetView(c - (c - msBV0) * k, c + (msBV1 - c) * k);
+    msDraw();
+  }
+
+  function msBrushZoomFit() {
+    if (!msSamples) return;
+    msBV0 = 0;
+    msBV1 = msDur;
+    msDraw();
+  }
+
+  // The brushed stretch (or the last selection) with a quarter of its
+  // length on either side.
+  function msBrushZoomToSel() {
+    const s = msPending || msSels[msSels.length - 1];
+    if (!msSamples || !s) return;
+    const pad = (s.t1 - s.t0) * 0.25;
+    msBrushSetView(s.t0 - pad, s.t1 + pad);
+    msDraw();
   }
 
   // Hover: a vertical guide and the value of every trace at that frequency,
@@ -2449,7 +2710,7 @@ ${r.t0.toFixed(3)}–${r.t1.toFixed(3)} s (${((r.t1 - r.t0) * 1000).toFixed(0)} 
     });
     svg.appendChild(svgEl("rect", { x: 0, y: 0, width: W, height: H, fill: "#fff" }));
     if (title)
-      svg.appendChild(svgEl("text", { x: L, y: 22, "font-size": 17, fill: "#111", "font-weight": 600 }, title));
+      svg.appendChild(mdTitle({ x: L, y: 22, "font-size": 17, fill: "#111", "font-weight": 600 }, title));
     if (wf) drawFigWave(svg, wf, L, pw);
 
     const grid = msClassSpecs[0].freqs;
@@ -2664,13 +2925,14 @@ ${r.t0.toFixed(3)}–${r.t1.toFixed(3)} s (${((r.t1 - r.t0) * 1000).toFixed(0)} 
   async function msExportCsv() {
     if (msMode === "tables") return msExportClassCsv();
     if (!msFull) return;
+    const groups = brushGroups(); // one column per label, its selections pooled
     const cols = ["frequency_khz", "mean"].concat(
-      msSels.map((s, i) => `${s.name}_${i + 1}`.replace(/[^\w.-]+/g, "_")),
+      groups.map((g) => `${g.name}_n${g.n}`.replace(/[^\w.-]+/g, "_")),
     );
     let csv = cols.join(",") + "\n";
     for (let b = 0; b < msFull.freqs.length; b++) {
       const row = [msFull.freqs[b].toFixed(5), msFull.amp[b].toFixed(6)];
-      msSels.forEach((s) => row.push(s.spec.amp[b].toFixed(6)));
+      groups.forEach((g) => row.push(g.spec.amp[b].toFixed(6)));
       csv += row.join(",") + "\n";
     }
     await dlFile(baseName() + "_meanspectra.csv", csv, "text/csv", { exactName: true });
@@ -2686,6 +2948,9 @@ ${r.t0.toFixed(3)}–${r.t1.toFixed(3)} s (${((r.t1 - r.t0) * 1000).toFixed(0)} 
 
   window.msRenderLibPicker = msRenderLibPicker;
   window.msDraw = msDraw;
+  window.msBrushZoom = msBrushZoom;
+  window.msBrushZoomFit = msBrushZoomFit;
+  window.msBrushZoomToSel = msBrushZoomToSel;
   window.msOnNameChoice = msOnNameChoice;
   window.msOnWlChange = msOnWlChange;
   window.msAddSelection = msAddSelection;

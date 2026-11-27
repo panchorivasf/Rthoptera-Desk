@@ -27,6 +27,8 @@
 <li><b>Selection viewer</b> for labelling: the waveform or envelope of the recording with every selection on a label track, time zoom, playback, and keys to step through the selections and label them with <code>1</code>–<code>9</code> (section 10.6).</li>
 <li>Class spectra as lines or filled areas, with an optional ±1 SD band; the waveform can be added above the spectra in the exported figure; the spectra CSV gives the mean, SD and number of selections at each frequency; the labelled selections can be saved as one Raven table.</li>
 <li><b>Colour-blind-safe palettes</b> (Okabe–Ito, Paul Tol’s Bright, Vibrant and Muted, viridis) for the class colours, with each colour’s name and hex code.</li>
+<li><b>Brushed stretches of one wave:</b> time zoom on the oscillogram; selections with the same label share one colour and their spectra are pooled into one; labels of existing selections can be edited (section 10.6).</li>
+<li><b>Plot title with Markdown</b> in Multi-Mean Spectra: <code>*italic*</code> for a scientific name, <code>**bold**</code> (section 10.6).</li>
 <li>Manual: sections 10.5 (Habitus) and 10.6 (Multi-Mean Spectra) described each other’s tab; they are now correct.</li>
 </ul>
 
@@ -681,7 +683,13 @@
 <li>Drag on the oscillogram to brush a stretch.</li>
 <li>Name it (closing, opening, male, female or custom) and press <b>Add selection</b>.</li>
 </ol>
-<p>Export a PNG, an SVG or the spectra as CSV, and set a file prefix.</p>
+<ul>
+<li><b>Zooming in time.</b> The wheel over the oscillogram zooms around the pointer; the <b>Time zoom</b> buttons <b>+</b>/<b>−</b> zoom around the centre, <b>⤢ Sel</b> zooms to the brushed stretch (or the last selection) and <b>Fit</b> (or a double-click) shows the whole wave. <code>Shift</code>+wheel, Alt-drag or middle-drag pans. Brushing works at any zoom, so short strokes can be picked precisely. The exported figure shows the oscillogram as zoomed; press <b>Fit</b> first to export the whole wave.</li>
+<li><b>One colour per label.</b> Selections with the same label share a colour, and their spectra are pooled: the label’s spectrum is the mean, frequency by frequency, of its selections’ spectra (each scaled by its peak amplitude, as for a single selection). The legend shows the number of selections when there is more than one, e.g. <i>opening (n=3)</i>. A label keeps its colour even when all its selections are removed.</li>
+<li><b>Renaming.</b> Click the label of a selection in the list to edit it; <code>Enter</code> keeps it and <code>Esc</code> cancels. The selection takes the colour of its new label and is pooled with it.</li>
+</ul>
+<p>Export a PNG, an SVG or the spectra as CSV (one column per label, named with the number of selections, e.g. <code>opening_n3</code>), and set a file prefix.</p>
+<p><b>Plot title</b> (both modes) accepts light Markdown: <code>*italic*</code> or <code>_italic_</code>, <code>**bold**</code> and <code>***bold italic***</code>, so that a scientific name can be set in italics, e.g. <code>*Chorthippus tatrae*, male 3</code>. <code>\*</code> writes a literal asterisk; an asterisk without a partner, or an underscore inside a word (as in <code>Ind3_HAA</code>), stays as typed.</p>
 
 <h3>Label classes from selection tables</h3>
 <p>One mean spectrum for each label, pooled from one or more selection tables, which may come from different recordings. Use it, for example, to compare the opening and closing strokes, or the calling and courtship songs, across several males.</p>

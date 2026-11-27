@@ -7400,7 +7400,7 @@
                   </label>
                   <div class="row">
                     <span style="color: var(--txt2); font-size: 11px; width: 110px">Plot title</span>
-                    <input type="text" id="msTitle" style="width: 100px" oninput="msDraw()" />
+                    <input type="text" id="msTitle" style="width: 100px" oninput="msDraw()" placeholder="*italic* **bold**" title="Markdown: *italic* or _italic_, **bold**, ***bold italic***; \* for a literal asterisk" />
                   </div>
                 </div>
               </div>
@@ -7458,6 +7458,14 @@
                 <h2 data-i18n>Selections</h2>
                 <div style="display: flex; flex-direction: column; gap: 5px">
                   <div id="msPendingInfo" style="font-size: 11px; color: var(--txt2)">Drag on the oscillogram to brush a stretch</div>
+                  <div class="row" style="gap: 4px; align-items: center">
+                    <span style="color: var(--txt2); font-size: 11px">Time zoom</span>
+                    <button id="btnMsZoomOut" onclick="msBrushZoom(1.6)" disabled title="Zoom out in time (or wheel down on the oscillogram)">−</button>
+                    <button id="btnMsZoomIn" onclick="msBrushZoom(1 / 1.6)" disabled title="Zoom in in time (or wheel up on the oscillogram)">+</button>
+                    <button id="btnMsZoomSel" onclick="msBrushZoomToSel()" disabled title="Zoom to the brushed stretch (or the last selection)">⤢ Sel</button>
+                    <button id="btnMsZoomFit" onclick="msBrushZoomFit()" disabled title="Show the whole wave (or double-click the oscillogram)">Fit</button>
+                  </div>
+                  <div style="font-size: 10px; color: var(--txt3)">Wheel: zoom · Shift+wheel or Alt-drag: pan · double-click: fit</div>
                   <select id="msSelName" onchange="msOnNameChoice()">
                     <option>closing</option>
                     <option>opening</option>

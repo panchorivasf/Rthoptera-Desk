@@ -8,7 +8,8 @@ labelling the selections and colour-blind-safe palettes for the figure.
 
 - **A new mode**, chosen from the **Mode** menu at the top of the tab, draws one mean spectrum
   for each label class. For example, compare the opening and closing strokes, or the calling
-  and courtship songs, across several males. The brushing mode works as before.
+  and courtship songs, across several males. The brushing mode keeps working, with the
+  improvements below.
 - **Import tables…** reads one or several selection tables at once: Raven `.txt`, CSV/TSV, or
   Excel `.xlsx` (every sheet with begin and end columns, so the Pulse and Motif sheets of a
   Temporal Analysis export load directly). Each row is tied to a loaded recording by the
@@ -47,9 +48,24 @@ labelling the selections and colour-blind-safe palettes for the figure.
   selections at each frequency. **Download labelled table** saves all the selections with
   their labels as one Raven table, which can be imported again to continue later.
 
+## Multi-Mean Spectra: brushed stretches of one wave
+
+- **Zoom in time** on the oscillogram: the wheel zooms around the pointer, the new **Time
+  zoom** buttons (**+**, **−**, **⤢ Sel**, **Fit**) do the same from the panel, and
+  `Shift`+wheel or Alt-drag pans. Double-click shows the whole wave again. Brushing works at
+  any zoom, so short strokes can be picked precisely.
+- **One colour per label.** Selections with the same label share a colour, and their spectra
+  are pooled into one: the mean of the selections' spectra. The legend shows how many were
+  pooled, e.g. *opening (n=3)*, and the CSV has one column per label.
+- **Rename a selection** by clicking its label in the list. It takes the colour of its new
+  label and is pooled with it.
+
 ## Other changes
 
-- The **User Manual** describes the new mode (section 10.6). Sections 10.5 (Habitus) and 10.6
+- The **plot title** of Multi-Mean Spectra accepts Markdown, so a scientific name can be set
+  in italics: `*Chorthippus tatrae*, male 3`. `**bold**` works too.
+
+- The **User Manual** describes the new mode and the brushing changes (section 10.6). Sections 10.5 (Habitus) and 10.6
   (Multi-Mean Spectra) described each other's tab; they are now correct.
 
 ---
